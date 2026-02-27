@@ -58,7 +58,9 @@ class BlenderConnection:
 
                 response = json.loads(line)
                 if not response.get("success"):
-                    raise RuntimeError(response.get("error", "Unknown error from Blender"))
+                    raise RuntimeError(
+                        response.get("error", "Unknown error from Blender")
+                    )
                 return response.get("result")
             except (ConnectionError, OSError) as e:
                 # Connection lost — reset and re-raise
@@ -74,7 +76,9 @@ async def blender_lifespan(server: FastMCP):
     try:
         await conn.connect()
     except OSError:
-        logger.warning("Could not connect to Blender on startup. Will retry on first tool call.")
+        logger.warning(
+            "Could not connect to Blender on startup. Will retry on first tool call."
+        )
     yield conn
     await conn.disconnect()
 
@@ -91,6 +95,7 @@ def _get_conn(ctx) -> BlenderConnection:
 
 
 # -- Scene tools --
+
 
 @mcp.tool(
     name="blender_scene_get_info",
@@ -144,6 +149,7 @@ async def material_list(ctx: Any) -> str:
 
 
 # -- Object mutation tools --
+
 
 @mcp.tool(
     name="blender_object_create",
@@ -214,7 +220,9 @@ async def object_rotate(
     description="Set the scale of an object. Provide scale as [x, y, z].",
 )
 async def object_scale(ctx: Any, name: str, scale: list[float]) -> str:
-    result = await _get_conn(ctx).send_command("object.scale", {"name": name, "scale": scale})
+    result = await _get_conn(ctx).send_command(
+        "object.scale", {"name": name, "scale": scale}
+    )
     return json.dumps(result, indent=2)
 
 
@@ -231,6 +239,7 @@ async def object_duplicate(ctx: Any, name: str, new_name: str | None = None) -> 
 
 
 # -- Material tools --
+
 
 @mcp.tool(
     name="blender_material_create",
@@ -281,6 +290,7 @@ async def material_set_texture(ctx: Any, name: str, filepath: str) -> str:
 
 # -- Render tools --
 
+
 @mcp.tool(
     name="blender_render_still",
     description="Render the current scene as a still image. Optionally set output path, resolution, and render engine (BLENDER_EEVEE, CYCLES, etc.).",
@@ -327,6 +337,7 @@ async def render_animation(
 
 # -- Export tools --
 
+
 @mcp.tool(
     name="blender_export_gltf",
     description="Export the scene as glTF/GLB. Provide the output file path.",
@@ -355,6 +366,7 @@ async def export_fbx(ctx: Any, filepath: str) -> str:
 
 
 # -- History tools --
+
 
 @mcp.tool(
     name="blender_history_undo",

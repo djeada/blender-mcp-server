@@ -79,7 +79,9 @@ class CommandHandler:
         abs_path = os.path.abspath(bpy.path.abspath(filepath))
         if not ALLOWED_PATHS:
             # In safe mode with no allowed paths, only allow the blend file directory
-            blend_dir = os.path.dirname(bpy.data.filepath) if bpy.data.filepath else os.getcwd()
+            blend_dir = (
+                os.path.dirname(bpy.data.filepath) if bpy.data.filepath else os.getcwd()
+            )
             ALLOWED_PATHS.append(blend_dir)
         for allowed in ALLOWED_PATHS:
             if abs_path.startswith(os.path.abspath(allowed)):
@@ -108,12 +110,14 @@ class CommandHandler:
         for obj in bpy.context.scene.objects:
             if type_filter and obj.type != type_filter.upper():
                 continue
-            objects.append({
-                "name": obj.name,
-                "type": obj.type,
-                "location": list(obj.location),
-                "visible": obj.visible_get(),
-            })
+            objects.append(
+                {
+                    "name": obj.name,
+                    "type": obj.type,
+                    "location": list(obj.location),
+                    "visible": obj.visible_get(),
+                }
+            )
         return {"objects": objects}
 
     def _object_get_transform(self, params: dict) -> dict:
@@ -149,11 +153,13 @@ class CommandHandler:
     def _material_list(self, params: dict) -> dict:
         materials = []
         for mat in bpy.data.materials:
-            materials.append({
-                "name": mat.name,
-                "use_nodes": mat.use_nodes,
-                "user_count": mat.users,
-            })
+            materials.append(
+                {
+                    "name": mat.name,
+                    "use_nodes": mat.use_nodes,
+                    "user_count": mat.users,
+                }
+            )
         return {"materials": materials}
 
     # -- Object mutation tools --
@@ -168,17 +174,29 @@ class CommandHandler:
         existing = set(bpy.data.objects.keys())
 
         creators = {
-            "cube": lambda: bpy.ops.mesh.primitive_cube_add(size=size, location=location),
-            "sphere": lambda: bpy.ops.mesh.primitive_uv_sphere_add(radius=size / 2, location=location),
-            "cylinder": lambda: bpy.ops.mesh.primitive_cylinder_add(radius=size / 2, depth=size, location=location),
-            "plane": lambda: bpy.ops.mesh.primitive_plane_add(size=size, location=location),
-            "cone": lambda: bpy.ops.mesh.primitive_cone_add(radius1=size / 2, depth=size, location=location),
+            "cube": lambda: bpy.ops.mesh.primitive_cube_add(
+                size=size, location=location
+            ),
+            "sphere": lambda: bpy.ops.mesh.primitive_uv_sphere_add(
+                radius=size / 2, location=location
+            ),
+            "cylinder": lambda: bpy.ops.mesh.primitive_cylinder_add(
+                radius=size / 2, depth=size, location=location
+            ),
+            "plane": lambda: bpy.ops.mesh.primitive_plane_add(
+                size=size, location=location
+            ),
+            "cone": lambda: bpy.ops.mesh.primitive_cone_add(
+                radius1=size / 2, depth=size, location=location
+            ),
             "torus": lambda: bpy.ops.mesh.primitive_torus_add(location=location),
         }
 
         creator = creators.get(mesh_type)
         if not creator:
-            raise ValueError(f"Unknown mesh type: {mesh_type}. Options: {list(creators.keys())}")
+            raise ValueError(
+                f"Unknown mesh type: {mesh_type}. Options: {list(creators.keys())}"
+            )
 
         creator()
 
@@ -216,6 +234,7 @@ class CommandHandler:
 
     def _object_rotate(self, params: dict) -> dict:
         import math
+
         name = params["name"]
         obj = bpy.data.objects.get(name)
         if not obj:
@@ -247,7 +266,11 @@ class CommandHandler:
         if new_name:
             new_obj.name = new_name
         bpy.context.collection.objects.link(new_obj)
-        return {"name": new_obj.name, "original": obj.name, "location": list(new_obj.location)}
+        return {
+            "name": new_obj.name,
+            "original": obj.name,
+            "location": list(new_obj.location),
+        }
 
     # -- Material tools --
 
@@ -476,9 +499,16 @@ class BlenderMCPServer:
 
     # Commands that modify scene state and need undo push
     MUTATION_COMMANDS = {
-        "object.create_mesh", "object.delete", "object.translate", "object.rotate",
-        "object.scale", "object.duplicate", "material.create", "material.assign",
-        "material.set_color", "material.set_texture",
+        "object.create_mesh",
+        "object.delete",
+        "object.translate",
+        "object.rotate",
+        "object.scale",
+        "object.duplicate",
+        "material.create",
+        "material.assign",
+        "material.set_color",
+        "material.set_texture",
     }
 
     def _process_request(self, request: dict) -> dict:
