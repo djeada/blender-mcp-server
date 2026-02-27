@@ -8,8 +8,6 @@ Control Blender from AI assistants like Claude Desktop using the [Model Context 
 
 *Scene above was created entirely through MCP commands: orange cube, blue sphere, stretched cylinder, and cone — with materials, transforms, and lighting.*
 
----
-
 ## How It Works
 
 ```
@@ -22,8 +20,6 @@ Control Blender from AI assistants like Claude Desktop using the [Model Context 
 1. The **Blender add-on** runs inside Blender, opening a TCP socket on `localhost:9876`
 2. The **MCP server** connects to Claude Desktop via stdio and forwards tool calls to Blender over TCP
 3. You talk to Claude → Claude calls MCP tools → Blender executes commands → results flow back
-
----
 
 ## Quick Start
 
@@ -86,8 +82,6 @@ Or with `uvx` (no install needed):
 2. Open Claude Desktop
 3. Start asking Claude to work with your Blender scene!
 
----
-
 ## Example Prompts
 
 Here's what you can ask Claude to do once everything is connected:
@@ -129,8 +123,6 @@ Here's what you can ask Claude to do once everything is connected:
 > "Undo the last change"
 >
 > "Redo what was just undone"
-
----
 
 ## Example Session
 
@@ -221,11 +213,10 @@ All output below was produced by a live Blender 4.0.2 instance controlled throug
 📦 FINAL: Scene Summary — 7 objects, 3 materials
 ```
 
----
-
 ## Tool Reference
 
 ### Scene Inspection
+
 | Tool | Description |
 |---|---|
 | `blender_scene_get_info` | Scene metadata — name, frame range, render engine, resolution, object count |
@@ -234,6 +225,7 @@ All output below was produced by a live Blender 4.0.2 instance controlled throug
 | `blender_object_get_hierarchy` | Parent/child hierarchy tree (full scene or subtree) |
 
 ### Materials
+
 | Tool | Description |
 |---|---|
 | `blender_material_list` | List all materials in the file |
@@ -243,6 +235,7 @@ All output below was produced by a live Blender 4.0.2 instance controlled throug
 | `blender_material_set_texture` | Set an image texture as base color |
 
 ### Object Manipulation
+
 | Tool | Description |
 |---|---|
 | `blender_object_create` | Create primitives: `cube`, `sphere`, `cylinder`, `plane`, `cone`, `torus` |
@@ -253,6 +246,7 @@ All output below was produced by a live Blender 4.0.2 instance controlled throug
 | `blender_object_duplicate` | Duplicate with optional new name |
 
 ### Rendering & Export
+
 | Tool | Description |
 |---|---|
 | `blender_render_still` | Render still image — set output path, resolution, engine |
@@ -262,12 +256,11 @@ All output below was produced by a live Blender 4.0.2 instance controlled throug
 | `blender_export_fbx` | Export as FBX |
 
 ### History
+
 | Tool | Description |
 |---|---|
 | `blender_history_undo` | Undo the last operation |
 | `blender_history_redo` | Redo the last undone operation |
-
----
 
 ## Safety Features
 
@@ -275,8 +268,6 @@ All output below was produced by a live Blender 4.0.2 instance controlled throug
 - **Safe Mode** — enable in add-on preferences to restrict file access to the project directory only
 - **Tool whitelist** — limit which commands the bridge will accept
 - **No arbitrary code execution** — the bridge only accepts predefined commands, never `exec` or `eval`
-
----
 
 ## Add-on Preferences
 
@@ -286,8 +277,6 @@ In Blender → Edit → Preferences → Add-ons → Blender MCP Bridge:
 |---|---|---|
 | **Safe Mode** | Restrict file I/O to project directory | Off |
 | **Port** | TCP port for the MCP bridge | 9876 |
-
----
 
 ## Headless / Background Mode
 
@@ -314,8 +303,6 @@ s.bind(("127.0.0.1", 9877))
 s.listen(1)
 s.accept()  # Blocks until shutdown signal
 ```
-
----
 
 ## Development
 
@@ -349,8 +336,6 @@ blender-mcp-server/
 └── README.md
 ```
 
----
-
 ## Contributing
 
 1. Fork the repository
@@ -358,8 +343,6 @@ blender-mcp-server/
 3. Make your changes with tests
 4. Run `pytest tests/ -v` to verify all 23 tests pass
 5. Submit a pull request
-
----
 
 ## License
 
