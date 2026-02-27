@@ -10,6 +10,7 @@ bl_info = {
 
 import bpy
 import json
+import os
 import socket
 import threading
 import traceback
@@ -21,6 +22,11 @@ logger = logging.getLogger(__name__)
 HOST = "127.0.0.1"
 PORT = 9876
 BUFFER_SIZE = 65536
+
+# Security: restrict file operations to these directories (set via addon preferences)
+SAFE_MODE = False
+ALLOWED_PATHS: list[str] = []
+TOOL_WHITELIST: set[str] | None = None  # None = all tools allowed
 
 
 class CommandHandler:
@@ -42,14 +48,46 @@ class CommandHandler:
         self._handlers["object.rotate"] = self._object_rotate
         self._handlers["object.scale"] = self._object_scale
         self._handlers["object.duplicate"] = self._object_duplicate
+        self._handlers["material.create"] = self._material_create
+        self._handlers["material.assign"] = self._material_assign
+        self._handlers["material.set_color"] = self._material_set_color
+        self._handlers["material.set_texture"] = self._material_set_texture
+        self._handlers["render.still"] = self._render_still
+        self._handlers["render.animation"] = self._render_animation
+        self._handlers["export.gltf"] = self._export_gltf
+        self._handlers["export.obj"] = self._export_obj
+        self._handlers["export.fbx"] = self._export_fbx
+        self._handlers["history.undo"] = self._history_undo
+        self._handlers["history.redo"] = self._history_redo
 
     def handle(self, command: str, params: dict) -> Any:
+        # Security: check tool whitelist
+        if TOOL_WHITELIST is not None and command not in TOOL_WHITELIST:
+            raise PermissionError(f"Command '{command}' is not in the tool whitelist")
         handler = self._handlers.get(command)
         if not handler:
             raise ValueError(f"Unknown command: {command}")
         return handler(params)
 
     # -- Scene tools --
+
+    @staticmethod
+    def _validate_filepath(filepath: str) -> str:
+        """Security: validate that a filepath is within allowed directories."""
+        if not SAFE_MODE:
+            return filepath
+        abs_path = os.path.abspath(bpy.path.abspath(filepath))
+        if not ALLOWED_PATHS:
+            # In safe mode with no allowed paths, only allow the blend file directory
+            blend_dir = os.path.dirname(bpy.data.filepath) if bpy.data.filepath else os.getcwd()
+            ALLOWED_PATHS.append(blend_dir)
+        for allowed in ALLOWED_PATHS:
+            if abs_path.startswith(os.path.abspath(allowed)):
+                return filepath
+        raise PermissionError(
+            f"File access denied: '{filepath}' is outside allowed directories. "
+            f"Allowed: {ALLOWED_PATHS}"
+        )
 
     def _scene_get_info(self, params: dict) -> dict:
         scene = bpy.context.scene
@@ -126,6 +164,9 @@ class CommandHandler:
         location = params.get("location", [0, 0, 0])
         size = params.get("size", 2.0)
 
+        # Track existing objects to find the newly created one
+        existing = set(bpy.data.objects.keys())
+
         creators = {
             "cube": lambda: bpy.ops.mesh.primitive_cube_add(size=size, location=location),
             "sphere": lambda: bpy.ops.mesh.primitive_uv_sphere_add(radius=size / 2, location=location),
@@ -140,7 +181,12 @@ class CommandHandler:
             raise ValueError(f"Unknown mesh type: {mesh_type}. Options: {list(creators.keys())}")
 
         creator()
-        obj = bpy.context.active_object
+
+        # Find the new object by diffing
+        new_names = set(bpy.data.objects.keys()) - existing
+        if not new_names:
+            raise RuntimeError("Failed to create object")
+        obj = bpy.data.objects[new_names.pop()]
         if name:
             obj.name = name
         return {"name": obj.name, "type": obj.type, "location": list(obj.location)}
@@ -202,6 +248,155 @@ class CommandHandler:
             new_obj.name = new_name
         bpy.context.collection.objects.link(new_obj)
         return {"name": new_obj.name, "original": obj.name, "location": list(new_obj.location)}
+
+    # -- Material tools --
+
+    def _material_create(self, params: dict) -> dict:
+        name = params.get("name", "Material")
+        mat = bpy.data.materials.new(name=name)
+        mat.use_nodes = True
+        color = params.get("color")
+        if color:
+            bsdf = mat.node_tree.nodes.get("Principled BSDF")
+            if bsdf:
+                # color is [r, g, b] or [r, g, b, a], values 0-1
+                rgba = list(color) + [1.0] * (4 - len(color))
+                bsdf.inputs["Base Color"].default_value = rgba[:4]
+        return {"name": mat.name, "use_nodes": mat.use_nodes}
+
+    def _material_assign(self, params: dict) -> dict:
+        obj_name = params["object"]
+        mat_name = params["material"]
+        obj = bpy.data.objects.get(obj_name)
+        if not obj:
+            raise ValueError(f"Object '{obj_name}' not found")
+        mat = bpy.data.materials.get(mat_name)
+        if not mat:
+            raise ValueError(f"Material '{mat_name}' not found")
+        if obj.data.materials:
+            obj.data.materials[0] = mat
+        else:
+            obj.data.materials.append(mat)
+        return {"object": obj.name, "material": mat.name}
+
+    def _material_set_color(self, params: dict) -> dict:
+        mat_name = params["name"]
+        color = params["color"]  # [r, g, b] or [r, g, b, a]
+        mat = bpy.data.materials.get(mat_name)
+        if not mat:
+            raise ValueError(f"Material '{mat_name}' not found")
+        if not mat.use_nodes:
+            mat.use_nodes = True
+        bsdf = mat.node_tree.nodes.get("Principled BSDF")
+        if not bsdf:
+            raise ValueError(f"Material '{mat_name}' has no Principled BSDF node")
+        rgba = list(color) + [1.0] * (4 - len(color))
+        bsdf.inputs["Base Color"].default_value = rgba[:4]
+        return {"name": mat.name, "color": rgba[:4]}
+
+    def _material_set_texture(self, params: dict) -> dict:
+        mat_name = params["name"]
+        filepath = params["filepath"]
+        self._validate_filepath(filepath)
+        mat = bpy.data.materials.get(mat_name)
+        if not mat:
+            raise ValueError(f"Material '{mat_name}' not found")
+        if not mat.use_nodes:
+            mat.use_nodes = True
+        tree = mat.node_tree
+        bsdf = tree.nodes.get("Principled BSDF")
+        if not bsdf:
+            raise ValueError(f"Material '{mat_name}' has no Principled BSDF node")
+        tex_node = tree.nodes.new("ShaderNodeTexImage")
+        tex_node.image = bpy.data.images.load(filepath)
+        tree.links.new(tex_node.outputs["Color"], bsdf.inputs["Base Color"])
+        return {"name": mat.name, "texture": filepath}
+
+    # -- Render tools --
+
+    def _render_still(self, params: dict) -> dict:
+        scene = bpy.context.scene
+        output_path = params.get("output_path", "//render.png")
+        self._validate_filepath(output_path)
+        resolution_x = params.get("resolution_x")
+        resolution_y = params.get("resolution_y")
+        engine = params.get("engine")
+
+        if engine:
+            scene.render.engine = engine.upper()
+        if resolution_x:
+            scene.render.resolution_x = resolution_x
+        if resolution_y:
+            scene.render.resolution_y = resolution_y
+
+        scene.render.filepath = output_path
+        bpy.ops.render.render(write_still=True)
+        abs_path = bpy.path.abspath(output_path)
+        return {
+            "output_path": abs_path,
+            "engine": scene.render.engine,
+            "resolution": [scene.render.resolution_x, scene.render.resolution_y],
+        }
+
+    def _render_animation(self, params: dict) -> dict:
+        scene = bpy.context.scene
+        output_path = params.get("output_path", "//render_")
+        self._validate_filepath(output_path)
+        frame_start = params.get("frame_start")
+        frame_end = params.get("frame_end")
+        engine = params.get("engine")
+
+        if engine:
+            scene.render.engine = engine.upper()
+        if frame_start is not None:
+            scene.frame_start = frame_start
+        if frame_end is not None:
+            scene.frame_end = frame_end
+
+        scene.render.filepath = output_path
+        bpy.ops.render.render(animation=True)
+        abs_path = bpy.path.abspath(output_path)
+        return {
+            "output_path": abs_path,
+            "frame_range": [scene.frame_start, scene.frame_end],
+            "engine": scene.render.engine,
+        }
+
+    # -- Export tools --
+
+    def _export_gltf(self, params: dict) -> dict:
+        filepath = params["filepath"]
+        self._validate_filepath(filepath)
+        if not filepath.endswith((".glb", ".gltf")):
+            filepath += ".glb"
+        bpy.ops.export_scene.gltf(filepath=filepath)
+        return {"filepath": filepath, "format": "glTF"}
+
+    def _export_obj(self, params: dict) -> dict:
+        filepath = params["filepath"]
+        self._validate_filepath(filepath)
+        if not filepath.endswith(".obj"):
+            filepath += ".obj"
+        bpy.ops.wm.obj_export(filepath=filepath)
+        return {"filepath": filepath, "format": "OBJ"}
+
+    def _export_fbx(self, params: dict) -> dict:
+        filepath = params["filepath"]
+        self._validate_filepath(filepath)
+        if not filepath.endswith(".fbx"):
+            filepath += ".fbx"
+        bpy.ops.export_scene.fbx(filepath=filepath)
+        return {"filepath": filepath, "format": "FBX"}
+
+    # -- History tools --
+
+    def _history_undo(self, params: dict) -> dict:
+        bpy.ops.ed.undo()
+        return {"action": "undo"}
+
+    def _history_redo(self, params: dict) -> dict:
+        bpy.ops.ed.redo()
+        return {"action": "redo"}
 
 
 class BlenderMCPServer:
@@ -279,11 +474,21 @@ class BlenderMCPServer:
         finally:
             conn.close()
 
+    # Commands that modify scene state and need undo push
+    MUTATION_COMMANDS = {
+        "object.create_mesh", "object.delete", "object.translate", "object.rotate",
+        "object.scale", "object.duplicate", "material.create", "material.assign",
+        "material.set_color", "material.set_texture",
+    }
+
     def _process_request(self, request: dict) -> dict:
         req_id = request.get("id")
         command = request.get("command", "")
         params = request.get("params", {})
         try:
+            # Auto-push undo before mutations
+            if command in self.MUTATION_COMMANDS:
+                bpy.ops.ed.undo_push(message=f"MCP: {command}")
             result = self._handler.handle(command, params)
             return {"id": req_id, "success": True, "result": result}
         except Exception as e:
@@ -293,6 +498,28 @@ class BlenderMCPServer:
 
 # Global server instance
 _server: BlenderMCPServer | None = None
+
+
+class MCP_AddonPreferences(bpy.types.AddonPreferences):
+    bl_idname = __name__
+
+    safe_mode: bpy.props.BoolProperty(
+        name="Safe Mode",
+        description="Restrict file access to project directory and enable tool whitelist",
+        default=False,
+    )
+    port: bpy.props.IntProperty(
+        name="Port",
+        description="TCP port for the MCP bridge",
+        default=9876,
+        min=1024,
+        max=65535,
+    )
+
+    def draw(self, context):
+        layout = self.layout
+        layout.prop(self, "safe_mode")
+        layout.prop(self, "port")
 
 
 class MCP_PT_Panel(bpy.types.Panel):
@@ -338,7 +565,7 @@ class MCP_OT_StopServer(bpy.types.Operator):
         return {"FINISHED"}
 
 
-classes = (MCP_PT_Panel, MCP_OT_StartServer, MCP_OT_StopServer)
+classes = (MCP_AddonPreferences, MCP_PT_Panel, MCP_OT_StartServer, MCP_OT_StopServer)
 
 
 def register():

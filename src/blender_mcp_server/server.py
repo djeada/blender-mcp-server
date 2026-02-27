@@ -230,6 +230,150 @@ async def object_duplicate(ctx: Any, name: str, new_name: str | None = None) -> 
     return json.dumps(result, indent=2)
 
 
+# -- Material tools --
+
+@mcp.tool(
+    name="blender_material_create",
+    description="Create a new material. Optionally set an initial base color as [r, g, b] with values 0-1.",
+)
+async def material_create(
+    ctx: Any, name: str = "Material", color: list[float] | None = None
+) -> str:
+    params: dict[str, Any] = {"name": name}
+    if color:
+        params["color"] = color
+    result = await _get_conn(ctx).send_command("material.create", params)
+    return json.dumps(result, indent=2)
+
+
+@mcp.tool(
+    name="blender_material_assign",
+    description="Assign an existing material to an object.",
+)
+async def material_assign(ctx: Any, object: str, material: str) -> str:
+    result = await _get_conn(ctx).send_command(
+        "material.assign", {"object": object, "material": material}
+    )
+    return json.dumps(result, indent=2)
+
+
+@mcp.tool(
+    name="blender_material_set_color",
+    description="Set the base color of a material. Color is [r, g, b] with values 0-1.",
+)
+async def material_set_color(ctx: Any, name: str, color: list[float]) -> str:
+    result = await _get_conn(ctx).send_command(
+        "material.set_color", {"name": name, "color": color}
+    )
+    return json.dumps(result, indent=2)
+
+
+@mcp.tool(
+    name="blender_material_set_texture",
+    description="Set an image texture as the base color of a material. Provide the file path to the image.",
+)
+async def material_set_texture(ctx: Any, name: str, filepath: str) -> str:
+    result = await _get_conn(ctx).send_command(
+        "material.set_texture", {"name": name, "filepath": filepath}
+    )
+    return json.dumps(result, indent=2)
+
+
+# -- Render tools --
+
+@mcp.tool(
+    name="blender_render_still",
+    description="Render the current scene as a still image. Optionally set output path, resolution, and render engine (BLENDER_EEVEE, CYCLES, etc.).",
+)
+async def render_still(
+    ctx: Any,
+    output_path: str = "//render.png",
+    resolution_x: int | None = None,
+    resolution_y: int | None = None,
+    engine: str | None = None,
+) -> str:
+    params: dict[str, Any] = {"output_path": output_path}
+    if resolution_x:
+        params["resolution_x"] = resolution_x
+    if resolution_y:
+        params["resolution_y"] = resolution_y
+    if engine:
+        params["engine"] = engine
+    result = await _get_conn(ctx).send_command("render.still", params)
+    return json.dumps(result, indent=2)
+
+
+@mcp.tool(
+    name="blender_render_animation",
+    description="Render an animation. Optionally set output path, frame range, and render engine.",
+)
+async def render_animation(
+    ctx: Any,
+    output_path: str = "//render_",
+    frame_start: int | None = None,
+    frame_end: int | None = None,
+    engine: str | None = None,
+) -> str:
+    params: dict[str, Any] = {"output_path": output_path}
+    if frame_start is not None:
+        params["frame_start"] = frame_start
+    if frame_end is not None:
+        params["frame_end"] = frame_end
+    if engine:
+        params["engine"] = engine
+    result = await _get_conn(ctx).send_command("render.animation", params)
+    return json.dumps(result, indent=2)
+
+
+# -- Export tools --
+
+@mcp.tool(
+    name="blender_export_gltf",
+    description="Export the scene as glTF/GLB. Provide the output file path.",
+)
+async def export_gltf(ctx: Any, filepath: str) -> str:
+    result = await _get_conn(ctx).send_command("export.gltf", {"filepath": filepath})
+    return json.dumps(result, indent=2)
+
+
+@mcp.tool(
+    name="blender_export_obj",
+    description="Export the scene as OBJ. Provide the output file path.",
+)
+async def export_obj(ctx: Any, filepath: str) -> str:
+    result = await _get_conn(ctx).send_command("export.obj", {"filepath": filepath})
+    return json.dumps(result, indent=2)
+
+
+@mcp.tool(
+    name="blender_export_fbx",
+    description="Export the scene as FBX. Provide the output file path.",
+)
+async def export_fbx(ctx: Any, filepath: str) -> str:
+    result = await _get_conn(ctx).send_command("export.fbx", {"filepath": filepath})
+    return json.dumps(result, indent=2)
+
+
+# -- History tools --
+
+@mcp.tool(
+    name="blender_history_undo",
+    description="Undo the last operation in Blender.",
+)
+async def history_undo(ctx: Any) -> str:
+    result = await _get_conn(ctx).send_command("history.undo")
+    return json.dumps(result, indent=2)
+
+
+@mcp.tool(
+    name="blender_history_redo",
+    description="Redo the last undone operation in Blender.",
+)
+async def history_redo(ctx: Any) -> str:
+    result = await _get_conn(ctx).send_command("history.redo")
+    return json.dumps(result, indent=2)
+
+
 def main():
     mcp.run(transport="stdio")
 
