@@ -5,6 +5,7 @@ Control Blender from AI assistants like Claude Desktop using the [Model Context 
 **22 tools** across 6 namespaces — create objects, assign materials, render images, export scenes, and more, all through natural language.
 
 ![Demo render — scene built entirely through MCP tools](docs/images/demo_render.png)
+
 *Scene above was created entirely through MCP commands: orange cube, blue sphere, stretched cylinder, and cone — with materials, transforms, and lighting.*
 
 ---
@@ -12,10 +13,10 @@ Control Blender from AI assistants like Claude Desktop using the [Model Context 
 ## How It Works
 
 ```
-┌─────────────────┐      stdio       ┌─────────────────────┐    JSON/TCP     ┌──────────────────┐
-│  Claude Desktop  │ ◄──────────────► │  MCP Server (Python) │ ◄────────────► │  Blender Add-on  │
-│  (MCP Client)    │                  │  src/server.py       │  localhost:9876 │  (runs in Blender)│
-└─────────────────┘                  └─────────────────────┘                 └──────────────────┘
+┌─────────────────┐      stdio       ┌──────────────────────┐    JSON/TCP     ┌────────────────────┐
+│  Claude Desktop │ ◄──────────────► │  MCP Server (Python) │ ◄─────────────► │  Blender Add-on    │
+│  (MCP Client)   │                  │  src/server.py       │  localhost:9876 │  (runs in Blender) │
+└─────────────────┘                  └──────────────────────┘                 └────────────────────┘
 ```
 
 1. The **Blender add-on** runs inside Blender, opening a TCP socket on `localhost:9876`
