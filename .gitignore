@@ -1,5 +1,13 @@
 .venv/
 __pycache__/
+*.py[cod]
+*.pyo
 *.egg-info/
+*.egg
+pip-wheel-metadata/
 dist/
 build/
+.pytest_cache/
+.coverage
+.coverage.*
+htmlcov/
