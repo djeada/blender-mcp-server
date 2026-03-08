@@ -21,66 +21,143 @@ Control Blender from AI assistants like Claude Desktop using the [Model Context 
 2. The **MCP server** connects to Claude Desktop via stdio and forwards tool calls to Blender over TCP
 3. You talk to Claude → Claude calls MCP tools → Blender executes commands → results flow back
 
+There are two ways to talk to Blender:
+
+1. **Via an MCP client** such as Claude Desktop or Codex:
+   `MCP client → blender-mcp-server (stdio) → Blender add-on (TCP) → bpy`
+2. **Via the direct test scripts** in `scripts/`:
+   `script → Blender add-on (TCP) → bpy`
+
+The helper scripts in `scripts/` do **not** use MCP. They connect directly to the Blender add-on on `127.0.0.1:9876` for local testing.
+
 ## Quick Start
 
-### Step 1: Install the Blender Add-on
+This is the recommended local setup for Codex:
 
-1. Open Blender
-2. Go to **Edit → Preferences → Add-ons → Install**
-3. Select `addon/__init__.py` from this repository
-4. Enable **"Blender MCP Bridge"**
-5. The TCP bridge starts automatically — you'll see "● Listening on 127.0.0.1:9876" in the sidebar panel
+1. Create a local virtualenv in this repo
+2. Install the MCP server into that virtualenv
+3. Install the Blender add-on from this repo
+4. Register Codex to launch `/home/adam/my-repos/blender-mcp-server/.venv/bin/blender-mcp-server`
+5. Keep Blender open with the add-on listening on `127.0.0.1:9876`
+6. Start Codex and ask it to use Blender
 
-### Step 2: Install the MCP Server
-
-```bash
-pip install blender-mcp-server
-```
-
-Or from source:
+### Step 1: Create the Local Virtualenv
 
 ```bash
-git clone https://github.com/your-org/blender-mcp-server
-cd blender-mcp-server
+cd /home/adam/my-repos/blender-mcp-server
+python3 -m venv .venv
+source .venv/bin/activate
 pip install -e .
 ```
 
-### Step 3: Configure Claude Desktop
+This creates the local server executable at:
 
-Add this to your Claude Desktop config file:
+```bash
+/home/adam/my-repos/blender-mcp-server/.venv/bin/blender-mcp-server
+```
 
-**macOS**: `~/Library/Application Support/Claude/claude_desktop_config.json`
-**Windows**: `%APPDATA%\Claude\claude_desktop_config.json`
-**Linux**: `~/.config/Claude/claude_desktop_config.json`
+### Step 2: Install the Blender Add-on
+
+Create an installable zip:
+
+```bash
+cd /home/adam/my-repos/blender-mcp-server
+mkdir -p dist/blender_mcp_bridge
+cp addon/__init__.py dist/blender_mcp_bridge/__init__.py
+(cd dist && zip -r blender_mcp_bridge.zip blender_mcp_bridge)
+```
+
+Then in Blender:
+
+1. Open Blender
+2. Go to **Edit -> Preferences -> Add-ons -> Install**
+3. Select `dist/blender_mcp_bridge.zip`
+4. Enable **Blender MCP Bridge**
+5. In the 3D Viewport, press `N` and open the `MCP` tab
+6. Confirm it shows `Listening on 127.0.0.1:9876`
+
+The Blender add-on is the bridge endpoint inside Blender. It listens for JSON/TCP requests and executes them through `bpy`.
+
+### Step 3: Register the MCP Server in Codex
+
+Register the local server once:
+
+```bash
+codex mcp add blender -- /home/adam/my-repos/blender-mcp-server/.venv/bin/blender-mcp-server
+```
+
+Verify it:
+
+```bash
+codex mcp list
+codex mcp get blender
+```
+
+You should see the command path:
+
+```bash
+/home/adam/my-repos/blender-mcp-server/.venv/bin/blender-mcp-server
+```
+
+### Step 4: Start Blender and Codex
+
+1. Start Blender and make sure the add-on is enabled
+2. Confirm the `MCP` panel shows `Listening on 127.0.0.1:9876`
+3. Start Codex from this repo:
+
+```bash
+cd /home/adam/my-repos/blender-mcp-server
+codex
+```
+
+Do not manually start `python -m blender_mcp_server.server` for Codex. Codex launches the MCP server itself using the registered command.
+
+### Step 5: Ask Codex Normally
+
+Inside Codex, ask naturally:
+
+- `What objects are in my Blender scene?`
+- `Create a cube named TestCube at [0, 0, 1]`
+- `Render the scene to /tmp/test.png`
+
+Codex will call MCP tools such as `blender_scene_list_objects` and `blender_object_create`. Those tool calls go to `blender-mcp-server`, which forwards them to the Blender add-on on `127.0.0.1:9876`.
+
+### Optional: Claude Desktop
+
+If you want to use Claude Desktop instead of Codex, point it at the same virtualenv executable.
+
+Config file locations:
+
+- macOS: `~/Library/Application Support/Claude/claude_desktop_config.json`
+- Windows: `%APPDATA%\Claude\claude_desktop_config.json`
+- Linux: `~/.config/Claude/claude_desktop_config.json`
+
+Example config:
 
 ```json
 {
   "mcpServers": {
     "blender": {
-      "command": "blender-mcp-server"
+      "command": "/home/adam/my-repos/blender-mcp-server/.venv/bin/blender-mcp-server"
     }
   }
 }
 ```
 
-Or with `uvx` (no install needed):
+### Direct Bridge Test Scripts
 
-```json
-{
-  "mcpServers": {
-    "blender": {
-      "command": "uvx",
-      "args": ["blender-mcp-server"]
-    }
-  }
-}
+If you want to test the Blender add-on without an MCP client, use the helper scripts in `scripts/`:
+
+```bash
+python3 scripts/blender_scene_info.py
+python3 scripts/blender_create_test_cube.py --name TestCube --x 0 --y 0 --z 1 --size 2
+python3 scripts/blender_bridge_request.py scene.get_info
+python3 scripts/blender_bridge_request.py object.translate --params '{"name":"TestCube","offset":[0,0,2]}'
 ```
 
-### Step 4: Start Using It
+All scripts connect to `127.0.0.1:9876` by default and accept `--host`, `--port`, and `--timeout`.
 
-1. Make sure Blender is running with the add-on enabled
-2. Open Claude Desktop
-3. Start asking Claude to work with your Blender scene!
+These scripts bypass `blender-mcp-server` entirely. They are useful for checking whether the Blender add-on works before involving an MCP client.
 
 ## Example Prompts
 

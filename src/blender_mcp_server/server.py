@@ -7,7 +7,7 @@ import uuid
 from contextlib import asynccontextmanager
 from typing import Any
 
-from mcp.server.fastmcp import FastMCP
+from mcp.server.fastmcp import Context, FastMCP
 
 logger = logging.getLogger(__name__)
 
@@ -90,7 +90,7 @@ mcp = FastMCP(
 )
 
 
-def _get_conn(ctx) -> BlenderConnection:
+def _get_conn(ctx: Context) -> BlenderConnection:
     return ctx.request_context.lifespan_context
 
 
@@ -101,7 +101,7 @@ def _get_conn(ctx) -> BlenderConnection:
     name="blender_scene_get_info",
     description="Get information about the current Blender scene including name, frame range, render engine, resolution, and object count.",
 )
-async def scene_get_info(ctx: Any) -> str:
+async def scene_get_info(ctx: Context) -> str:
     result = await _get_conn(ctx).send_command("scene.get_info")
     return json.dumps(result, indent=2)
 
@@ -110,7 +110,7 @@ async def scene_get_info(ctx: Any) -> str:
     name="blender_scene_list_objects",
     description="List all objects in the current Blender scene. Optionally filter by type (MESH, CAMERA, LIGHT, EMPTY, CURVE, etc.).",
 )
-async def scene_list_objects(ctx: Any, type: str | None = None) -> str:
+async def scene_list_objects(ctx: Context, type: str | None = None) -> str:
     params = {}
     if type:
         params["type"] = type
@@ -122,7 +122,7 @@ async def scene_list_objects(ctx: Any, type: str | None = None) -> str:
     name="blender_object_get_transform",
     description="Get the position, rotation, and scale of a Blender object by name.",
 )
-async def object_get_transform(ctx: Any, name: str) -> str:
+async def object_get_transform(ctx: Context, name: str) -> str:
     result = await _get_conn(ctx).send_command("object.get_transform", {"name": name})
     return json.dumps(result, indent=2)
 
@@ -131,7 +131,7 @@ async def object_get_transform(ctx: Any, name: str) -> str:
     name="blender_object_get_hierarchy",
     description="Get the parent/child hierarchy of objects. If name is provided, returns the subtree for that object. Otherwise returns the full scene hierarchy.",
 )
-async def object_get_hierarchy(ctx: Any, name: str | None = None) -> str:
+async def object_get_hierarchy(ctx: Context, name: str | None = None) -> str:
     params = {}
     if name:
         params["name"] = name
@@ -143,7 +143,7 @@ async def object_get_hierarchy(ctx: Any, name: str | None = None) -> str:
     name="blender_material_list",
     description="List all materials in the Blender file.",
 )
-async def material_list(ctx: Any) -> str:
+async def material_list(ctx: Context) -> str:
     result = await _get_conn(ctx).send_command("material.list")
     return json.dumps(result, indent=2)
 
@@ -156,7 +156,7 @@ async def material_list(ctx: Any) -> str:
     description="Create a new mesh object in Blender. Supported types: cube, sphere, cylinder, plane, cone, torus.",
 )
 async def object_create(
-    ctx: Any,
+    ctx: Context,
     mesh_type: str = "cube",
     name: str | None = None,
     location: list[float] | None = None,
@@ -175,7 +175,7 @@ async def object_create(
     name="blender_object_delete",
     description="Delete an object from the Blender scene by name.",
 )
-async def object_delete(ctx: Any, name: str) -> str:
+async def object_delete(ctx: Context, name: str) -> str:
     result = await _get_conn(ctx).send_command("object.delete", {"name": name})
     return json.dumps(result, indent=2)
 
@@ -185,7 +185,7 @@ async def object_delete(ctx: Any, name: str) -> str:
     description="Move an object. Provide either 'location' for absolute positioning or 'offset' for relative movement.",
 )
 async def object_translate(
-    ctx: Any,
+    ctx: Context,
     name: str,
     location: list[float] | None = None,
     offset: list[float] | None = None,
@@ -204,7 +204,7 @@ async def object_translate(
     description="Set the rotation of an object. Provide rotation as [x, y, z] angles. By default angles are in degrees.",
 )
 async def object_rotate(
-    ctx: Any,
+    ctx: Context,
     name: str,
     rotation: list[float],
     degrees: bool = True,
@@ -219,7 +219,7 @@ async def object_rotate(
     name="blender_object_scale",
     description="Set the scale of an object. Provide scale as [x, y, z].",
 )
-async def object_scale(ctx: Any, name: str, scale: list[float]) -> str:
+async def object_scale(ctx: Context, name: str, scale: list[float]) -> str:
     result = await _get_conn(ctx).send_command(
         "object.scale", {"name": name, "scale": scale}
     )
@@ -230,7 +230,7 @@ async def object_scale(ctx: Any, name: str, scale: list[float]) -> str:
     name="blender_object_duplicate",
     description="Duplicate an object in the Blender scene. Optionally provide a new name.",
 )
-async def object_duplicate(ctx: Any, name: str, new_name: str | None = None) -> str:
+async def object_duplicate(ctx: Context, name: str, new_name: str | None = None) -> str:
     params: dict[str, Any] = {"name": name}
     if new_name:
         params["new_name"] = new_name
@@ -246,7 +246,7 @@ async def object_duplicate(ctx: Any, name: str, new_name: str | None = None) -> 
     description="Create a new material. Optionally set an initial base color as [r, g, b] with values 0-1.",
 )
 async def material_create(
-    ctx: Any, name: str = "Material", color: list[float] | None = None
+    ctx: Context, name: str = "Material", color: list[float] | None = None
 ) -> str:
     params: dict[str, Any] = {"name": name}
     if color:
@@ -259,7 +259,7 @@ async def material_create(
     name="blender_material_assign",
     description="Assign an existing material to an object.",
 )
-async def material_assign(ctx: Any, object: str, material: str) -> str:
+async def material_assign(ctx: Context, object: str, material: str) -> str:
     result = await _get_conn(ctx).send_command(
         "material.assign", {"object": object, "material": material}
     )
@@ -270,7 +270,7 @@ async def material_assign(ctx: Any, object: str, material: str) -> str:
     name="blender_material_set_color",
     description="Set the base color of a material. Color is [r, g, b] with values 0-1.",
 )
-async def material_set_color(ctx: Any, name: str, color: list[float]) -> str:
+async def material_set_color(ctx: Context, name: str, color: list[float]) -> str:
     result = await _get_conn(ctx).send_command(
         "material.set_color", {"name": name, "color": color}
     )
@@ -281,7 +281,7 @@ async def material_set_color(ctx: Any, name: str, color: list[float]) -> str:
     name="blender_material_set_texture",
     description="Set an image texture as the base color of a material. Provide the file path to the image.",
 )
-async def material_set_texture(ctx: Any, name: str, filepath: str) -> str:
+async def material_set_texture(ctx: Context, name: str, filepath: str) -> str:
     result = await _get_conn(ctx).send_command(
         "material.set_texture", {"name": name, "filepath": filepath}
     )
@@ -296,7 +296,7 @@ async def material_set_texture(ctx: Any, name: str, filepath: str) -> str:
     description="Render the current scene as a still image. Optionally set output path, resolution, and render engine (BLENDER_EEVEE, CYCLES, etc.).",
 )
 async def render_still(
-    ctx: Any,
+    ctx: Context,
     output_path: str = "//render.png",
     resolution_x: int | None = None,
     resolution_y: int | None = None,
@@ -318,7 +318,7 @@ async def render_still(
     description="Render an animation. Optionally set output path, frame range, and render engine.",
 )
 async def render_animation(
-    ctx: Any,
+    ctx: Context,
     output_path: str = "//render_",
     frame_start: int | None = None,
     frame_end: int | None = None,
@@ -342,7 +342,7 @@ async def render_animation(
     name="blender_export_gltf",
     description="Export the scene as glTF/GLB. Provide the output file path.",
 )
-async def export_gltf(ctx: Any, filepath: str) -> str:
+async def export_gltf(ctx: Context, filepath: str) -> str:
     result = await _get_conn(ctx).send_command("export.gltf", {"filepath": filepath})
     return json.dumps(result, indent=2)
 
@@ -351,7 +351,7 @@ async def export_gltf(ctx: Any, filepath: str) -> str:
     name="blender_export_obj",
     description="Export the scene as OBJ. Provide the output file path.",
 )
-async def export_obj(ctx: Any, filepath: str) -> str:
+async def export_obj(ctx: Context, filepath: str) -> str:
     result = await _get_conn(ctx).send_command("export.obj", {"filepath": filepath})
     return json.dumps(result, indent=2)
 
@@ -360,7 +360,7 @@ async def export_obj(ctx: Any, filepath: str) -> str:
     name="blender_export_fbx",
     description="Export the scene as FBX. Provide the output file path.",
 )
-async def export_fbx(ctx: Any, filepath: str) -> str:
+async def export_fbx(ctx: Context, filepath: str) -> str:
     result = await _get_conn(ctx).send_command("export.fbx", {"filepath": filepath})
     return json.dumps(result, indent=2)
 
@@ -372,7 +372,7 @@ async def export_fbx(ctx: Any, filepath: str) -> str:
     name="blender_history_undo",
     description="Undo the last operation in Blender.",
 )
-async def history_undo(ctx: Any) -> str:
+async def history_undo(ctx: Context) -> str:
     result = await _get_conn(ctx).send_command("history.undo")
     return json.dumps(result, indent=2)
 
@@ -381,7 +381,7 @@ async def history_undo(ctx: Any) -> str:
     name="blender_history_redo",
     description="Redo the last undone operation in Blender.",
 )
-async def history_redo(ctx: Any) -> str:
+async def history_redo(ctx: Context) -> str:
     result = await _get_conn(ctx).send_command("history.redo")
     return json.dumps(result, indent=2)
 

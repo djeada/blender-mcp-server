@@ -11,6 +11,7 @@ bl_info = {
 import bpy
 import json
 import os
+import queue
 import socket
 import threading
 import traceback
@@ -430,6 +431,7 @@ class BlenderMCPServer:
         self._thread: threading.Thread | None = None
         self._running = False
         self._handler = CommandHandler()
+        self._request_queue: queue.Queue[dict[str, Any]] = queue.Queue()
 
     def start(self):
         if self._running:
@@ -442,6 +444,7 @@ class BlenderMCPServer:
         self._server_socket.listen(1)
         self._thread = threading.Thread(target=self._accept_loop, daemon=True)
         self._thread.start()
+        bpy.app.timers.register(self._drain_request_queue, first_interval=0.01)
         logger.info(f"Blender MCP Bridge listening on {HOST}:{PORT}")
 
     def stop(self):
@@ -452,6 +455,14 @@ class BlenderMCPServer:
         if self._thread:
             self._thread.join(timeout=3)
             self._thread = None
+        while not self._request_queue.empty():
+            queued = self._request_queue.get_nowait()
+            queued["response"] = {
+                "id": queued["request"].get("id"),
+                "success": False,
+                "error": "Blender MCP Bridge stopped",
+            }
+            queued["event"].set()
         logger.info("Blender MCP Bridge stopped")
 
     def _accept_loop(self):
@@ -484,7 +495,7 @@ class BlenderMCPServer:
                         continue
                     try:
                         request = json.loads(line)
-                        response = self._process_request(request)
+                        response = self._submit_request(request)
                     except json.JSONDecodeError as e:
                         response = {
                             "id": None,
@@ -511,6 +522,31 @@ class BlenderMCPServer:
         "material.set_texture",
     }
 
+    def _submit_request(self, request: dict) -> dict:
+        queued = {"request": request, "event": threading.Event(), "response": None}
+        self._request_queue.put(queued)
+        queued["event"].wait()
+        return queued["response"]
+
+    def _drain_request_queue(self):
+        while True:
+            try:
+                queued = self._request_queue.get_nowait()
+            except queue.Empty:
+                break
+            queued["response"] = self._process_request(queued["request"])
+            queued["event"].set()
+        return 0.01 if self._running else None
+
+    @staticmethod
+    def _maybe_push_undo(command: str):
+        undo_push = bpy.ops.ed.undo_push
+        poll = getattr(undo_push, "poll", None)
+        if callable(poll) and not poll():
+            logger.debug(f"Skipping undo push for {command}: context poll failed")
+            return
+        undo_push(message=f"MCP: {command}")
+
     def _process_request(self, request: dict) -> dict:
         req_id = request.get("id")
         command = request.get("command", "")
@@ -518,7 +554,7 @@ class BlenderMCPServer:
         try:
             # Auto-push undo before mutations
             if command in self.MUTATION_COMMANDS:
-                bpy.ops.ed.undo_push(message=f"MCP: {command}")
+                self._maybe_push_undo(command)
             result = self._handler.handle(command, params)
             return {"id": req_id, "success": True, "result": result}
         except Exception as e:

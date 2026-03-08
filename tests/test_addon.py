@@ -2,6 +2,7 @@
 
 import json
 import sys
+import threading
 import pytest
 from unittest.mock import MagicMock, patch
 
@@ -51,6 +52,8 @@ def _create_mock_bpy():
 
     bpy.context.scene = scene
     bpy.context.collection = MagicMock()
+    bpy.app.timers.register = MagicMock()
+    bpy.ops.ed.undo_push.poll.return_value = False
 
     # Mock data — use MagicMock for Blender collections (they support .get() and iteration)
     objects_collection = MagicMock()
@@ -77,18 +80,22 @@ def mock_bpy():
 
 
 @pytest.fixture
-def handler(mock_bpy):
+def addon_module(mock_bpy):
     # Force reimport with mocked bpy
     if "addon" in sys.modules:
         del sys.modules["addon"]
     # We need to import the addon's __init__ as a module
     import importlib.util
-    spec = importlib.util.spec_from_file_location(
-        "addon", "addon/__init__.py"
-    )
+
+    spec = importlib.util.spec_from_file_location("addon", "addon/__init__.py")
     addon = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(addon)
-    return addon.CommandHandler()
+    return addon
+
+
+@pytest.fixture
+def handler(addon_module):
+    return addon_module.CommandHandler()
 
 
 class TestSceneCommands:
@@ -139,3 +146,37 @@ class TestMaterialCommands:
         mock_bpy.data.materials = []
         result = handler.handle("material.list", {})
         assert result["materials"] == []
+
+
+class TestServerExecution:
+    def test_mutation_request_skips_undo_when_poll_fails(self, addon_module, mock_bpy):
+        server = addon_module.BlenderMCPServer()
+        request = {
+            "id": "1",
+            "command": "object.translate",
+            "params": {"name": "Cube", "offset": [1, 2, 3]},
+        }
+
+        result = server._process_request(request)
+
+        assert result["success"] is True
+        mock_bpy.ops.ed.undo_push.assert_not_called()
+
+    def test_submit_request_runs_through_queue(self, addon_module):
+        server = addon_module.BlenderMCPServer()
+        request = {"id": "abc", "command": "scene.get_info", "params": {}}
+        expected = {"id": "abc", "success": True, "result": {"ok": True}}
+        response_holder = {}
+
+        with patch.object(server, "_process_request", return_value=expected) as process:
+            worker = threading.Thread(
+                target=lambda: response_holder.setdefault(
+                    "response", server._submit_request(request)
+                )
+            )
+            worker.start()
+            server._drain_request_queue()
+            worker.join(timeout=1)
+
+        assert response_holder["response"] == expected
+        process.assert_called_once_with(request)

@@ -1,13 +1,47 @@
-.venv/
+# Python
 __pycache__/
 *.py[cod]
 *.pyo
-*.egg-info/
+*.pyd
+*.so
+.Python
+
+# Virtual environments
+.venv/
+venv/
+env/
+ENV/
+
+# Packaging
 *.egg
+*.egg-info/
 pip-wheel-metadata/
-dist/
 build/
+dist/
+
+# Test and coverage output
 .pytest_cache/
 .coverage
 .coverage.*
 htmlcov/
+
+# Type checker / linter caches
+.mypy_cache/
+.ruff_cache/
+.pyre/
+
+# Local tool state
+.cache/
+
+# Editor / OS files
+.DS_Store
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# Blender-generated backups and temp files
+*.blend1
+*.blend2
+*.blend@

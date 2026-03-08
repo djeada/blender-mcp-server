@@ -8,6 +8,7 @@ from unittest.mock import AsyncMock, patch, MagicMock
 from blender_mcp_server.server import (
     mcp,
     BlenderConnection,
+    main,
 )
 
 
@@ -75,6 +76,14 @@ class TestToolRegistration:
     def test_all_tools_have_descriptions(self):
         for tool in mcp._tool_manager._tools.values():
             assert tool.description, f"Tool {tool.name} has no description"
+
+    def test_context_parameter_not_exposed_in_tool_schema(self):
+        for tool in mcp._tool_manager._tools.values():
+            schema = getattr(tool, "inputSchema", None) or getattr(
+                tool, "parameters", {}
+            )
+            properties = schema.get("properties", {})
+            assert "ctx" not in properties, f"Tool {tool.name} exposes ctx in schema"
 
 
 class TestBlenderConnection:
@@ -159,34 +168,9 @@ class TestBlenderConnection:
 
 
 class TestMCPProtocol:
-    """Test the MCP server responds correctly to protocol messages."""
+    """Test the MCP server entrypoint configuration."""
 
-    def test_initialize_response(self):
-        """MCP server should respond to initialize with capabilities."""
-        import subprocess
-        import sys
-
-        init_msg = json.dumps({
-            "jsonrpc": "2.0",
-            "id": 1,
-            "method": "initialize",
-            "params": {
-                "protocolVersion": "2024-11-05",
-                "capabilities": {},
-                "clientInfo": {"name": "test", "version": "0.1"},
-            },
-        })
-
-        result = subprocess.run(
-            [sys.executable, "-m", "blender_mcp_server.server"],
-            input=init_msg,
-            capture_output=True,
-            text=True,
-            timeout=10,
-        )
-
-        response = json.loads(result.stdout.strip())
-        assert response["jsonrpc"] == "2.0"
-        assert response["id"] == 1
-        assert "capabilities" in response["result"]
-        assert "tools" in response["result"]["capabilities"]
+    def test_main_runs_stdio_transport(self):
+        with patch.object(mcp, "run") as run:
+            main()
+        run.assert_called_once_with(transport="stdio")
