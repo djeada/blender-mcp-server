@@ -7,6 +7,7 @@ Args:
     resolution (int): Domain max resolution. Default: 64
     cache_dir (str): Cache directory (Blender relative path OK). Default: "//fluid_cache"
     domain_type (str): "LIQUID" or "GAS". Default: "LIQUID"
+    show_viewport (bool): Whether the fluid modifier is visible in the viewport. Default: False
 
 Result:
     domain (str): Created object name
@@ -49,6 +50,7 @@ size = args.get("size", 4.0)
 resolution = args.get("resolution", 64)
 cache_dir = args.get("cache_dir", "//fluid_cache")
 domain_type = args.get("domain_type", "LIQUID")
+show_viewport = args.get("show_viewport", False)
 
 domain = create_cube_mesh(name, size)
 domain.location = tuple(location)
@@ -62,6 +64,7 @@ settings = modifier.domain_settings
 settings.domain_type = domain_type
 settings.resolution_max = resolution
 settings.cache_directory = cache_dir
+modifier.show_viewport = show_viewport
 
 # Make domain wireframe for visibility
 domain.display_type = 'WIRE'
@@ -71,4 +74,5 @@ __result__ = {
     "resolution": settings.resolution_max,
     "cache_dir": settings.cache_directory,
     "domain_type": domain_type,
+    "show_viewport": modifier.show_viewport,
 }

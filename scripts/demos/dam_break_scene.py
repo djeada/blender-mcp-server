@@ -149,6 +149,7 @@ dsettings.domain_type = 'LIQUID'
 dsettings.resolution_max = resolution
 dsettings.cache_directory = output_dir + "fluid_cache"
 dsettings.use_mesh = True
+dmod.show_viewport = False
 domain.display_type = 'WIRE'
 
 # ---------------------------------------------------------------------------
@@ -249,6 +250,7 @@ __result__ = {
     "render_engine": scene.render.engine,
     "render_resolution": [scene.render.resolution_x, scene.render.resolution_y],
     "next_steps": [
+        "The liquid domain stays hidden in the viewport to avoid Blender 4.0.2 view-layer update crashes.",
         "Bake fluid: blender_python_exec_async with code 'bpy.ops.fluid.bake_all(); __result__={\"baked\":True}'",
         "Render preview: blender_render_still with output_path '/tmp/dam_break.png'",
     ],
