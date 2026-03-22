@@ -201,146 +201,198 @@ def inside_footprint(x: float, y: float, footprint: tuple[float, float, float, f
     return min_x <= x <= max_x and min_y <= y <= max_y
 
 
-def simulate_flood(buildings: list[dict], frames: int, grid_x: int, grid_y: int, cell_size: float) -> tuple[list[list[list[float]]], list[list[list[tuple[float, float]]]]]:
-    origin_x = -12.0
-    origin_y = -9.0
-    obstacles = [[False for _ in range(grid_y)] for _ in range(grid_x)]
-    terrain = [[0.0 for _ in range(grid_y)] for _ in range(grid_x)]
-
-    for ix in range(grid_x):
-        for iy in range(grid_y):
-            x, y = cell_center(ix, iy, origin_x, origin_y, cell_size)
-            terrain[ix][iy] = terrain_height(x, y)
-            obstacles[ix][iy] = any(inside_footprint(x, y, b["footprint"]) for b in buildings)
-
-    depth = [[0.0 for _ in range(grid_y)] for _ in range(grid_x)]
-    depth_frames: list[list[list[float]]] = []
-    velocity_frames: list[list[list[tuple[float, float]]]] = []
-    source_cells = [
-        (ix, iy)
-        for ix in range(grid_x)
-        for iy in range(grid_y)
-        if cell_center(ix, iy, origin_x, origin_y, cell_size)[0] > 8.2 and abs(cell_center(ix, iy, origin_x, origin_y, cell_size)[1]) < 2.4
-    ]
-
-    for frame in range(1, frames + 1):
-        frame_velocity = [[(0.0, 0.0) for _ in range(grid_y)] for _ in range(grid_x)]
-        for _substep in range(2):
-            incoming = [[0.0 for _ in range(grid_y)] for _ in range(grid_x)]
-            outgoing = [[0.0 for _ in range(grid_y)] for _ in range(grid_x)]
-            for ix in range(grid_x):
-                for iy in range(grid_y):
-                    if obstacles[ix][iy]:
-                        continue
-                    here_depth = depth[ix][iy]
-                    if here_depth <= 0.0001:
-                        continue
-                    surface = terrain[ix][iy] + here_depth
-                    candidates = []
-                    total_flow = 0.0
-                    for dx, dy in ((1, 0), (-1, 0), (0, 1), (0, -1)):
-                        nx = ix + dx
-                        ny = iy + dy
-                        if nx < 0 or ny < 0 or nx >= grid_x or ny >= grid_y or obstacles[nx][ny]:
-                            continue
-                        neighbor_surface = terrain[nx][ny] + depth[nx][ny]
-                        delta = surface - neighbor_surface
-                        if delta <= 0.002:
-                            continue
-                        amount = delta * 0.30
-                        candidates.append((nx, ny, dx, dy, amount))
-                        total_flow += amount
-                    if total_flow <= 0.0:
-                        continue
-                    scale = 1.0
-                    if total_flow > here_depth:
-                        scale = here_depth / total_flow
-                    moved_x = 0.0
-                    moved_y = 0.0
-                    for nx, ny, dx, dy, amount in candidates:
-                        flow = amount * scale
-                        outgoing[ix][iy] += flow
-                        incoming[nx][ny] += flow
-                        moved_x += dx * flow
-                        moved_y += dy * flow
-                    frame_velocity[ix][iy] = (moved_x, moved_y)
-            for ix in range(grid_x):
-                for iy in range(grid_y):
-                    if obstacles[ix][iy]:
-                        depth[ix][iy] = 0.0
-                        continue
-                    depth[ix][iy] = max(0.0, (depth[ix][iy] + incoming[ix][iy] - outgoing[ix][iy]) * 0.998)
-
-            if frame <= 12:
-                injection = 0.92
-            elif frame <= 30:
-                injection = 0.54
-            elif frame <= 70:
-                injection = 0.28
-            else:
-                injection = 0.12
-
-            per_cell = injection / max(1, len(source_cells))
-            for ix, iy in source_cells:
-                depth[ix][iy] += per_cell
-
-        depth_frames.append([row[:] for row in depth])
-        velocity_frames.append([[frame_velocity[ix][iy] for iy in range(grid_y)] for ix in range(grid_x)])
-
-    return depth_frames, velocity_frames
+def clamp(value: float, minimum: float, maximum: float) -> float:
+    return max(minimum, min(maximum, value))
 
 
-def create_water_mesh(name: str, depth_grid: list[list[float]], buildings: list[dict], cell_size: float, mat: bpy.types.Material, coll: bpy.types.Collection) -> bpy.types.Object:
-    grid_x = len(depth_grid)
-    grid_y = len(depth_grid[0])
-    origin_x = -12.0
-    origin_y = -9.0
+def smoothstep(edge0: float, edge1: float, x: float) -> float:
+    if edge0 == edge1:
+        return 0.0
+    t = clamp((x - edge0) / (edge1 - edge0), 0.0, 1.0)
+    return t * t * (3.0 - 2.0 * t)
 
-    def wet(ix: int, iy: int) -> bool:
-        if ix < 0 or iy < 0 or ix >= grid_x or iy >= grid_y:
-            return False
-        depth = depth_grid[ix][iy]
-        if depth <= 0.03:
-            return False
-        x, y = cell_center(ix, iy, origin_x, origin_y, cell_size)
-        return not any(inside_footprint(x, y, b["footprint"]) for b in buildings)
 
-    corner_indices: dict[tuple[int, int], int] = {}
+def wave_state(frame: int, frame_end: int) -> dict[str, float]:
+    t = (frame - 1) / max(1.0, float(frame_end - 1))
+    lead_x = 10.4 - 18.6 * (t ** 0.82)
+    crest_x = lead_x + 1.45
+    branch_strength = smoothstep(2.2, -1.2, lead_x)
+    north_front = branch_strength * (1.0 + 8.2 * (t ** 0.95))
+    south_front = branch_strength * (0.8 + 6.6 * (t ** 0.98))
+    return {
+        "t": t,
+        "lead_x": lead_x,
+        "crest_x": crest_x,
+        "crest_height": 1.9 - 0.55 * t,
+        "body_depth": 0.45 + 0.25 * (1.0 - t),
+        "branch_strength": branch_strength,
+        "north_front": north_front,
+        "south_front": south_front,
+    }
+
+
+def water_depth_at(frame: int, frame_end: int, x: float, y: float) -> float:
+    state = wave_state(frame, frame_end)
+    road_mask = 1.0 - smoothstep(1.55, 2.35, abs(y))
+    main_fill = smoothstep(state["lead_x"] - 0.2, state["lead_x"] + 0.85, x)
+    source_cut = 1.0 - smoothstep(10.0, 10.9, x)
+    crest = math.exp(-((x - state["crest_x"]) / 1.25) ** 2) * state["crest_height"]
+    wake = state["body_depth"] * (0.7 + 0.3 * (1.0 - smoothstep(6.5, 10.2, x)))
+    main_depth = road_mask * source_cut * main_fill * (wake + crest)
+
+    branch_x_mask = 1.0 - smoothstep(1.35, 2.15, abs(x - 0.3))
+
+    north_gate = smoothstep(0.15, 0.8, y)
+    north_fill = 1.0 - smoothstep(state["north_front"] - 0.7, state["north_front"] + 0.45, y)
+    north_crest = math.exp(-((y - state["north_front"]) / 0.75) ** 2) * 0.75
+    north_depth = branch_x_mask * state["branch_strength"] * north_gate * north_fill * (0.18 + 0.35 * state["branch_strength"] + north_crest)
+
+    south_gate = smoothstep(0.15, 0.8, -y)
+    south_fill = 1.0 - smoothstep(state["south_front"] - 0.7, state["south_front"] + 0.45, -y)
+    south_crest = math.exp(-((-y - state["south_front"]) / 0.75) ** 2) * 0.62
+    south_depth = branch_x_mask * state["branch_strength"] * south_gate * south_fill * (0.16 + 0.28 * state["branch_strength"] + south_crest)
+
+    source_burst = (1.0 - smoothstep(0.0, 0.18, state["t"])) * (1.0 - smoothstep(7.6, 10.8, x)) * (1.0 - smoothstep(1.9, 3.1, abs(y))) * 0.85
+    return max(0.0, main_depth, north_depth, south_depth, source_burst)
+
+
+def foam_strength_at(frame: int, frame_end: int, x: float, y: float) -> float:
+    state = wave_state(frame, frame_end)
+    main_crest = math.exp(-((x - state["crest_x"]) / 0.42) ** 2) * (1.0 - smoothstep(1.4, 2.2, abs(y)))
+    north_crest = math.exp(-((y - state["north_front"]) / 0.35) ** 2) * (1.0 - smoothstep(1.1, 1.9, abs(x - 0.3))) if state["north_front"] > 0.4 else 0.0
+    south_crest = math.exp(-((-y - state["south_front"]) / 0.35) ** 2) * (1.0 - smoothstep(1.1, 1.9, abs(x - 0.3))) if state["south_front"] > 0.4 else 0.0
+    source = (1.0 - smoothstep(0.0, 0.24, state["t"])) * (1.0 - smoothstep(7.8, 10.8, x)) * (1.0 - smoothstep(1.5, 2.7, abs(y)))
+    return max(main_crest, north_crest, south_crest, source)
+
+
+def append_surface_patch(
+    verts: list[tuple[float, float, float]],
+    faces: list[tuple[int, int, int, int]],
+    frame: int,
+    frame_end: int,
+    buildings: list[dict],
+    x0: float,
+    x1: float,
+    y0: float,
+    y1: float,
+    nx: int,
+    ny: int,
+) -> None:
+    base_index = len(verts)
+    depths = [[0.0 for _ in range(ny + 1)] for _ in range(nx + 1)]
+    for ix in range(nx + 1):
+        for iy in range(ny + 1):
+            x = x0 + (x1 - x0) * ix / max(1, nx)
+            y = y0 + (y1 - y0) * iy / max(1, ny)
+            blocked = any(inside_footprint(x, y, b["footprint"]) for b in buildings)
+            depth = 0.0 if blocked else water_depth_at(frame, frame_end, x, y)
+            depths[ix][iy] = depth
+            ripple = 0.06 * math.sin(x * 0.9 + frame * 0.17) * math.cos(y * 1.25 - frame * 0.11)
+            z = terrain_height(x, y) + depth * 0.95 + ripple * min(1.0, depth * 2.8)
+            verts.append((x, y, z))
+
+    for ix in range(nx):
+        for iy in range(ny):
+            avg_depth = (depths[ix][iy] + depths[ix + 1][iy] + depths[ix + 1][iy + 1] + depths[ix][iy + 1]) * 0.25
+            if avg_depth <= 0.02:
+                continue
+            v0 = base_index + ix * (ny + 1) + iy
+            v1 = base_index + (ix + 1) * (ny + 1) + iy
+            v2 = base_index + (ix + 1) * (ny + 1) + iy + 1
+            v3 = base_index + ix * (ny + 1) + iy + 1
+            faces.append((v0, v1, v2, v3))
+
+
+def create_water_mesh(name: str, frame: int, frame_end: int, buildings: list[dict], mat: bpy.types.Material, coll: bpy.types.Collection) -> bpy.types.Object:
+    state = wave_state(frame, frame_end)
     verts: list[tuple[float, float, float]] = []
     faces: list[tuple[int, int, int, int]] = []
 
-    def corner_height(cx: int, cy: int) -> float:
-        samples = []
-        for ox, oy in ((-1, -1), (-1, 0), (0, -1), (0, 0)):
-            ix = cx + ox
-            iy = cy + oy
-            if 0 <= ix < grid_x and 0 <= iy < grid_y and wet(ix, iy):
-                x, y = cell_center(ix, iy, origin_x, origin_y, cell_size)
-                samples.append(terrain_height(x, y) + depth_grid[ix][iy] * 2.6 + 0.03)
-        return sum(samples) / len(samples) if samples else 0.0
+    append_surface_patch(
+        verts,
+        faces,
+        frame,
+        frame_end,
+        buildings,
+        max(-10.8, state["lead_x"] - 0.6),
+        10.8,
+        -2.4,
+        2.4,
+        60,
+        16,
+    )
+    if state["north_front"] > 0.35:
+        append_surface_patch(
+            verts,
+            faces,
+            frame,
+            frame_end,
+            buildings,
+            -2.2,
+            2.4,
+            -0.3,
+            min(9.2, state["north_front"] + 0.6),
+            18,
+            28,
+        )
+    if state["south_front"] > 0.35:
+        append_surface_patch(
+            verts,
+            faces,
+            frame,
+            frame_end,
+            buildings,
+            -2.1,
+            2.2,
+            -min(8.0, state["south_front"] + 0.6),
+            0.3,
+            18,
+            24,
+        )
 
-    def get_corner(cx: int, cy: int) -> int:
-        key = (cx, cy)
-        index = corner_indices.get(key)
-        if index is not None:
-            return index
-        x = origin_x + cx * cell_size
-        y = origin_y + cy * cell_size
-        z = corner_height(cx, cy)
-        corner_indices[key] = len(verts)
-        verts.append((x, y, z))
-        return corner_indices[key]
+    mesh = bpy.data.meshes.new(f"{name}Mesh")
+    mesh.from_pydata(verts, [], faces)
+    mesh.update()
+    obj = bpy.data.objects.new(name, mesh)
+    coll.objects.link(obj)
+    assign_material(obj, mat)
+    obj.hide_render = True
+    obj.hide_viewport = True
+    mod = obj.modifiers.new(name="FloodSmooth", type="SUBSURF")
+    mod.levels = 1
+    mod.render_levels = 1
+    for poly in mesh.polygons:
+        poly.use_smooth = True
+    return obj
 
-    for ix in range(grid_x):
-        for iy in range(grid_y):
-            if not wet(ix, iy):
+
+def create_foam_mesh(name: str, frame: int, frame_end: int, buildings: list[dict], mat: bpy.types.Material, coll: bpy.types.Collection) -> bpy.types.Object:
+    x0, x1 = -11.0, 10.8
+    y0, y1 = -8.2, 9.6
+    nx, ny = 52, 38
+    verts: list[tuple[float, float, float]] = []
+    faces: list[tuple[int, int, int, int]] = []
+    strengths = [[0.0 for _ in range(ny + 1)] for _ in range(nx + 1)]
+    for ix in range(nx + 1):
+        for iy in range(ny + 1):
+            x = x0 + (x1 - x0) * ix / nx
+            y = y0 + (y1 - y0) * iy / ny
+            blocked = any(inside_footprint(x, y, b["footprint"]) for b in buildings)
+            depth = 0.0 if blocked else water_depth_at(frame, frame_end, x, y)
+            strength = 0.0 if depth <= 0.04 else foam_strength_at(frame, frame_end, x, y)
+            strengths[ix][iy] = strength
+            z = terrain_height(x, y) + depth * 0.98 + strength * 0.18 + 0.02
+            verts.append((x, y, z))
+    for ix in range(nx):
+        for iy in range(ny):
+            avg = (strengths[ix][iy] + strengths[ix + 1][iy] + strengths[ix + 1][iy + 1] + strengths[ix][iy + 1]) * 0.25
+            if avg <= 0.06:
                 continue
-            v0 = get_corner(ix, iy)
-            v1 = get_corner(ix + 1, iy)
-            v2 = get_corner(ix + 1, iy + 1)
-            v3 = get_corner(ix, iy + 1)
+            v0 = ix * (ny + 1) + iy
+            v1 = (ix + 1) * (ny + 1) + iy
+            v2 = (ix + 1) * (ny + 1) + iy + 1
+            v3 = ix * (ny + 1) + iy + 1
             faces.append((v0, v1, v2, v3))
-
     mesh = bpy.data.meshes.new(f"{name}Mesh")
     mesh.from_pydata(verts, [], faces)
     mesh.update()
@@ -362,32 +414,34 @@ def key_single_frame_visibility(obj: bpy.types.Object, frame: int, frame_end: in
         obj.keyframe_insert(data_path="hide_render", frame=frame_num)
 
 
-def animate_debris(debris_specs: list[dict], depth_frames: list[list[list[float]]], velocity_frames: list[list[list[tuple[float, float]]]], frame_end: int, cell_size: float) -> None:
-    origin_x = -12.0
-    origin_y = -9.0
-    grid_x = len(depth_frames[0])
-    grid_y = len(depth_frames[0][0])
+def water_velocity_at(frame: int, frame_end: int, x: float, y: float) -> tuple[float, float]:
+    state = wave_state(frame, frame_end)
+    depth = water_depth_at(frame, frame_end, x, y)
+    if depth <= 0.03:
+        return 0.0, 0.0
+    vx = -0.11 - 0.08 * math.exp(-((x - state["crest_x"]) / 1.5) ** 2)
+    vy = 0.0
+    if abs(x - 0.3) < 1.7:
+        if y > 0.1 and y < state["north_front"]:
+            vy += 0.05 + 0.04 * state["branch_strength"]
+        if y < -0.1 and -y < state["south_front"]:
+            vy -= 0.04 + 0.035 * state["branch_strength"]
+    return vx, vy
 
-    def sample(ix: int, iy: int, frame_idx: int) -> tuple[float, float, float]:
-        if ix < 0 or iy < 0 or ix >= grid_x or iy >= grid_y:
-            return 0.0, 0.0, 0.0
-        vx, vy = velocity_frames[frame_idx][ix][iy]
-        return depth_frames[frame_idx][ix][iy], vx, vy
 
+def animate_debris(debris_specs: list[dict], frame_end: int) -> None:
     for spec in debris_specs:
         obj = spec["object"]
         x, y, z = spec["loc"]
-        for frame in range(1, frame_end + 1, 4):
-            frame_idx = frame - 1
-            ix = int((x - origin_x) / cell_size)
-            iy = int((y - origin_y) / cell_size)
-            depth, vx, vy = sample(ix, iy, frame_idx)
-            if depth > 0.035:
-                x += vx * 0.9
-                y += vy * 0.9
-                z = 0.10 + min(0.55, depth * 1.6)
-                obj.rotation_euler.z += (vx - vy) * 0.12
-                obj.rotation_euler.x += 0.04
+        for frame in range(1, frame_end + 1, 3):
+            depth = water_depth_at(frame, frame_end, x, y)
+            vx, vy = water_velocity_at(frame, frame_end, x, y)
+            if depth > 0.04:
+                x += vx * 1.5
+                y += vy * 1.7
+                z = 0.08 + min(0.7, depth * 0.7)
+                obj.rotation_euler.z += (-vx + vy) * 0.4
+                obj.rotation_euler.x += 0.08
             obj.location = (x, y, z)
             obj.keyframe_insert(data_path="location", frame=frame)
             obj.keyframe_insert(data_path="rotation_euler", frame=frame)
@@ -448,6 +502,7 @@ debris_specs = [
 ]
 
 water_coll = ensure_collection("FloodWater")
+foam_coll = ensure_collection("FloodFoam")
 water_mat = create_material(
     "FloodWaterMaterial",
     (0.05, 0.44, 0.96, 1.0),
@@ -456,19 +511,26 @@ water_mat = create_material(
     alpha=1.0,
     emission_strength=0.18,
 )
-
-cell_size = 0.6
-grid_x = 40
-grid_y = 30
-depth_frames, velocity_frames = simulate_flood(buildings, water_frames, grid_x, grid_y, cell_size)
+foam_mat = create_material(
+    "FloodFoamMaterial",
+    (0.88, 0.96, 1.0, 1.0),
+    roughness=0.18,
+    transmission=0.0,
+    alpha=1.0,
+    emission_strength=0.42,
+)
 
 water_objects = []
-for frame_idx, depth_grid in enumerate(depth_frames, start=1):
-    obj = create_water_mesh(f"FloodSurface_{frame_idx:04d}", depth_grid, buildings, cell_size, water_mat, water_coll)
+foam_objects = []
+for frame_idx in range(1, water_frames + 1):
+    obj = create_water_mesh(f"FloodSurface_{frame_idx:04d}", frame_idx, frame_end, buildings, water_mat, water_coll)
     key_single_frame_visibility(obj, frame_idx, frame_end)
     water_objects.append(obj.name)
+    foam = create_foam_mesh(f"FloodFoam_{frame_idx:04d}", frame_idx, frame_end, buildings, foam_mat, foam_coll)
+    key_single_frame_visibility(foam, frame_idx, frame_end)
+    foam_objects.append(foam.name)
 
-animate_debris(debris_specs, depth_frames, velocity_frames, frame_end, cell_size)
+animate_debris(debris_specs, frame_end)
 cam_obj = create_camera(scene)
 
 for obj in env_coll.objects:
@@ -476,18 +538,23 @@ for obj in env_coll.objects:
 for obj in debris_coll.objects:
     obj.pass_index = 2
 
-scene.frame_set(min(frame_end, 90))
+scene.frame_set(min(frame_end, 72))
 
 sample_frames = {}
 for frame in (1, min(30, water_frames), min(60, water_frames), water_frames):
-    wet = sum(1 for row in depth_frames[frame - 1] for depth in row if depth > 0.03)
-    sample_frames[frame] = {"wet_cells": wet}
+    state = wave_state(frame, frame_end)
+    sample_frames[frame] = {
+        "lead_x": round(state["lead_x"], 2),
+        "north_front": round(state["north_front"], 2),
+        "south_front": round(state["south_front"], 2),
+    }
 
 __result__ = {
     "scene": scene.name,
     "frame_range": [scene.frame_start, scene.frame_end],
     "water_objects": len(water_objects),
     "water_collection": water_coll.name,
+    "foam_objects": len(foam_objects),
     "buildings": [spec["name"] for spec in buildings],
     "debris": [spec["name"] for spec in debris_specs],
     "camera": cam_obj.name,
