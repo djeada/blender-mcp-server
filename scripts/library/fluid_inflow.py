@@ -9,6 +9,9 @@ Args:
     flow_behavior (str): "INFLOW", "OUTFLOW", or "GEOMETRY". Default: "INFLOW"
     use_initial_velocity (bool): Enable initial velocity. Default: False
     initial_velocity (list[float]): [vx, vy, vz]. Default: [0, 0, 0]
+    show_viewport (bool): Whether to evaluate the fluid modifier in the viewport. Default: False
+    hide_viewport (bool): Whether to hide the source object in the viewport. Default: True
+    hide_render (bool): Whether to hide the source object in renders. Default: True
 
 Result:
     name (str): Object name
@@ -62,12 +65,16 @@ else:
 
 flow_type = args.get("flow_type", "LIQUID")
 flow_behavior = args.get("flow_behavior", "INFLOW")
+show_viewport = args.get("show_viewport", False)
+hide_viewport = args.get("hide_viewport", True)
+hide_render = args.get("hide_render", True)
 
 modifier = obj.modifiers.get("Fluid")
 if modifier is None:
     modifier = obj.modifiers.new(name="Fluid", type="FLUID")
 
 modifier.fluid_type = 'FLOW'
+modifier.show_viewport = show_viewport
 flow = modifier.flow_settings
 flow.flow_type = flow_type
 flow.flow_behavior = flow_behavior
@@ -77,8 +84,14 @@ if args.get("use_initial_velocity", False):
     vel = args.get("initial_velocity", [0, 0, 0])
     flow.velocity_coord = tuple(vel)
 
+obj.hide_viewport = hide_viewport
+obj.hide_render = hide_render
+
 __result__ = {
     "name": obj.name,
     "flow_type": flow_type,
     "flow_behavior": flow_behavior,
+    "show_viewport": modifier.show_viewport,
+    "hide_viewport": obj.hide_viewport,
+    "hide_render": obj.hide_render,
 }

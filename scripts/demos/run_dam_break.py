@@ -130,17 +130,14 @@ def build_steps(library_dir: str) -> list[dict[str, Any]]:
             "label": "Create ground plane (street)",
             "method": "inline",
             "code": (
-                "import bpy\n"
-                "bpy.ops.mesh.primitive_plane_add(size=20, location=(0,0,0))\n"
-                "bpy.context.active_object.name = 'Ground'\n"
-                "__result__ = {'object': 'Ground'}\n"
+                "obj = mcp_create_mesh('plane', name='Ground', location=(0,0,0), size=20)\n"
+                "__result__ = {'object': obj.name}\n"
             ),
         },
         {
             "label": "Create buildings",
             "method": "inline",
             "code": (
-                "import bpy\n"
                 "buildings = [\n"
                 "    ('Building_A', (3,2,2),    (1,1.5,2)),\n"
                 "    ('Building_B', (-2,-1,2.5),(1.25,1,2.5)),\n"
@@ -148,11 +145,8 @@ def build_steps(library_dir: str) -> list[dict[str, Any]]:
                 "]\n"
                 "names = []\n"
                 "for name, loc, scl in buildings:\n"
-                "    bpy.ops.mesh.primitive_cube_add(location=loc)\n"
-                "    obj = bpy.context.active_object\n"
-                "    obj.name = name\n"
+                "    obj = mcp_create_mesh('cube', name=name, location=loc, size=2.0)\n"
                 "    obj.scale = scl\n"
-                "    bpy.ops.object.transform_apply(location=False, rotation=False, scale=True)\n"
                 "    names.append(obj.name)\n"
                 "__result__ = {'buildings': names}\n"
             ),
@@ -163,16 +157,14 @@ def build_steps(library_dir: str) -> list[dict[str, Any]]:
             "label": "Create debris props",
             "method": "inline",
             "code": (
-                "import bpy\n"
                 "debris = [\n"
                 "    ('Debris_Crate',  (2,-2,0.4), 0.8),\n"
                 "    ('Debris_Barrel', (-1,1,0.5), 0.6),\n"
                 "]\n"
                 "names = []\n"
                 "for name, loc, size in debris:\n"
-                "    bpy.ops.mesh.primitive_cube_add(size=size, location=loc)\n"
-                "    bpy.context.active_object.name = name\n"
-                "    names.append(name)\n"
+                "    obj = mcp_create_mesh('cube', name=name, location=loc, size=size)\n"
+                "    names.append(obj.name)\n"
                 "__result__ = {'debris': names}\n"
             ),
         },
