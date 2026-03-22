@@ -201,6 +201,94 @@ Here's what you can ask Claude to do once everything is connected:
 >
 > "Redo what was just undone"
 
+### 🐍 Python Script Execution
+> "Run this Blender Python: `bpy.ops.mesh.primitive_monkey_add(location=(0,0,2))`"
+>
+> "Execute the fluid_domain.py script from the library with resolution 128"
+>
+> "Start an async bake job for the fluid simulation and tell me the job ID"
+>
+> "Check the status of job job-a1b2c3d4"
+
+### 🐍 Python Execution — Programmatic Examples
+
+#### Inline code — create a fluid domain
+
+```json
+{
+  "tool": "blender_python_exec",
+  "args": {
+    "code": "import bpy\nbpy.ops.mesh.primitive_cube_add(size=4, location=(0,0,2))\ndomain = bpy.context.active_object\ndomain.name = 'FluidDomain'\nbpy.ops.object.modifier_add(type='FLUID')\ndomain.modifiers['Fluid'].fluid_type = 'DOMAIN'\nsettings = domain.modifiers['Fluid'].domain_settings\nsettings.domain_type = 'LIQUID'\nsettings.resolution_divisions = 64\n__result__ = {'domain': domain.name, 'resolution': 64}",
+    "args": {"resolution": 64}
+  }
+}
+```
+
+#### Script file — set up colliders
+
+```json
+{
+  "tool": "blender_python_exec",
+  "args": {
+    "script_path": "/path/to/scripts/library/effector.py",
+    "args": {
+      "objects": ["Ground", "Building_01", "Building_02"],
+      "effector_type": "COLLISION"
+    }
+  }
+}
+```
+
+#### Animate a camera with keyframes
+
+```json
+{
+  "tool": "blender_python_exec",
+  "args": {
+    "script_path": "/path/to/scripts/library/keyframes.py",
+    "args": {
+      "keyframes": [
+        {"object": "Camera", "frame": 1, "location": [20, -20, 10]},
+        {"object": "Camera", "frame": 120, "location": [5, -10, 6]},
+        {"object": "Camera", "frame": 250, "location": [0, -5, 3]}
+      ]
+    }
+  }
+}
+```
+
+#### Start a bake and poll for completion
+
+```json
+{"tool": "blender_python_exec_async", "args": {"code": "import bpy\nbpy.ops.fluid.bake_all()\n__result__ = {'baked': True}", "timeout_seconds": 1800}}
+```
+
+Response: `{"job_id": "job-f8e2a1b3"}`
+
+Then poll:
+```json
+{"tool": "blender_job_status", "args": {"job_id": "job-f8e2a1b3"}}
+```
+
+### Script Library
+
+Pre-built scripts in `scripts/library/` for common Blender tasks. Use with `blender_python_exec` via `script_path`:
+
+| Script | Description |
+|---|---|
+| `fluid_domain.py` | Create a Mantaflow fluid domain |
+| `fluid_inflow.py` | Create an inflow source |
+| `effector.py` | Set objects as collision effectors |
+| `rigid_body.py` | Add rigid body physics |
+| `frame_range.py` | Set scene frame range |
+| `camera.py` | Create and configure a camera |
+| `keyframes.py` | Insert transform keyframes |
+| `collections.py` | Organize objects into collections |
+| `apply_transforms.py` | Apply transforms to objects |
+| `save_blend.py` | Save the .blend file |
+
+See `scripts/library/README.md` for full argument docs and an end-to-end dam-break setup walkthrough.
+
 ## Example Session
 
 Here's a real session transcript showing every category of tool in action.
@@ -432,7 +520,7 @@ blender-mcp-server/
 1. Fork the repository
 2. Create a feature branch
 3. Make your changes with tests
-4. Run `pytest tests/ -v` to verify all 55 tests pass
+4. Run `pytest tests/ -v` to verify all 73 tests pass
 5. Submit a pull request
 
 ## License

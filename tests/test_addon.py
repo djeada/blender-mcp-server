@@ -424,3 +424,143 @@ class TestJobLifecycle:
     def test_job_status_missing_id_raises(self, handler):
         with pytest.raises(ValueError, match="job_id"):
             handler.handle("job.status", {})
+
+
+class TestOutputBounding:
+    """Tests for MCP-106 output size limits and diagnostics."""
+
+    def test_stdout_is_capped(self, handler, addon_module):
+        limit = addon_module.MAX_OUTPUT_SIZE
+        result = handler.handle("python.execute", {
+            "code": f"print('x' * {limit + 1000})",
+        })
+        assert len(result["stdout"]) <= limit + 200  # Allow for truncation message
+        assert "truncated" in result["stdout"]
+
+    def test_stderr_is_capped(self, handler, addon_module):
+        limit = addon_module.MAX_OUTPUT_SIZE
+        result = handler.handle("python.execute", {
+            "code": f"import sys; sys.stderr.write('e' * {limit + 500})",
+        })
+        assert len(result["stderr"]) <= limit + 200
+        assert "truncated" in result["stderr"]
+
+    def test_short_output_not_capped(self, handler):
+        result = handler.handle("python.execute", {
+            "code": "print('short')",
+        })
+        assert "truncated" not in result["stdout"]
+        assert "short" in result["stdout"]
+
+    def test_last_execution_updated_on_success(self, handler, addon_module):
+        handler.handle("python.execute", {"code": "__result__ = 1"})
+        last = addon_module._last_execution
+        assert last["status"] == "ok"
+        assert last["request_id"] is not None
+        assert last["request_id"].startswith("exec-")
+        assert last["error_summary"] is None
+
+    def test_last_execution_updated_on_error(self, handler, addon_module):
+        handler.handle("python.execute", {"code": "raise RuntimeError('oops')"})
+        last = addon_module._last_execution
+        assert last["status"] == "error"
+        assert "oops" in last["error_summary"]
+
+    def test_last_execution_updated_by_job(self, handler, addon_module):
+        result = handler.handle("python.execute_async", {
+            "code": "__result__ = 'job_done'",
+        })
+        addon_module._job_manager._execute_job(result["job_id"])
+        last = addon_module._last_execution
+        assert last["status"] == "succeeded"
+        assert last["request_id"] == result["job_id"]
+
+    def test_truncate_helper(self, addon_module):
+        assert addon_module._truncate("short", 100) == "short"
+        assert addon_module._truncate("a" * 200, 10) == "a" * 10 + "…"
+
+    def test_request_id_in_execution_result(self, handler, addon_module):
+        """Every execution should track a request_id."""
+        handler.handle("python.execute", {"code": "pass"})
+        last = addon_module._last_execution
+        assert last["request_id"] is not None
+        assert last["duration_seconds"] is not None
+
+
+class TestResultSerialization:
+    """Additional tests for JSON-safe result handling."""
+
+    def test_nested_dict_result(self, handler):
+        result = handler.handle("python.execute", {
+            "code": "__result__ = {'a': {'b': [1, 2, 3]}}",
+        })
+        assert result["result"] == {"a": {"b": [1, 2, 3]}}
+
+    def test_list_result(self, handler):
+        result = handler.handle("python.execute", {
+            "code": "__result__ = [1, 'two', 3.0, None, True]",
+        })
+        assert result["result"] == [1, "two", 3.0, None, True]
+
+    def test_string_result(self, handler):
+        result = handler.handle("python.execute", {
+            "code": "__result__ = 'hello'",
+        })
+        assert result["result"] == "hello"
+
+    def test_numeric_result(self, handler):
+        result = handler.handle("python.execute", {
+            "code": "__result__ = 3.14159",
+        })
+        assert result["result"] == 3.14159
+
+    def test_bool_result(self, handler):
+        result = handler.handle("python.execute", {
+            "code": "__result__ = False",
+        })
+        assert result["result"] is False
+
+    def test_object_result_uses_repr(self, handler):
+        result = handler.handle("python.execute", {
+            "code": "class Foo: pass\n__result__ = Foo()",
+        })
+        # Custom objects can't be JSON serialized, should get repr
+        assert result["result"] is not None
+        assert isinstance(result["result"], str)
+
+
+class TestAsyncInlineDisabled:
+    """Verify inline code toggle works for async path too."""
+
+    def test_async_inline_disabled_rejects(self, handler, addon_module):
+        addon_module.ALLOW_INLINE_CODE = False
+        try:
+            with pytest.raises(PermissionError, match="disabled"):
+                handler.handle("python.execute_async", {"code": "pass"})
+        finally:
+            addon_module.ALLOW_INLINE_CODE = True
+
+    def test_async_script_path_outside_roots_rejected(self, handler, addon_module):
+        with tempfile.TemporaryDirectory() as allowed_dir:
+            with tempfile.TemporaryDirectory() as forbidden_dir:
+                script = os.path.join(forbidden_dir, "bad.py")
+                with open(script, "w") as f:
+                    f.write("pass\n")
+
+                addon_module.APPROVED_SCRIPT_ROOTS = [allowed_dir]
+                try:
+                    with pytest.raises(PermissionError, match="outside approved"):
+                        handler.handle("python.execute_async", {"script_path": script})
+                finally:
+                    addon_module.APPROVED_SCRIPT_ROOTS = []
+
+    def test_async_missing_code_and_script_raises(self, handler):
+        with pytest.raises(ValueError, match="Either"):
+            handler.handle("python.execute_async", {})
+
+    def test_async_both_code_and_script_raises(self, handler):
+        with pytest.raises(ValueError, match="not both"):
+            handler.handle("python.execute_async", {
+                "code": "pass",
+                "script_path": "/some/file.py",
+            })

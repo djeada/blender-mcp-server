@@ -73,6 +73,120 @@ The Blender MCP Server enables AI assistants (Claude Desktop, etc.) to control B
 | `blender.python.*` | Execute Python scripts (sync and async) |
 | `blender.job.*` | Query, cancel, and list async jobs |
 
+## Python Script Execution
+
+The `python.*` commands let MCP clients execute arbitrary Blender Python code
+through the bridge. This is the primary extension point for advanced workflows
+that go beyond the predefined tool set.
+
+### Command Flow — `python.execute` (synchronous)
+
+```
+MCP Client                MCP Server             Blender Add-on
+    │                         │                        │
+    │  blender_python_exec    │                        │
+    │  {code, args}           │                        │
+    │────────────────────────►│                        │
+    │                         │  python.execute        │
+    │                         │  {code, args, timeout} │
+    │                         │───────────────────────►│
+    │                         │                        │ validate safety
+    │                         │                        │ exec(code, namespace)
+    │                         │                        │ capture stdout/stderr
+    │                         │                        │◄─── __result__
+    │                         │  {success, result,     │
+    │                         │   stdout, stderr,      │
+    │                         │   duration_seconds}    │
+    │                         │◄───────────────────────│
+    │  tool response          │                        │
+    │◄────────────────────────│                        │
+```
+
+### Command Flow — `python.execute_async` (long-running jobs)
+
+```
+MCP Client                MCP Server             Blender Add-on
+    │                         │                        │
+    │  blender_python_exec    │                        │
+    │  _async {code}          │                        │
+    │────────────────────────►│  python.execute_async  │
+    │                         │───────────────────────►│
+    │                         │                        │ create job, enqueue
+    │                         │  {job_id}              │
+    │                         │◄───────────────────────│
+    │  {job_id}               │                        │
+    │◄────────────────────────│                        │
+    │                         │                        │ timer fires → exec
+    │  blender_job_status     │                        │
+    │  {job_id}               │                        │
+    │────────────────────────►│  job.status            │
+    │                         │───────────────────────►│
+    │                         │  {status:"running"}    │
+    │                         │◄───────────────────────│
+    │  {status:"running"}     │                        │
+    │◄────────────────────────│                        │
+    │          ...            │         ...            │ job completes
+    │  blender_job_status     │                        │
+    │────────────────────────►│  job.status            │
+    │                         │───────────────────────►│
+    │                         │  {status:"succeeded",  │
+    │                         │   result, stdout,      │
+    │                         │   stderr}              │
+    │                         │◄───────────────────────│
+    │  final result           │                        │
+    │◄────────────────────────│                        │
+```
+
+### Job Lifecycle State Machine
+
+```
+                ┌──────────┐
+       create ──►  queued  │
+                └────┬─────┘
+                     │ timer fires
+                ┌────▼─────┐
+                │ running  ├──── cancel ──► cancelled
+                └────┬─────┘
+                     │
+              ┌──────┴──────┐
+              │             │
+         ┌────▼────┐  ┌────▼────┐
+         │succeeded│  │ failed  │
+         └─────────┘  └─────────┘
+```
+
+### Safety Model
+
+Script execution runs with a pragmatic local trust model:
+
+1. **Script path restriction** — `script_path` must be under an explicitly
+   configured project root (add-on preference `approved_script_roots`).
+   Symlinks are resolved before checking.
+2. **Inline code toggle** — `allow_inline_code` preference (default: on). When
+   off, only file-based execution is allowed.
+3. **Module blocklist** — A lightweight import hook blocks `subprocess`,
+   `shutil`, `socket`, `ctypes`, and other dangerous modules during execution.
+4. **Timeout** — Per-request timeout (default 30s sync, 300s async).
+5. **Output bounding** — stdout/stderr are capped at 50 KB to prevent
+   memory exhaustion.
+
+This is not a sandbox. It is an explicit, auditable policy suitable for local
+desktop automation. See `docs/python-execute-design.md` for the full design.
+
+### Execution Logging & Audit Trail
+
+Every script execution is logged with:
+
+- **Request ID** — unique identifier (`exec-<uuid4>` for sync, `job-<uuid4>`
+  for async)
+- **Source** — `inline` or the script file path (truncated in logs)
+- **Duration** — wall-clock seconds
+- **Status** — `ok`, `error`, `succeeded`, `failed`, `cancelled`
+- **Error summary** — first line of traceback on failure
+
+The add-on's UI panel shows the last execution status, making it visible inside
+Blender for debugging.
+
 ## Lifecycle
 
 1. User enables the Blender add-on → TCP server starts on `localhost:9876`

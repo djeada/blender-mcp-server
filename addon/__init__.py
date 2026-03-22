@@ -41,6 +41,32 @@ DEFAULT_SYNC_TIMEOUT = 30
 DEFAULT_ASYNC_TIMEOUT = 300
 MAX_SYNC_TIMEOUT = 300
 MAX_ASYNC_TIMEOUT = 3600
+MAX_OUTPUT_SIZE = 50000  # Cap stdout/stderr returned to client
+LOG_CODE_PREVIEW_LEN = 120  # Max chars of code shown in log messages
+
+
+def _truncate(text: str, limit: int) -> str:
+    """Truncate text with an ellipsis indicator."""
+    if len(text) <= limit:
+        return text
+    return text[:limit] + "…"
+
+
+def _cap_output(text: str) -> str:
+    """Cap output string to MAX_OUTPUT_SIZE."""
+    if len(text) <= MAX_OUTPUT_SIZE:
+        return text
+    return text[:MAX_OUTPUT_SIZE] + f"\n… (truncated, {len(text)} total chars)"
+
+
+# Last execution status — shown in the Blender UI panel
+_last_execution: dict[str, Any] = {
+    "request_id": None,
+    "source": None,
+    "status": None,
+    "duration_seconds": None,
+    "error_summary": None,
+}
 
 
 class CommandHandler:
@@ -491,7 +517,8 @@ class CommandHandler:
         except (TypeError, ValueError):
             return repr(value)
 
-    def _run_code(self, code: str, namespace: dict, timeout_seconds: float) -> dict:
+    def _run_code(self, code: str, namespace: dict, timeout_seconds: float,
+                  request_id: str | None = None) -> dict:
         """Execute code with stdout/stderr capture and timeout."""
         stdout_buf = io.StringIO()
         stderr_buf = io.StringIO()
@@ -507,32 +534,44 @@ class CommandHandler:
             tb_lines = traceback.format_exception(type(exc), exc, exc.__traceback__)
             # Filter out internal bridge frames
             filtered = [l for l in tb_lines if "addon/__init__" not in l]
+            error_str = "".join(filtered).strip()
+            logger.warning(
+                "Script execution failed [%s] after %.3fs: %s",
+                request_id or "?", elapsed, _truncate(str(exc), 200),
+            )
             return {
                 "result": None,
-                "stdout": stdout_buf.getvalue(),
-                "stderr": stderr_buf.getvalue(),
-                "error": "".join(filtered).strip(),
+                "stdout": _cap_output(stdout_buf.getvalue()),
+                "stderr": _cap_output(stderr_buf.getvalue()),
+                "error": error_str,
                 "duration_seconds": round(elapsed, 4),
             }
         finally:
             hook.uninstall()
 
         elapsed = time.monotonic() - start
+        logger.info(
+            "Script execution succeeded [%s] in %.3fs",
+            request_id or "?", elapsed,
+        )
         return {
             "result": self._safe_json(namespace.get("__result__")),
-            "stdout": stdout_buf.getvalue(),
-            "stderr": stderr_buf.getvalue(),
+            "stdout": _cap_output(stdout_buf.getvalue()),
+            "stderr": _cap_output(stderr_buf.getvalue()),
             "error": None,
             "duration_seconds": round(elapsed, 4),
         }
 
     def _python_execute(self, params: dict) -> dict:
+        global _last_execution
         code = params.get("code")
         script_path = params.get("script_path")
         args = params.get("args", {})
         timeout_seconds = min(
             params.get("timeout_seconds", DEFAULT_SYNC_TIMEOUT), MAX_SYNC_TIMEOUT
         )
+
+        request_id = f"exec-{uuid.uuid4().hex[:8]}"
 
         if code and script_path:
             raise ValueError("Provide either 'code' or 'script_path', not both")
@@ -544,13 +583,26 @@ class CommandHandler:
                 raise PermissionError(
                     "Inline code execution is disabled. Use script_path instead."
                 )
+            source_label = f"inline ({_truncate(code, LOG_CODE_PREVIEW_LEN)})"
         else:
             validated = self._validate_script_path(script_path)
             with open(validated, "r") as f:
                 code = f.read()
+            source_label = f"file ({script_path})"
+
+        logger.info("python.execute [%s] starting: %s", request_id, source_label)
 
         namespace = self._make_namespace(args)
-        return self._run_code(code, namespace, timeout_seconds)
+        result = self._run_code(code, namespace, timeout_seconds, request_id)
+
+        _last_execution = {
+            "request_id": request_id,
+            "source": source_label,
+            "status": "error" if result.get("error") else "ok",
+            "duration_seconds": result.get("duration_seconds"),
+            "error_summary": _truncate(result["error"], 200) if result.get("error") else None,
+        }
+        return result
 
     def _python_execute_async(self, params: dict) -> dict:
         code = params.get("code")
@@ -570,12 +622,15 @@ class CommandHandler:
                 raise PermissionError(
                     "Inline code execution is disabled. Use script_path instead."
                 )
+            source_label = f"inline ({_truncate(code, LOG_CODE_PREVIEW_LEN)})"
         else:
             validated = self._validate_script_path(script_path)
             with open(validated, "r") as f:
                 code = f.read()
+            source_label = f"file ({script_path})"
 
         job_id = _job_manager.create_job(code, args, timeout_seconds, self)
+        logger.info("python.execute_async [%s] queued: %s", job_id, source_label)
         return {"job_id": job_id}
 
     def _job_status(self, params: dict) -> dict:
@@ -668,6 +723,7 @@ class JobManager:
         return job_id
 
     def _execute_job(self, job_id: str) -> None:
+        global _last_execution
         with self._lock:
             job = self._jobs.get(job_id)
             if not job or job["status"] != "queued":
@@ -675,16 +731,19 @@ class JobManager:
             job["status"] = "running"
             job["started_at"] = time.time()
 
+        logger.info("Job [%s] running", job_id)
+
         cancel_event = job["cancel_event"]
         if cancel_event.is_set():
             with self._lock:
                 job["status"] = "cancelled"
                 job["completed_at"] = time.time()
+            logger.info("Job [%s] cancelled before start", job_id)
             return
 
         handler = job["handler"]
         namespace = handler._make_namespace(job["args"], cancel_event)
-        result = handler._run_code(job["code"], namespace, job["timeout_seconds"])
+        result = handler._run_code(job["code"], namespace, job["timeout_seconds"], job_id)
 
         with self._lock:
             job["result"] = result.get("result")
@@ -693,6 +752,17 @@ class JobManager:
             job["error"] = result.get("error")
             job["status"] = "failed" if result.get("error") else "succeeded"
             job["completed_at"] = time.time()
+
+        elapsed = (job["completed_at"] - job["started_at"]) if job["started_at"] else 0
+        logger.info("Job [%s] %s in %.3fs", job_id, job["status"], elapsed)
+
+        _last_execution = {
+            "request_id": job_id,
+            "source": f"async job",
+            "status": job["status"],
+            "duration_seconds": round(elapsed, 4),
+            "error_summary": _truncate(job["error"], 200) if job.get("error") else None,
+        }
 
     def get_status(self, job_id: str) -> dict:
         with self._lock:
@@ -939,6 +1009,20 @@ class MCP_PT_Panel(bpy.types.Panel):
         else:
             layout.label(text="○ Server stopped", icon="UNLINKED")
             layout.operator("mcp.start_server", text="Start Server")
+
+        # Last script execution status
+        if _last_execution["request_id"]:
+            layout.separator()
+            layout.label(text="Last Execution", icon="SCRIPT")
+            box = layout.box()
+            status = _last_execution["status"]
+            icon = "CHECKMARK" if status in ("ok", "succeeded") else "ERROR"
+            box.label(text=f"Status: {status}", icon=icon)
+            box.label(text=f"ID: {_last_execution['request_id']}")
+            if _last_execution["duration_seconds"] is not None:
+                box.label(text=f"Duration: {_last_execution['duration_seconds']:.3f}s")
+            if _last_execution["error_summary"]:
+                box.label(text=f"Error: {_last_execution['error_summary']}", icon="ERROR")
 
 
 class MCP_OT_StartServer(bpy.types.Operator):
