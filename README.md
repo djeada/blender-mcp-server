@@ -218,7 +218,7 @@ Here's what you can ask Claude to do once everything is connected:
 {
   "tool": "blender_python_exec",
   "args": {
-    "code": "import bpy\nbpy.ops.mesh.primitive_cube_add(size=4, location=(0,0,2))\ndomain = bpy.context.active_object\ndomain.name = 'FluidDomain'\nbpy.ops.object.modifier_add(type='FLUID')\ndomain.modifiers['Fluid'].fluid_type = 'DOMAIN'\nsettings = domain.modifiers['Fluid'].domain_settings\nsettings.domain_type = 'LIQUID'\nsettings.resolution_divisions = 64\n__result__ = {'domain': domain.name, 'resolution': 64}",
+    "code": "import bpy\nbpy.ops.mesh.primitive_cube_add(size=4, location=(0,0,2))\ndomain = bpy.context.active_object\ndomain.name = 'FluidDomain'\nbpy.ops.object.modifier_add(type='FLUID')\ndomain.modifiers['Fluid'].fluid_type = 'DOMAIN'\nsettings = domain.modifiers['Fluid'].domain_settings\nsettings.domain_type = 'LIQUID'\nsettings.resolution_max = 64\n__result__ = {'domain': domain.name, 'resolution': 64}",
     "args": {"resolution": 64}
   }
 }

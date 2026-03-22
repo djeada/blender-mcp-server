@@ -351,12 +351,12 @@ bpy.ops.object.modifier_add(type='FLUID')
 domain.modifiers["Fluid"].fluid_type = 'DOMAIN'
 settings = domain.modifiers["Fluid"].domain_settings
 settings.domain_type = 'LIQUID'
-settings.resolution_divisions = args.get("resolution", 64)
+settings.resolution_max = args.get("resolution", 64)
 settings.cache_directory = args.get("cache_dir", "//fluid_cache")
 
 __result__ = {
     "domain": domain.name,
-    "resolution": settings.resolution_divisions,
+    "resolution": settings.resolution_max,
     "cache_dir": settings.cache_directory,
 }
 ```

@@ -10,7 +10,7 @@ add-on).
 |---|---|
 | Ground plane | 20×20 street surface |
 | 3 buildings | Blockout cubes along the street |
-| Fluid domain | Mantaflow liquid, 32 resolution divisions |
+| Fluid domain | Mantaflow liquid, max resolution 32 |
 | Water inflow | Positioned at +X edge, velocity toward −X |
 | 4 colliders | Ground + 3 buildings (fluid effectors) |
 | 2 debris objects | Active rigid bodies (crate, barrel) |

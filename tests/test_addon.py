@@ -698,6 +698,28 @@ class TestDamBreakDemo:
                     f"Missing library script: {step['script_path']}"
                 )
 
+    def test_run_dam_break_stops_on_inner_script_error(self):
+        """run_demo() must fail fast if python.execute returns an inner script error."""
+        sys.path.insert(0, self.DEMOS_DIR)
+        try:
+            import run_dam_break
+            with patch.object(
+                run_dam_break,
+                "exec_inline",
+                return_value={"success": True, "result": {"error": "boom"}},
+            ):
+                exit_code = run_dam_break.run_demo(
+                    "127.0.0.1",
+                    9876,
+                    self.LIBRARY_DIR,
+                    dry_run=False,
+                )
+        finally:
+            sys.path.pop(0)
+            sys.modules.pop("run_dam_break", None)
+
+        assert exit_code == 1
+
     def test_dam_break_scene_executes_in_mock(self, handler, addon_module):
         """The monolithic script should execute without import errors
         in the mocked bpy environment (logic errors from mocks are OK)."""

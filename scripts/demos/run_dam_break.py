@@ -342,6 +342,12 @@ def run_demo(
 
         if resp.get("success"):
             result = resp.get("result", {})
+            inner_error = result.get("error") if isinstance(result, dict) else None
+            if inner_error:
+                print(f"  ✗ SCRIPT ERROR ({elapsed:.2f}s): {inner_error}")
+                ok = False
+                break
+
             print(f"  ✓ OK ({elapsed:.2f}s)")
             if isinstance(result, dict):
                 for k, v in result.items():
@@ -351,7 +357,7 @@ def run_demo(
         else:
             print(f"  ✗ FAILED ({elapsed:.2f}s): {resp.get('error', 'unknown')}")
             ok = False
-
+            break
     # Optional: fluid bake (async) ------------------------------------------
     if bake and not dry_run:
         print(f"\n{'─' * 60}")

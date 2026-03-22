@@ -21,7 +21,7 @@ After running, trigger a fluid bake via ``blender_python_exec_async``::
 Then render a preview via ``blender_render_still``.
 
 Args (optional overrides):
-    resolution (int): Fluid domain resolution divisions. Default: 32
+    resolution (int): Fluid domain max resolution. Default: 32
     frame_end (int): Last frame of the simulation. Default: 120
     output_dir (str): Blender-relative path for caches/renders. Default: "//"
 """
@@ -101,7 +101,7 @@ bpy.ops.object.modifier_add(type='FLUID')
 domain.modifiers["Fluid"].fluid_type = 'DOMAIN'
 dsettings = domain.modifiers["Fluid"].domain_settings
 dsettings.domain_type = 'LIQUID'
-dsettings.resolution_divisions = resolution
+dsettings.resolution_max = resolution
 dsettings.cache_directory = output_dir + "fluid_cache"
 dsettings.use_mesh = True
 domain.display_type = 'WIRE'
