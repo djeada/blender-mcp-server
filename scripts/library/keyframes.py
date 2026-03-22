@@ -20,8 +20,6 @@ inserted = 0
 objects_set = set()
 skipped = set()
 
-scene = bpy.context.scene
-
 for kf in keyframes:
     obj_name = kf.get("object")
     frame = kf.get("frame")
@@ -32,8 +30,6 @@ for kf in keyframes:
     if obj is None:
         skipped.add(obj_name)
         continue
-
-    scene.frame_set(frame)
 
     loc = kf.get("location")
     if loc is not None:

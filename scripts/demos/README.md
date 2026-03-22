@@ -44,7 +44,8 @@ python3 scripts/blender_bridge_request.py python.execute \
 ### Option B — Step-by-step bridge caller
 
 The `run_dam_break.py` script sends individual MCP commands, mixing inline
-code (for geometry) with library scripts (for physics, camera, etc.):
+code (for geometry) with local library scripts (sent as inline code for
+portability, so it does not depend on approved script roots inside Blender):
 
 ```bash
 # Dry run — see what would be sent:

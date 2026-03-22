@@ -727,6 +727,29 @@ class TestDamBreakDemo:
 
         assert exit_code == 1
 
+    def test_exec_script_sends_inline_code(self):
+        """The step runner should inline local library scripts, not rely on script_path."""
+        sys.path.insert(0, self.DEMOS_DIR)
+        try:
+            import run_dam_break
+            with tempfile.TemporaryDirectory() as tmpdir:
+                script_path = os.path.join(tmpdir, "sample.py")
+                with open(script_path, "w") as f:
+                    f.write("__result__ = {'ok': True}\n")
+
+                with patch.object(run_dam_break, "send_command", return_value={"success": True}) as send:
+                    run_dam_break.exec_script(script_path, {"x": 1})
+        finally:
+            sys.path.pop(0)
+            sys.modules.pop("run_dam_break", None)
+
+        send.assert_called_once()
+        command, params = send.call_args.args
+        assert command == "python.execute"
+        assert "code" in params
+        assert "script_path" not in params
+        assert params["args"] == {"x": 1}
+
     def test_dam_break_scene_executes_in_mock(self, handler, addon_module):
         """The monolithic script should execute without import errors
         in the mocked bpy environment (logic errors from mocks are OK)."""

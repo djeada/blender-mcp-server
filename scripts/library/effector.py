@@ -26,13 +26,11 @@ for name in obj_names:
         skipped.append(name)
         continue
 
-    bpy.context.view_layer.objects.active = obj
-    obj.select_set(True)
-
-    # Add fluid effector modifier
-    bpy.ops.object.modifier_add(type='FLUID')
-    obj.modifiers["Fluid"].fluid_type = 'EFFECTOR'
-    eff = obj.modifiers["Fluid"].effector_settings
+    fluid_mod = obj.modifiers.get("Fluid")
+    if fluid_mod is None:
+        fluid_mod = obj.modifiers.new(name="Fluid", type='FLUID')
+    fluid_mod.fluid_type = 'EFFECTOR'
+    eff = fluid_mod.effector_settings
     eff.effector_type = effector_type
     eff.surface_distance = surface_distance
 
@@ -40,9 +38,7 @@ for name in obj_names:
     if use_effector:
         has_collision = any(m.type == 'COLLISION' for m in obj.modifiers)
         if not has_collision:
-            bpy.ops.object.modifier_add(type='COLLISION')
-
-    obj.select_set(False)
+            obj.modifiers.new(name="Collision", type='COLLISION')
     configured.append(name)
 
 __result__ = {

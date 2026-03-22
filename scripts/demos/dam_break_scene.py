@@ -29,6 +29,36 @@ Args (optional overrides):
 import bpy
 import math
 
+
+def create_cube_object(name, size, location):
+    half = size / 2.0
+    verts = [
+        (-half, -half, -half),
+        (half, -half, -half),
+        (half, half, -half),
+        (-half, half, -half),
+        (-half, -half, half),
+        (half, -half, half),
+        (half, half, half),
+        (-half, half, half),
+    ]
+    faces = [
+        (0, 1, 2, 3),
+        (4, 5, 6, 7),
+        (0, 1, 5, 4),
+        (1, 2, 6, 5),
+        (2, 3, 7, 6),
+        (3, 0, 4, 7),
+    ]
+    mesh = bpy.data.meshes.new(f"{name}Mesh")
+    mesh.from_pydata(verts, [], faces)
+    mesh.update()
+    obj = bpy.data.objects.new(name, mesh)
+    bpy.context.scene.collection.objects.link(obj)
+    obj.location = location
+    return obj
+
+
 # ---------------------------------------------------------------------------
 # Parameters
 # ---------------------------------------------------------------------------
@@ -91,55 +121,7 @@ for d in debris_specs:
     debris_names.append(obj.name)
 
 # ---------------------------------------------------------------------------
-# 6. Fluid domain
-# ---------------------------------------------------------------------------
-domain_size = 22
-bpy.ops.mesh.primitive_cube_add(size=domain_size, location=(0, 0, 5))
-domain = bpy.context.active_object
-domain.name = "FluidDomain"
-bpy.ops.object.modifier_add(type='FLUID')
-domain.modifiers["Fluid"].fluid_type = 'DOMAIN'
-dsettings = domain.modifiers["Fluid"].domain_settings
-dsettings.domain_type = 'LIQUID'
-dsettings.resolution_max = resolution
-dsettings.cache_directory = output_dir + "fluid_cache"
-dsettings.use_mesh = True
-domain.display_type = 'WIRE'
-
-# ---------------------------------------------------------------------------
-# 7. Inflow source (water rushing in from +X side)
-# ---------------------------------------------------------------------------
-bpy.ops.mesh.primitive_cube_add(size=3, location=(8, 0, 3))
-inflow = bpy.context.active_object
-inflow.name = "WaterInflow"
-bpy.ops.object.modifier_add(type='FLUID')
-inflow.modifiers["Fluid"].fluid_type = 'FLOW'
-flow = inflow.modifiers["Fluid"].flow_settings
-flow.flow_type = 'LIQUID'
-flow.flow_behavior = 'INFLOW'
-flow.use_initial_velocity = True
-flow.velocity_normal = 0
-flow.velocity_coord = (-4, 0, 0)  # rushing toward -X
-
-# ---------------------------------------------------------------------------
-# 8. Collision effectors — ground + buildings
-# ---------------------------------------------------------------------------
-collider_names = ["Ground"] + building_names
-for cname in collider_names:
-    obj = bpy.data.objects.get(cname)
-    if obj is None:
-        continue
-    bpy.context.view_layer.objects.active = obj
-    obj.select_set(True)
-    bpy.ops.object.modifier_add(type='FLUID')
-    obj.modifiers["Fluid"].fluid_type = 'EFFECTOR'
-    eff = obj.modifiers["Fluid"].effector_settings
-    eff.effector_type = 'COLLISION'
-    eff.surface_distance = 0.01
-    obj.select_set(False)
-
-# ---------------------------------------------------------------------------
-# 9. Rigid bodies on debris
+# 6. Rigid bodies on debris
 # ---------------------------------------------------------------------------
 for dname in debris_names:
     obj = bpy.data.objects.get(dname)
@@ -154,6 +136,49 @@ for dname in debris_names:
     obj.rigid_body.restitution = 0.2
     obj.rigid_body.collision_shape = 'BOX'
     obj.select_set(False)
+
+# ---------------------------------------------------------------------------
+# 7. Fluid domain
+# ---------------------------------------------------------------------------
+domain_size = 22
+bpy.ops.mesh.primitive_cube_add(size=domain_size, location=(0, 0, 5))
+domain = bpy.context.active_object
+domain.name = "FluidDomain"
+dmod = domain.modifiers.new(name="Fluid", type='FLUID')
+dmod.fluid_type = 'DOMAIN'
+dsettings = dmod.domain_settings
+dsettings.domain_type = 'LIQUID'
+dsettings.resolution_max = resolution
+dsettings.cache_directory = output_dir + "fluid_cache"
+dsettings.use_mesh = True
+domain.display_type = 'WIRE'
+
+# ---------------------------------------------------------------------------
+# 8. Inflow source (water rushing in from +X side)
+# ---------------------------------------------------------------------------
+inflow = create_cube_object("WaterInflow", 3, (8, 0, 3))
+imod = inflow.modifiers.new(name="Fluid", type='FLUID')
+imod.fluid_type = 'FLOW'
+flow = imod.flow_settings
+flow.flow_type = 'LIQUID'
+flow.flow_behavior = 'INFLOW'
+flow.use_initial_velocity = True
+flow.velocity_normal = 0
+flow.velocity_coord = (-4, 0, 0)  # rushing toward -X
+
+# ---------------------------------------------------------------------------
+# 9. Collision effectors — ground + buildings
+# ---------------------------------------------------------------------------
+collider_names = ["Ground"] + building_names
+for cname in collider_names:
+    obj = bpy.data.objects.get(cname)
+    if obj is None:
+        continue
+    emod = obj.modifiers.get("Fluid") or obj.modifiers.new(name="Fluid", type='FLUID')
+    emod.fluid_type = 'EFFECTOR'
+    eff = emod.effector_settings
+    eff.effector_type = 'COLLISION'
+    eff.surface_distance = 0.01
 
 # ---------------------------------------------------------------------------
 # 10. Camera with dolly keyframes
@@ -171,13 +196,10 @@ cam_keyframes = [
     {"frame": frame_end,  "location": (0, -8, 3),   "rotation": (math.radians(70), 0, math.radians(10))},
 ]
 for kf in cam_keyframes:
-    scene.frame_set(kf["frame"])
     cam_obj.location = kf["location"]
     cam_obj.rotation_euler = kf["rotation"]
     cam_obj.keyframe_insert(data_path="location", frame=kf["frame"])
     cam_obj.keyframe_insert(data_path="rotation_euler", frame=kf["frame"])
-
-scene.frame_set(1)
 
 # ---------------------------------------------------------------------------
 # 11. Collections
@@ -206,7 +228,7 @@ move_to_collection("DamBreakCam", "Camera")
 # ---------------------------------------------------------------------------
 # 12. Render settings (fast EEVEE preview)
 # ---------------------------------------------------------------------------
-scene.render.engine = 'BLENDER_EEVEE_NEXT'
+scene.render.engine = 'BLENDER_EEVEE'
 scene.render.resolution_x = 960
 scene.render.resolution_y = 540
 scene.render.resolution_percentage = 100

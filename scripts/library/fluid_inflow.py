@@ -16,6 +16,35 @@ Result:
 """
 import bpy
 
+
+def create_cube_mesh(name: str, size: float):
+    half = size / 2.0
+    verts = [
+        (-half, -half, -half),
+        (half, -half, -half),
+        (half, half, -half),
+        (-half, half, -half),
+        (-half, -half, half),
+        (half, -half, half),
+        (half, half, half),
+        (-half, half, half),
+    ]
+    faces = [
+        (0, 1, 2, 3),
+        (4, 5, 6, 7),
+        (0, 1, 5, 4),
+        (1, 2, 6, 5),
+        (2, 3, 7, 6),
+        (3, 0, 4, 7),
+    ]
+    mesh = bpy.data.meshes.new(f"{name}Mesh")
+    mesh.from_pydata(verts, [], faces)
+    mesh.update()
+    obj = bpy.data.objects.new(name, mesh)
+    bpy.context.scene.collection.objects.link(obj)
+    return obj
+
+
 obj_name = args.get("name", "FluidInflow")
 use_existing = args.get("use_existing")
 
@@ -27,9 +56,9 @@ if use_existing:
 else:
     location = args.get("location", [0, 0, 3])
     size = args.get("size", 1.0)
-    bpy.ops.mesh.primitive_cube_add(size=size, location=tuple(location))
-    obj = bpy.context.active_object
-    obj.name = obj_name
+    obj = create_cube_mesh(obj_name, size)
+    obj.location = tuple(location)
+    bpy.context.view_layer.objects.active = obj
 
 flow_type = args.get("flow_type", "INFLOW")
 flow_behavior = args.get("flow_behavior", "INFLOW")

@@ -69,11 +69,13 @@ def exec_inline(code: str, args: dict | None = None, **kw: Any) -> dict:
 
 
 def exec_script(script_path: str, args: dict | None = None, **kw: Any) -> dict:
-    """Execute a library script file through the bridge."""
-    params: dict[str, Any] = {"script_path": script_path}
-    if args:
-        params["args"] = args
-    return send_command("python.execute", params, **kw)
+    """Execute a local library script through the bridge as inline code.
+
+    This avoids dependence on the Blender add-on's approved script root
+    configuration for local demo runs.
+    """
+    code = Path(script_path).read_text()
+    return exec_inline(code, args, **kw)
 
 
 def exec_async(code: str, args: dict | None = None, **kw: Any) -> dict:
@@ -172,7 +174,20 @@ def build_steps(library_dir: str) -> list[dict[str, Any]]:
             ),
         },
 
-        # --- Step 4: Fluid domain -------------------------------------------
+        # --- Step 4: Rigid bodies -------------------------------------------
+        {
+            "label": "Add rigid bodies to debris",
+            "method": "script",
+            "script_path": str(lib / "rigid_body.py"),
+            "args": {
+                "objects": ["Debris_Crate", "Debris_Barrel"],
+                "rb_type": "ACTIVE",
+                "mass": 5.0,
+                "collision_shape": "BOX",
+            },
+        },
+
+        # --- Step 5: Fluid domain -------------------------------------------
         {
             "label": "Create fluid domain (res 32)",
             "method": "script",
@@ -186,7 +201,7 @@ def build_steps(library_dir: str) -> list[dict[str, Any]]:
             },
         },
 
-        # --- Step 5: Inflow source ------------------------------------------
+        # --- Step 6: Inflow source ------------------------------------------
         {
             "label": "Create water inflow",
             "method": "script",
@@ -202,26 +217,13 @@ def build_steps(library_dir: str) -> list[dict[str, Any]]:
             },
         },
 
-        # --- Step 6: Colliders ----------------------------------------------
+        # --- Step 7: Colliders ----------------------------------------------
         {
             "label": "Set ground & buildings as colliders",
             "method": "script",
             "script_path": str(lib / "effector.py"),
             "args": {
                 "objects": ["Ground", "Building_A", "Building_B", "Building_C"],
-            },
-        },
-
-        # --- Step 7: Rigid bodies -------------------------------------------
-        {
-            "label": "Add rigid bodies to debris",
-            "method": "script",
-            "script_path": str(lib / "rigid_body.py"),
-            "args": {
-                "objects": ["Debris_Crate", "Debris_Barrel"],
-                "rb_type": "ACTIVE",
-                "mass": 5.0,
-                "collision_shape": "BOX",
             },
         },
 
@@ -282,7 +284,7 @@ def build_steps(library_dir: str) -> list[dict[str, Any]]:
             "code": (
                 "import bpy\n"
                 "s = bpy.context.scene\n"
-                "s.render.engine = 'BLENDER_EEVEE_NEXT'\n"
+                "s.render.engine = 'BLENDER_EEVEE'\n"
                 "s.render.resolution_x = 960\n"
                 "s.render.resolution_y = 540\n"
                 "s.render.filepath = '//dam_break_preview'\n"
