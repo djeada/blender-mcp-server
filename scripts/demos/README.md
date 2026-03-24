@@ -130,18 +130,14 @@ Then poll:
 Issues discovered while building this demo that should be addressed in future
 work:
 
-### GAP-1: No library script for basic geometry creation
+### GAP-1: Live bridge scripts should avoid `bpy.ops.mesh.primitive_*`
 
-**Problem:** The library has scripts for physics, camera, keyframes, etc., but
-no script for creating basic mesh primitives (cubes, planes, cylinders). The
-demo must use inline code for all geometry creation.
+**Status:** mitigated
 
-**Impact:** AI clients must generate bpy geometry code from scratch every time,
-increasing prompt fragility.
-
-**Recommendation:** Add `scripts/library/create_mesh.py` supporting primitive
-types (cube, plane, sphere, cylinder, cone) with name, location, size, and
-scale parameters.
+The repo now includes `scripts/library/create_mesh.py`, and the bridge injects
+an `mcp_create_mesh(...)` helper into `python.execute` scripts. Use those
+instead of `bpy.ops.mesh.primitive_*_add` for bridge-driven blockouts,
+especially near Mantaflow setup.
 
 ### GAP-2: No library script for render settings
 

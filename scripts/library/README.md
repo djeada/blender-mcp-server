@@ -8,6 +8,7 @@ structured `args`.
 
 | Script | Description |
 |---|---|
+| `create_mesh.py` | Create a primitive mesh object through the data API without `bpy.ops` |
 | `fluid_domain.py` | Create a Mantaflow fluid domain with configurable resolution and cache |
 | `fluid_inflow.py` | Create or configure an inflow/flow source for fluid simulation |
 | `effector.py` | Set up collision/effector objects for fluid or rigid body sims |
@@ -37,6 +38,16 @@ structured `args`.
 
 Each script documents its accepted `args` and returned `__result__` in a
 docstring at the top of the file.
+
+For scripts executed through the live MCP bridge, prefer `create_mesh.py` or
+the injected `mcp_create_mesh(...)` helper over `bpy.ops.mesh.primitive_*_add`.
+That avoids Blender operator/view-layer update paths that can be unstable when
+setting up Mantaflow objects.
+
+For live Mantaflow work, also keep domain/flow modifiers hidden in the viewport
+unless you specifically need them visible. Blender 4.0.x can crash during
+view-layer updates when visible liquid modifiers are created or updated through
+the bridge.
 
 ## End-to-End Example: Dam Break Setup
 

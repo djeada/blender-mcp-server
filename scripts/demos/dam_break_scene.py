@@ -30,17 +30,21 @@ import bpy
 import math
 
 
-def create_cube_object(name, size, location):
-    half = size / 2.0
+def create_box_object(name, size, location):
+    if isinstance(size, (int, float)):
+        sx = sy = sz = float(size)
+    else:
+        sx, sy, sz = size
+    hx, hy, hz = sx / 2.0, sy / 2.0, sz / 2.0
     verts = [
-        (-half, -half, -half),
-        (half, -half, -half),
-        (half, half, -half),
-        (-half, half, -half),
-        (-half, -half, half),
-        (half, -half, half),
-        (half, half, half),
-        (-half, half, half),
+        (-hx, -hy, -hz),
+        (hx, -hy, -hz),
+        (hx, hy, -hz),
+        (-hx, hy, -hz),
+        (-hx, -hy, hz),
+        (hx, -hy, hz),
+        (hx, hy, hz),
+        (-hx, hy, hz),
     ]
     faces = [
         (0, 1, 2, 3),
@@ -52,6 +56,23 @@ def create_cube_object(name, size, location):
     ]
     mesh = bpy.data.meshes.new(f"{name}Mesh")
     mesh.from_pydata(verts, [], faces)
+    mesh.update()
+    obj = bpy.data.objects.new(name, mesh)
+    bpy.context.scene.collection.objects.link(obj)
+    obj.location = location
+    return obj
+
+
+def create_plane_object(name, size, location):
+    half = size / 2.0
+    verts = [
+        (-half, -half, 0.0),
+        (half, -half, 0.0),
+        (half, half, 0.0),
+        (-half, half, 0.0),
+    ]
+    mesh = bpy.data.meshes.new(f"{name}Mesh")
+    mesh.from_pydata(verts, [], [(0, 1, 2, 3)])
     mesh.update()
     obj = bpy.data.objects.new(name, mesh)
     bpy.context.scene.collection.objects.link(obj)
@@ -84,9 +105,7 @@ scene.render.fps = 24
 # ---------------------------------------------------------------------------
 # 3. Ground plane (street)
 # ---------------------------------------------------------------------------
-bpy.ops.mesh.primitive_plane_add(size=20, location=(0, 0, 0))
-ground = bpy.context.active_object
-ground.name = "Ground"
+ground = create_plane_object("Ground", 20, (0, 0, 0))
 
 # ---------------------------------------------------------------------------
 # 4. Buildings
@@ -99,11 +118,7 @@ buildings = [
 
 building_names = []
 for b in buildings:
-    bpy.ops.mesh.primitive_cube_add(location=b["loc"])
-    obj = bpy.context.active_object
-    obj.name = b["name"]
-    obj.scale = (b["size"][0] / 2, b["size"][1] / 2, b["size"][2] / 2)
-    bpy.ops.object.transform_apply(location=False, rotation=False, scale=True)
+    obj = create_box_object(b["name"], b["size"], b["loc"])
     building_names.append(obj.name)
 
 # ---------------------------------------------------------------------------
@@ -115,9 +130,7 @@ debris_specs = [
     {"name": "Debris_Barrel",   "loc": (-1, 1, 0.5), "size": 0.6},
 ]
 for d in debris_specs:
-    bpy.ops.mesh.primitive_cube_add(size=d["size"], location=d["loc"])
-    obj = bpy.context.active_object
-    obj.name = d["name"]
+    obj = create_box_object(d["name"], d["size"], d["loc"])
     debris_names.append(obj.name)
 
 # ---------------------------------------------------------------------------
@@ -141,7 +154,7 @@ for dname in debris_names:
 # 7. Fluid domain
 # ---------------------------------------------------------------------------
 domain_size = 22
-domain = create_cube_object("FluidDomain", domain_size, (0, 0, 5))
+domain = create_box_object("FluidDomain", domain_size, (0, 0, 5))
 dmod = domain.modifiers.new(name="Fluid", type='FLUID')
 dmod.fluid_type = 'DOMAIN'
 dsettings = dmod.domain_settings
@@ -155,15 +168,18 @@ domain.display_type = 'WIRE'
 # ---------------------------------------------------------------------------
 # 8. Inflow source (water rushing in from +X side)
 # ---------------------------------------------------------------------------
-inflow = create_cube_object("WaterInflow", 3, (8, 0, 3))
+inflow = create_box_object("WaterInflow", 3, (8, 0, 3))
 imod = inflow.modifiers.new(name="Fluid", type='FLUID')
 imod.fluid_type = 'FLOW'
+imod.show_viewport = False
 flow = imod.flow_settings
 flow.flow_type = 'LIQUID'
 flow.flow_behavior = 'INFLOW'
 flow.use_initial_velocity = True
 flow.velocity_normal = 0
 flow.velocity_coord = (-4, 0, 0)  # rushing toward -X
+inflow.hide_viewport = True
+inflow.hide_render = True
 
 # ---------------------------------------------------------------------------
 # 9. Collision effectors — ground + buildings

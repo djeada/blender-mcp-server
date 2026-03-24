@@ -276,6 +276,7 @@ Pre-built scripts in `scripts/library/` for common Blender tasks. Use with `blen
 
 | Script | Description |
 |---|---|
+| `create_mesh.py` | Create primitive meshes through the data API without `bpy.ops` |
 | `fluid_domain.py` | Create a Mantaflow fluid domain |
 | `fluid_inflow.py` | Create an inflow source |
 | `effector.py` | Set objects as collision effectors |
@@ -288,6 +289,8 @@ Pre-built scripts in `scripts/library/` for common Blender tasks. Use with `blen
 | `save_blend.py` | Save the .blend file |
 
 See `scripts/library/README.md` for full argument docs and an end-to-end dam-break setup walkthrough.
+For live bridge sessions, prefer the data-API helper `mcp_create_mesh(...)` inside `blender_python_exec` scripts, or `scripts/library/create_mesh.py`, over `bpy.ops.mesh.primitive_*_add`. The operator path can destabilize view-layer updates around fluid setup.
+Also keep Mantaflow liquid modifiers hidden in the viewport for live bridge sessions. Visible liquid domain/flow updates in Blender 4.0.x can still crash even when geometry creation avoids `bpy.ops`.
 For heavy physics workflows, prefer `transport="headless"` on `blender_python_exec` / `blender_python_exec_async`. That runs the script in a separate `blender -b` process instead of the live add-on session.
 
 ## Example Session

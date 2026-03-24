@@ -133,6 +133,20 @@ class TestSceneCommands:
 
 
 class TestObjectCommands:
+    def test_build_primitive_pydata_cube(self, addon_module):
+        verts, faces = addon_module._build_primitive_pydata("cube", 2.0)
+        assert len(verts) == 8
+        assert len(faces) == 6
+
+    def test_build_primitive_pydata_sphere(self, addon_module):
+        verts, faces = addon_module._build_primitive_pydata("sphere", 2.0)
+        assert len(verts) > 10
+        assert len(faces) > 10
+
+    def test_build_primitive_pydata_rejects_unknown_shape(self, addon_module):
+        with pytest.raises(ValueError, match="Unknown mesh type"):
+            addon_module._build_primitive_pydata("bad-shape", 2.0)
+
     def test_get_transform(self, handler):
         result = handler.handle("object.get_transform", {"name": "Cube"})
         assert result["name"] == "Cube"
@@ -210,6 +224,12 @@ class TestServerExecution:
 
 class TestPythonExecute:
     """Tests for the python.execute command handler."""
+
+    def test_execution_namespace_exposes_safe_mesh_helper(self, handler):
+        result = handler.handle("python.execute", {
+            "code": "__result__ = callable(mcp_create_mesh) and math.pi > 3",
+        })
+        assert result["result"] is True
 
     def test_inline_code_returns_result(self, handler):
         result = handler.handle("python.execute", {
@@ -682,6 +702,14 @@ class TestDamBreakDemo:
         path = os.path.join(self.DEMOS_DIR, "run_dam_break.py")
         with open(path) as f:
             ast.parse(f.read(), filename=path)
+
+    def test_demo_scripts_avoid_mesh_primitive_operators(self):
+        """Bridge-driven demo geometry should use data-API helpers, not bpy.ops primitives."""
+        for filename in ("dam_break_scene.py", "run_dam_break.py"):
+            path = os.path.join(self.DEMOS_DIR, filename)
+            with open(path) as f:
+                contents = f.read()
+            assert "bpy.ops.mesh.primitive_" not in contents
 
     def test_run_dam_break_builds_correct_steps(self):
         """build_steps() returns expected step count and uses library scripts."""
