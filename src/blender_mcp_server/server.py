@@ -309,6 +309,7 @@ async def render_still(
     engine: str | None = None,
     transport: str = "bridge",
     blend_file: str | None = None,
+    factory_startup: bool | None = None,
 ) -> str:
     if transport == "headless":
         code = """
@@ -339,7 +340,7 @@ __result__ = {
                 "engine": engine,
             },
             blend_file=blend_file,
-            factory_startup=False if blend_file else True,
+            factory_startup=factory_startup,
         )
     else:
         params: dict[str, Any] = {"output_path": output_path}
@@ -369,6 +370,7 @@ async def render_animation(
     engine: str | None = None,
     transport: str = "bridge",
     blend_file: str | None = None,
+    factory_startup: bool | None = None,
 ) -> str:
     if transport == "headless":
         code = """
@@ -399,7 +401,7 @@ __result__ = {
                 "engine": engine,
             },
             blend_file=blend_file,
-            factory_startup=False if blend_file else True,
+            factory_startup=factory_startup,
         )
     else:
         params: dict[str, Any] = {"output_path": output_path}

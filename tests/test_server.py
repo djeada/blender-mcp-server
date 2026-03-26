@@ -219,6 +219,30 @@ class TestHeadlessExecutor:
         assert "inner stdout" in result["stdout"]
         assert result["error"] is None
 
+    @pytest.mark.asyncio
+    async def test_execute_uses_factory_startup_by_default_with_blend_file(self):
+        executor = HeadlessBlenderExecutor(blender_binary="blender")
+
+        proc = AsyncMock()
+        proc.communicate = AsyncMock(
+            return_value=(( "__BLENDER_MCP_RESULT__=" + json.dumps({
+                "result": {"ok": True},
+                "stdout": "",
+                "stderr": "",
+                "error": None,
+                "timed_out": False,
+                "cancelled": False,
+            }) + "\n").encode(), b"")
+        )
+        proc.returncode = 0
+
+        with patch("asyncio.create_subprocess_exec", return_value=proc) as create_proc:
+            await executor.execute(code="__result__ = {'ok': True}", blend_file="/tmp/test.blend")
+
+        cmd = create_proc.await_args.args
+        assert "--factory-startup" in cmd
+        assert "/tmp/test.blend" in cmd
+
 
 class TestHeadlessTransportTools:
     @pytest.mark.asyncio
@@ -282,6 +306,7 @@ class TestHeadlessTransportTools:
 
         assert json.loads(result) == {"result": {"output_path": "/tmp/test.png"}}
         execute.assert_awaited_once()
+        assert execute.await_args.kwargs["factory_startup"] is None
 
     @pytest.mark.asyncio
     async def test_job_list_merges_headless_jobs(self):

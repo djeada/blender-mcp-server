@@ -335,6 +335,13 @@ class TestPythonExecute:
         assert result["error"] is not None
         assert "blocked" in result["error"].lower() or "ImportError" in result["error"]
 
+    def test_shutil_import_is_allowed(self, handler):
+        result = handler.handle("python.execute", {
+            "code": "import shutil\n__result__ = hasattr(shutil, 'rmtree')",
+        })
+        assert result["error"] is None
+        assert result["result"] is True
+
     def test_blocked_import_hook_does_not_mutate_global_builtins(self, handler):
         import builtins as pybuiltins
 

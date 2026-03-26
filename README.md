@@ -62,9 +62,7 @@ Create an installable zip:
 
 ```bash
 cd /home/adam/my-repos/blender-mcp-server
-mkdir -p dist/blender_mcp_bridge
-cp addon/__init__.py dist/blender_mcp_bridge/__init__.py
-(cd dist && zip -r blender_mcp_bridge.zip blender_mcp_bridge)
+./scripts/build_addon_zip.sh
 ```
 
 Then in Blender:

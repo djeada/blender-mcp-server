@@ -141,10 +141,10 @@ class HeadlessBlenderExecutor:
             )
 
             cmd = [self.blender_binary, "-b"]
+            if factory_startup is not False:
+                cmd.append("--factory-startup")
             if blend_file:
                 cmd.append(blend_file)
-            elif factory_startup is not False:
-                cmd.append("--factory-startup")
             cmd.extend(["--python", str(wrapper_path)])
 
             proc = await asyncio.create_subprocess_exec(
