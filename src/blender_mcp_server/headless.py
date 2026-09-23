@@ -19,6 +19,21 @@ from pathlib import Path
 from typing import Any
 
 RESULT_PREFIX = "__BLENDER_MCP_RESULT__="
+DEFAULT_TIMEOUT_SECONDS = 3600.0
+MAX_FINISHED_JOBS = 100
+
+
+def _default_timeout() -> float:
+    """Timeout applied when a caller does not pass one (BLENDER_MCP_HEADLESS_TIMEOUT overrides)."""
+    raw = os.environ.get("BLENDER_MCP_HEADLESS_TIMEOUT")
+    return float(raw) if raw else DEFAULT_TIMEOUT_SECONDS
+
+
+def validate_source(code: str | None, script_path: str | None) -> None:
+    if code and script_path:
+        raise ValueError("Provide either 'code' or 'script_path', not both")
+    if not code and not script_path:
+        raise ValueError("Either 'code' or 'script_path' must be provided")
 
 
 def _cap_output(text: str, limit: int = 50000) -> str:
@@ -85,7 +100,7 @@ def _build_wrapper_script(code_path: Path, args_path: Path) -> str:
                 "timed_out": False,
                 "cancelled": False,
             }}
-        except Exception as exc:
+        except BaseException as exc:  # SystemExit must still produce a result payload
             tb = traceback.format_exception(type(exc), exc, exc.__traceback__)
             payload = {{
                 "result": None,
@@ -118,15 +133,13 @@ class HeadlessBlenderExecutor:
         factory_startup: bool | None = None,
         process_holder: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
-        if code and script_path:
-            raise ValueError("Provide either 'code' or 'script_path', not both")
-        if not code and not script_path:
-            raise ValueError("Either 'code' or 'script_path' must be provided")
+        validate_source(code, script_path)
 
         if script_path is not None:
             code = Path(script_path).read_text(encoding="utf-8")
 
         args = args or {}
+        timeout = float(timeout_seconds) if timeout_seconds and timeout_seconds > 0 else _default_timeout()
         start = time.monotonic()
 
         with tempfile.TemporaryDirectory(prefix="blender-mcp-headless-") as tmpdir:
@@ -155,10 +168,7 @@ class HeadlessBlenderExecutor:
                 process_holder["process"] = proc
 
             try:
-                stdout_b, stderr_b = await asyncio.wait_for(
-                    proc.communicate(),
-                    timeout=(timeout_seconds if timeout_seconds and timeout_seconds > 0 else None),
-                )
+                stdout_b, stderr_b = await asyncio.wait_for(proc.communicate(), timeout=timeout)
             except asyncio.TimeoutError:
                 proc.kill()
                 stdout_b, stderr_b = await proc.communicate()
@@ -167,24 +177,18 @@ class HeadlessBlenderExecutor:
                     "result": None,
                     "stdout": _cap_output(stdout_b.decode("utf-8", errors="replace")),
                     "stderr": _cap_output(stderr_b.decode("utf-8", errors="replace")),
-                    "error": f"Execution exceeded timeout of {timeout_seconds:.3f}s",
+                    "error": f"Execution exceeded timeout of {timeout:.3f}s",
                     "duration_seconds": round(elapsed, 4),
                     "timed_out": True,
                     "cancelled": False,
                 }
             except asyncio.CancelledError:
-                proc.terminate()
-                stdout_b, stderr_b = await proc.communicate()
-                elapsed = time.monotonic() - start
-                return {
-                    "result": None,
-                    "stdout": _cap_output(stdout_b.decode("utf-8", errors="replace")),
-                    "stderr": _cap_output(stderr_b.decode("utf-8", errors="replace")),
-                    "error": "Execution cancelled",
-                    "duration_seconds": round(elapsed, 4),
-                    "timed_out": False,
-                    "cancelled": True,
-                }
+                # Stop Blender, then let the cancellation propagate to the caller.
+                if proc.returncode is None:
+                    proc.kill()
+                with contextlib.suppress(ProcessLookupError):
+                    await proc.wait()
+                raise
 
         elapsed = time.monotonic() - start
         stdout = stdout_b.decode("utf-8", errors="replace")
@@ -233,6 +237,8 @@ class HeadlessJobManager:
         blend_file: str | None = None,
         factory_startup: bool | None = None,
     ) -> str:
+        validate_source(code, script_path)
+        self._prune_finished_jobs()
         job_id = f"headless-job-{uuid.uuid4().hex[:8]}"
         process_holder: dict[str, Any] = {}
         job = {
@@ -255,15 +261,27 @@ class HeadlessJobManager:
         async def runner():
             job["status"] = "running"
             job["started_at"] = time.time()
-            result = await executor.execute(
-                code=code,
-                script_path=script_path,
-                args=args,
-                timeout_seconds=timeout_seconds,
-                blend_file=blend_file,
-                factory_startup=factory_startup,
-                process_holder=process_holder,
-            )
+            try:
+                result = await executor.execute(
+                    code=code,
+                    script_path=script_path,
+                    args=args,
+                    timeout_seconds=timeout_seconds,
+                    blend_file=blend_file,
+                    factory_startup=factory_startup,
+                    process_holder=process_holder,
+                )
+            except asyncio.CancelledError:
+                job["status"] = "cancelled"
+                job["cancelled"] = True
+                job["error"] = "Execution cancelled"
+                job["completed_at"] = time.time()
+                raise
+            except Exception as exc:  # e.g. missing Blender binary or unreadable script_path
+                job["status"] = "failed"
+                job["error"] = f"{type(exc).__name__}: {exc}"
+                job["completed_at"] = time.time()
+                return
             job["result"] = result.get("result")
             job["stdout"] = result.get("stdout", "")
             job["stderr"] = result.get("stderr", "")
@@ -280,6 +298,12 @@ class HeadlessJobManager:
 
         job["task"] = asyncio.create_task(runner())
         return job_id
+
+    def _prune_finished_jobs(self) -> None:
+        finished = [j for j in self._jobs.values() if j["status"] in {"succeeded", "failed", "cancelled"}]
+        excess = len(finished) - MAX_FINISHED_JOBS + 1
+        for job in sorted(finished, key=lambda j: j["created_at"])[: max(excess, 0)]:
+            del self._jobs[job["job_id"]]
 
     def get_status(self, job_id: str) -> dict[str, Any]:
         job = self._jobs.get(job_id)
@@ -315,9 +339,6 @@ class HeadlessJobManager:
         if not job:
             raise ValueError(f"Unknown job: {job_id}")
 
-        proc = job["process_holder"].get("process")
-        if proc is not None and proc.returncode is None:
-            proc.terminate()
         task = job.get("task")
         if task is not None and not task.done():
             task.cancel()

@@ -951,3 +951,262 @@ class TestDamBreakDemo:
         for path in sorted(globmod.glob(os.path.join(self.LIBRARY_DIR, "*.py"))):
             with open(path) as f:
                 ast.parse(f.read(), filename=path)
+
+
+class TestBridgeProtocolSecurity:
+    """Connection-level auth and framing for the TCP bridge."""
+
+    def _serve(self, addon_module, payload: bytes) -> list[dict]:
+        import json
+        import socket
+
+        server = addon_module.BlenderMCPServer()
+        server._running = True
+        addon_module.AUTH_TOKEN = "secret"
+        client, bridge_side = socket.socketpair()
+        with patch.object(
+            server, "_submit_request", side_effect=lambda r: {"id": r.get("id"), "success": True, "result": "ran"}
+        ):
+            worker = threading.Thread(target=server._handle_client, args=(bridge_side,))
+            worker.start()
+            client.sendall(payload)
+            client.shutdown(socket.SHUT_WR)
+            worker.join(timeout=2)
+        data = b""
+        while chunk := client.recv(65536):
+            data += chunk
+        client.close()
+        return [json.loads(line) for line in data.splitlines() if line.strip()]
+
+    def test_authorized_request_is_processed(self, addon_module):
+        responses = self._serve(addon_module, b'{"id": "1", "command": "scene.get_info", "token": "secret"}\n')
+        assert responses == [{"id": "1", "success": True, "result": "ran"}]
+
+    def test_missing_or_wrong_token_is_rejected(self, addon_module):
+        for token_part in (b"", b', "token": "wrong"'):
+            payload = b'{"id": "1", "command": "python.execute"' + token_part + b"}\n"
+            responses = self._serve(addon_module, payload)
+            assert len(responses) == 1
+            assert responses[0]["success"] is False
+            assert "Unauthorized" in responses[0]["error"]
+
+    def test_http_smuggled_command_is_not_executed(self, addon_module):
+        """A browser POST whose body is a JSON command must never reach the handler."""
+        body = b'{"id": "x", "command": "python.execute", "params": {"code": "pass"}, "token": "secret"}\n'
+        http = b"POST / HTTP/1.1\r\nHost: 127.0.0.1:9876\r\nContent-Type: text/plain\r\n\r\n" + body
+        responses = self._serve(addon_module, http)
+        assert len(responses) == 1
+        assert "Invalid JSON" in responses[0]["error"]
+
+    def test_non_object_request_closes_connection(self, addon_module):
+        responses = self._serve(addon_module, b"[1, 2]\n" + b'{"id": "1", "token": "secret"}\n')
+        assert len(responses) == 1
+        assert responses[0]["success"] is False
+
+    def test_oversized_request_is_rejected(self, addon_module):
+        addon_module.MAX_REQUEST_SIZE = 1024
+        responses = self._serve(addon_module, b"x" * 2048)
+        assert "exceeds" in responses[0]["error"]
+
+    def test_token_file_created_private(self, addon_module, monkeypatch, tmp_path):
+        monkeypatch.delenv("BLENDER_MCP_TOKEN")
+        token_file = tmp_path / "sub" / "token"
+        monkeypatch.setenv("BLENDER_MCP_TOKEN_FILE", str(token_file))
+        token = addon_module._load_or_create_token()
+        assert token_file.read_text() == token
+        assert (token_file.stat().st_mode & 0o777) == 0o600
+        assert addon_module._load_or_create_token() == token  # reused, not rotated
+
+
+class TestBridgeRobustness:
+    def test_system_exit_in_script_is_contained(self, handler):
+        result = handler.handle("python.execute", {"code": "raise SystemExit(3)"})
+        assert "SystemExit" in result["error"]
+
+    def test_script_cannot_swallow_timeout(self, handler):
+        code = "while True:\n    try:\n        pass\n    except Exception:\n        pass\n"
+        result = handler.handle("python.execute", {"code": code, "timeout_seconds": 0.05})
+        assert result["timed_out"] is True
+
+    def test_drain_always_answers_waiting_client(self, addon_module):
+        server = addon_module.BlenderMCPServer()
+        event = threading.Event()
+        server._request_queue.put({"request": {"id": "9"}, "event": event, "response": None})
+        with patch.object(server, "_process_request", side_effect=KeyboardInterrupt()):
+            server._drain_request_queue()
+        assert event.is_set()
+
+    def test_job_commands_bypass_main_thread_queue(self, addon_module):
+        """job.status/cancel must work while an async job occupies the main thread."""
+        server = addon_module.BlenderMCPServer()
+        job_id = server._handler.handle("python.execute_async", {"code": "pass"})["job_id"]
+        response = server._submit_request({"id": "1", "command": "job.cancel", "params": {"job_id": job_id}})
+        assert response["success"] is True
+        assert server._request_queue.empty()
+
+    def test_finished_jobs_are_pruned_and_released(self, handler, addon_module):
+        manager = addon_module._job_manager
+        job_id = handler.handle("python.execute_async", {"code": "__result__ = 1"})["job_id"]
+        manager._execute_job(job_id)
+        assert manager._jobs[job_id]["code"] is None
+        for _ in range(addon_module.MAX_FINISHED_JOBS + 20):
+            manager._execute_job(handler.handle("python.execute_async", {"code": "pass"})["job_id"])
+        assert len(manager._jobs) <= addon_module.MAX_FINISHED_JOBS
+
+    def test_port_change_marks_server_unhealthy(self, addon_module):
+        server = addon_module.BlenderMCPServer()
+        server._running = True
+        server._server_socket = object()
+        server._thread = MagicMock()
+        server._thread.is_alive.return_value = True
+        addon_module._server = server
+        assert addon_module._server_healthy()
+        addon_module.PORT = server._port + 1
+        assert not addon_module._server_healthy()
+
+
+class TestSafeModeAndPaths:
+    def test_prefix_sibling_directory_is_not_allowed(self, handler, addon_module):
+        with tempfile.TemporaryDirectory() as parent:
+            allowed = os.path.join(parent, "proj")
+            os.makedirs(allowed)
+            addon_module.SAFE_MODE = True
+            addon_module.ALLOWED_PATHS = [allowed]
+            handler._validate_filepath(os.path.join(allowed, "out.png"))
+            with pytest.raises(PermissionError):
+                handler._validate_filepath(os.path.join(parent, "proj-evil", "out.png"))
+
+    def test_symlink_escape_is_blocked(self, handler, addon_module):
+        with tempfile.TemporaryDirectory() as allowed, tempfile.TemporaryDirectory() as outside:
+            link = os.path.join(allowed, "link")
+            os.symlink(outside, link)
+            addon_module.SAFE_MODE = True
+            addon_module.ALLOWED_PATHS = [allowed]
+            with pytest.raises(PermissionError):
+                handler._validate_filepath(os.path.join(link, "out.png"))
+
+    def test_safe_mode_disables_inline_code(self, handler, addon_module):
+        addon_module.SAFE_MODE = True
+        with pytest.raises(PermissionError, match="Safe Mode"):
+            handler.handle("python.execute", {"code": "pass"}, sync_settings=False)
+
+    def test_unsaved_blend_without_roots_denies_scripts(self, handler, addon_module, mock_bpy, tmp_path):
+        mock_bpy.data.filepath = ""
+        script = tmp_path / "s.py"
+        script.write_text("pass\n")
+        with pytest.raises(PermissionError, match="unsaved"):
+            handler.handle("python.execute", {"script_path": str(script)})
+
+    def test_allowed_commands_preference_is_enforced(self, handler, addon_module, mock_bpy):
+        prefs = MagicMock()
+        prefs.safe_mode = False
+        prefs.port = 9876
+        prefs.allow_inline_code = True
+        prefs.approved_script_roots = ""
+        prefs.allowed_commands = "scene.get_info, object.get_transform"
+        mock_bpy.context.preferences.addons["addon"] = MagicMock(preferences=prefs)
+
+        assert handler.handle("scene.get_info", {})["name"] == "Scene"
+        with pytest.raises(PermissionError, match="whitelist"):
+            handler.handle("python.execute", {"code": "pass"})
+
+
+class TestParameterValidation:
+    def test_translate_rejects_location_and_offset_together(self, handler):
+        with pytest.raises(ValueError, match="not both"):
+            handler.handle("object.translate", {"name": "Cube", "location": [0, 0, 0], "offset": [1, 1, 1]})
+
+    def test_non_finite_numbers_rejected(self, handler):
+        with pytest.raises(ValueError, match="finite"):
+            handler.handle("object.scale", {"name": "Cube", "scale": [1, float("nan"), 1]})
+
+    def test_material_set_color_accepts_rgba(self, handler, mock_bpy):
+        material = MagicMock()
+        material.name = "M"
+        mock_bpy.data.materials.get = MagicMock(return_value=material)
+        result = handler.handle("material.set_color", {"name": "M", "color": [1, 0, 0, 0.5]})
+        assert result["color"] == [1.0, 0.0, 0.0, 0.5]
+
+
+class TestServerAddonContract:
+    """Every MCP tool must send parameters the add-on's validator accepts."""
+
+    CALLS = [
+        ("scene_list_objects", {"type": "MESH"}),
+        ("object_get_transform", {"name": "Cube"}),
+        ("object_get_hierarchy", {"name": "Cube"}),
+        ("object_create", {"mesh_type": "sphere", "name": "S", "location": [1, 2, 3], "size": 1.0}),
+        ("object_delete", {"name": "Cube"}),
+        ("object_translate", {"name": "Cube", "offset": [1, 0, 0]}),
+        ("object_rotate", {"name": "Cube", "rotation": [0, 0, 90]}),
+        ("object_scale", {"name": "Cube", "scale": [2, 2, 2]}),
+        ("object_duplicate", {"name": "Cube", "new_name": "Copy"}),
+        ("material_create", {"name": "M", "color": [1, 0, 0]}),
+        ("material_assign", {"object": "Cube", "material": "M"}),
+        ("material_set_color", {"name": "M", "color": [1, 0, 0]}),
+        ("material_set_texture", {"name": "M", "filepath": "/tmp/t.png"}),
+        ("render_still", {"output_path": "/tmp/r.png", "resolution_x": 64, "resolution_y": 64, "engine": "CYCLES"}),
+        ("render_animation", {"output_path": "/tmp/r_", "frame_start": 1, "frame_end": 2}),
+        ("export_gltf", {"filepath": "/tmp/x.glb"}),
+        ("export_obj", {"filepath": "/tmp/x.obj"}),
+        ("export_fbx", {"filepath": "/tmp/x.fbx"}),
+        ("python_exec", {"code": "pass", "args": {"a": 1}, "timeout_seconds": 5}),
+        ("python_exec_async", {"code": "pass", "timeout_seconds": 5}),
+        ("job_status", {"job_id": "job-1"}),
+        ("job_cancel", {"job_id": "job-1"}),
+    ]
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(("tool_name", "kwargs"), CALLS)
+    async def test_tool_params_pass_addon_validation(self, addon_module, tool_name, kwargs):
+        from unittest.mock import AsyncMock
+
+        from blender_mcp_server import server
+
+        ctx = MagicMock()
+        ctx.request_context.lifespan_context.send_command = AsyncMock(return_value={})
+        await getattr(server, tool_name)(ctx, **kwargs)
+        command, params = ctx.request_context.lifespan_context.send_command.await_args.args
+
+        validator = addon_module.CommandHandler._VALIDATORS.get(command)
+        assert validator is not None, f"{command} has no add-on validator"
+        validated = validator.model_validate(params).model_dump(exclude_none=True)
+        for key in params:
+            assert key in validated, f"{tool_name} sends '{key}', which the add-on drops"
+
+    def test_every_bridge_command_is_handled(self, addon_module):
+        from blender_mcp_server import server
+
+        with open(server.__file__) as f:
+            source = f.read()
+        handlers = addon_module.CommandHandler()._handlers
+        import re
+
+        for command in re.findall(r'_bridge\(\s*ctx,\s*"([a-z_.]+)"', source):
+            assert command in handlers, f"server sends unknown command {command}"
+
+
+class TestVersionConsistency:
+    def test_addon_version_matches_package(self, addon_module):
+        import re
+
+        with open("pyproject.toml") as f:
+            pyproject = f.read()
+        version = re.search(r'^version = "([^"]+)"', pyproject, re.M).group(1)
+        assert ".".join(map(str, addon_module.bl_info["version"])) == version
+        with open("addon/blender_manifest.toml") as f:
+            manifest = f.read()
+        assert f'version = "{version}"' in manifest
+
+
+def test_port_environment_variable_overrides_preference(handler, addon_module, mock_bpy, monkeypatch):
+    prefs = MagicMock()
+    prefs.safe_mode = False
+    prefs.port = 9876
+    prefs.allow_inline_code = True
+    prefs.approved_script_roots = ""
+    prefs.allowed_commands = ""
+    mock_bpy.context.preferences.addons["addon"] = MagicMock(preferences=prefs)
+    monkeypatch.setenv("BLENDER_MCP_PORT", "9911")
+    addon_module._sync_runtime_settings()
+    assert addon_module.PORT == 9911

@@ -24,6 +24,7 @@ dist/
 .coverage
 .coverage.*
 htmlcov/
+coverage.xml
 
 # Type checker / linter caches
 .mypy_cache/
@@ -46,4 +47,3 @@ htmlcov/
 *.blend2
 *.blend@
 .lightpad/
-coverage.xml

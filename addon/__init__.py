@@ -1,7 +1,7 @@
 bl_info = {
     "name": "Blender MCP Bridge",
-    "author": "Blender MCP Server",
-    "version": (0, 1, 0),
+    "author": "Adam Djellouli",
+    "version": (0, 1, 3),
     "blender": (3, 6, 0),
     "location": "View3D > Sidebar > MCP",
     "description": "TCP bridge for MCP server to control Blender",
@@ -9,13 +9,16 @@ bl_info = {
 }
 
 import builtins
+import contextlib
 import errno
+import hmac
 import io
 import json
 import logging
 import math
 import os
 import queue
+import secrets
 import socket
 import sys
 import threading
@@ -23,12 +26,16 @@ import time
 import traceback
 import uuid
 from contextlib import redirect_stderr, redirect_stdout
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import bpy
 from bpy.app.handlers import persistent
 
+if TYPE_CHECKING:
+    from collections.abc import Callable
+
 from .models import (
+    BridgeParams,
     ExportFileParams,
     JobIdParams,
     MaterialAssignParams,
@@ -54,6 +61,12 @@ logger = logging.getLogger(__name__)
 HOST = "127.0.0.1"
 PORT = 9876
 BUFFER_SIZE = 65536
+MAX_REQUEST_SIZE = 16 * 1024 * 1024  # Drop clients that send more than this without a newline
+
+# Authentication: every request must carry this shared secret (see _load_or_create_token)
+TOKEN_ENV_VAR = "BLENDER_MCP_TOKEN"
+TOKEN_FILE_ENV_VAR = "BLENDER_MCP_TOKEN_FILE"
+AUTH_TOKEN: str | None = None
 
 # Security: restrict file operations to these directories (set via addon preferences)
 SAFE_MODE = False
@@ -76,6 +89,60 @@ MAX_SYNC_TIMEOUT = 300
 MAX_ASYNC_TIMEOUT = 3600
 MAX_OUTPUT_SIZE = 50000  # Cap stdout/stderr returned to client
 LOG_CODE_PREVIEW_LEN = 120  # Max chars of code shown in log messages
+MAX_FINISHED_JOBS = 100  # Finished async jobs kept for status queries
+
+
+def _token_file_path() -> str:
+    """Location of the shared auth token, overridable via BLENDER_MCP_TOKEN_FILE."""
+    return os.environ.get(TOKEN_FILE_ENV_VAR) or os.path.join(os.path.expanduser("~"), ".blender-mcp", "token")
+
+
+def _load_or_create_token() -> str:
+    """Return the bridge auth token, creating a private token file on first use.
+
+    The MCP server reads the same file (or the BLENDER_MCP_TOKEN environment
+    variable), so only processes that can read the user's files can talk to
+    the bridge. This keeps web pages and other users from driving Blender.
+    """
+    env_token = os.environ.get(TOKEN_ENV_VAR)
+    if env_token:
+        return env_token
+    path = _token_file_path()
+    try:
+        with open(path, encoding="utf-8") as f:
+            existing = f.read().strip()
+        if existing:
+            return existing
+    except FileNotFoundError:
+        pass
+    os.makedirs(os.path.dirname(path), mode=0o700, exist_ok=True)
+    token = secrets.token_urlsafe(32)
+    tmp_path = f"{path}.{os.getpid()}.tmp"
+    fd = os.open(tmp_path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "w", encoding="utf-8") as f:
+        f.write(token)
+    os.replace(tmp_path, path)
+    return token
+
+
+def _is_within(path: str, root: str) -> bool:
+    """True when the resolved path is the root itself or inside it."""
+    real_path = os.path.realpath(path)
+    real_root = os.path.realpath(root)
+    try:
+        return os.path.commonpath([real_path, real_root]) == real_root
+    except ValueError:  # Different drives on Windows
+        return False
+
+
+def _default_root() -> str:
+    """Directory of the saved .blend file; refuse to guess when the file is unsaved."""
+    if not bpy.data.filepath:
+        raise PermissionError(
+            "No approved directories are configured and the .blend file is unsaved. "
+            "Save the file or set 'Approved Script Roots' in the add-on preferences."
+        )
+    return os.path.dirname(os.path.realpath(str(bpy.data.filepath)))
 
 
 def _truncate(text: str, limit: int) -> str:
@@ -106,7 +173,7 @@ def _build_cube_pydata(
         (half, half, half),
         (-half, half, half),
     ]
-    faces = [
+    faces: list[tuple[int, ...]] = [
         (0, 1, 2, 3),
         (4, 5, 6, 7),
         (0, 1, 5, 4),
@@ -312,11 +379,12 @@ _last_execution: dict[str, Any] = {
 }
 
 
-class ScriptExecutionTimeout(TimeoutError):
+# These derive from BaseException so a script's own ``except Exception:`` cannot swallow them.
+class ScriptExecutionTimeout(BaseException):
     """Raised when script execution exceeds the configured timeout."""
 
 
-class ScriptExecutionCancelled(RuntimeError):
+class ScriptExecutionCancelled(BaseException):
     """Raised when script execution is cancelled cooperatively."""
 
 
@@ -340,14 +408,18 @@ def _get_addon_preferences():
 
 def _sync_runtime_settings():
     """Apply add-on preferences to module-level runtime settings."""
-    global SAFE_MODE, PORT, ALLOW_INLINE_CODE, APPROVED_SCRIPT_ROOTS, ALLOWED_PATHS
+    global SAFE_MODE, PORT, ALLOW_INLINE_CODE, APPROVED_SCRIPT_ROOTS, ALLOWED_PATHS, TOOL_WHITELIST
 
     prefs = _get_addon_preferences()
+    env_port = os.environ.get("BLENDER_MCP_PORT")
     if prefs is None:
+        if env_port:
+            PORT = int(env_port)
         return
 
     SAFE_MODE = bool(getattr(prefs, "safe_mode", SAFE_MODE))
-    PORT = int(getattr(prefs, "port", PORT))
+    # BLENDER_MCP_PORT (shared with the MCP server) wins over the preference
+    PORT = int(env_port) if env_port else int(getattr(prefs, "port", PORT))
     ALLOW_INLINE_CODE = bool(getattr(prefs, "allow_inline_code", ALLOW_INLINE_CODE))
 
     raw_roots = getattr(prefs, "approved_script_roots", "") or ""
@@ -363,12 +435,21 @@ def _sync_runtime_settings():
     APPROVED_SCRIPT_ROOTS = approved_roots
     ALLOWED_PATHS = approved_roots.copy() if SAFE_MODE else []
 
+    raw_commands = getattr(prefs, "allowed_commands", "") or ""
+    commands = {command.strip() for command in raw_commands.replace(";", ",").split(",") if command.strip()}
+    TOOL_WHITELIST = commands or None
+
+
+def _inline_code_allowed() -> bool:
+    """Safe Mode always forces file-based execution from approved roots."""
+    return ALLOW_INLINE_CODE and not SAFE_MODE
+
 
 class CommandHandler:
     """Dispatches JSON commands to the appropriate bpy operations."""
 
     def __init__(self):
-        self._handlers: dict[str, callable] = {}
+        self._handlers: dict[str, Callable[[dict], Any]] = {}
         self._register_builtins()
 
     def _register_builtins(self):
@@ -400,7 +481,7 @@ class CommandHandler:
         self._handlers["job.cancel"] = self._job_cancel
         self._handlers["job.list"] = self._job_list
 
-    _VALIDATORS: dict[str, type] = {
+    _VALIDATORS: dict[str, type[BridgeParams]] = {
         "scene.list_objects": SceneListObjectsParams,
         "object.get_transform": ObjectGetTransformParams,
         "object.get_hierarchy": ObjectGetHierarchyParams,
@@ -425,8 +506,9 @@ class CommandHandler:
         "job.cancel": JobIdParams,
     }
 
-    def handle(self, command: str, params: dict) -> Any:
-        _sync_runtime_settings()
+    def handle(self, command: str, params: dict, sync_settings: bool = True) -> Any:
+        if sync_settings:
+            _sync_runtime_settings()
         # Security: check tool whitelist
         if TOOL_WHITELIST is not None and command not in TOOL_WHITELIST:
             raise PermissionError(f"Command '{command}' is not in the tool whitelist")
@@ -446,15 +528,12 @@ class CommandHandler:
         if not SAFE_MODE:
             return filepath
         abs_path = os.path.abspath(bpy.path.abspath(filepath))
-        if not ALLOWED_PATHS:
-            # In safe mode with no allowed paths, only allow the blend file directory
-            blend_dir = os.path.dirname(bpy.data.filepath) if bpy.data.filepath else os.getcwd()
-            ALLOWED_PATHS.append(blend_dir)
-        for allowed in ALLOWED_PATHS:
-            if abs_path.startswith(os.path.abspath(allowed)):
-                return filepath
+        # In safe mode with no allowed paths, only allow the blend file directory
+        allowed_paths = ALLOWED_PATHS or [_default_root()]
+        if any(_is_within(abs_path, allowed) for allowed in allowed_paths):
+            return filepath
         raise PermissionError(
-            f"File access denied: '{filepath}' is outside allowed directories. Allowed: {ALLOWED_PATHS}"
+            f"File access denied: '{filepath}' is outside allowed directories. Allowed: {allowed_paths}"
         )
 
     def _scene_get_info(self, params: dict) -> dict:
@@ -511,7 +590,8 @@ class CommandHandler:
             obj = bpy.data.objects.get(name)
             if not obj:
                 raise ValueError(f"Object '{name}' not found")
-            return build_tree(obj)
+            subtree: dict = build_tree(obj)
+            return subtree
 
         roots = [o for o in bpy.context.scene.objects if o.parent is None]
         return {"roots": [build_tree(r) for r in roots]}
@@ -558,7 +638,9 @@ class CommandHandler:
             raise ValueError(f"Object '{name}' not found")
         offset = params.get("offset", [0, 0, 0])
         absolute = params.get("location")
-        if absolute:
+        if absolute is not None and "offset" in params:
+            raise ValueError("Provide either 'location' or 'offset', not both")
+        if absolute is not None:
             obj.location = absolute
         else:
             obj.location.x += offset[0]
@@ -766,13 +848,10 @@ class CommandHandler:
         if not real_path.endswith(".py"):
             raise ValueError(f"Script must be a .py file: {script_path}")
 
-        roots = APPROVED_SCRIPT_ROOTS
-        if not roots:
-            blend_dir = os.path.dirname(bpy.data.filepath) if bpy.data.filepath else os.getcwd()
-            roots = [blend_dir]
+        roots = APPROVED_SCRIPT_ROOTS or [_default_root()]
 
         for root in roots:
-            if real_path.startswith(os.path.realpath(root) + os.sep) or real_path == os.path.realpath(root):
+            if _is_within(real_path, root):
                 return real_path
         raise PermissionError(f"Script path denied: '{script_path}' is outside approved roots. Approved: {roots}")
 
@@ -831,7 +910,7 @@ class CommandHandler:
         try:
             with redirect_stdout(stdout_buf), redirect_stderr(stderr_buf):
                 exec(compile(code, "<mcp-script>", "exec"), namespace)
-        except Exception as exc:
+        except BaseException as exc:  # Includes SystemExit/KeyboardInterrupt, which must not reach Blender
             elapsed = time.monotonic() - start
             tb_lines = traceback.format_exception(type(exc), exc, exc.__traceback__)
             # Filter out internal bridge frames
@@ -886,11 +965,14 @@ class CommandHandler:
             raise ValueError("Either 'code' or 'script_path' must be provided")
 
         if code is not None:
-            if not ALLOW_INLINE_CODE:
-                raise PermissionError("Inline code execution is disabled. Use script_path instead.")
+            if not _inline_code_allowed():
+                raise PermissionError(
+                    "Inline code execution is disabled (Allow Inline Code is off or Safe Mode is on). "
+                    "Use script_path instead."
+                )
             source_label = f"inline ({_truncate(code, LOG_CODE_PREVIEW_LEN)})"
         else:
-            validated = self._validate_script_path(script_path)
+            validated = self._validate_script_path(str(script_path))
             with open(validated) as f:
                 code = f.read()
             source_label = f"file ({script_path})"
@@ -921,11 +1003,14 @@ class CommandHandler:
             raise ValueError("Either 'code' or 'script_path' must be provided")
 
         if code is not None:
-            if not ALLOW_INLINE_CODE:
-                raise PermissionError("Inline code execution is disabled. Use script_path instead.")
+            if not _inline_code_allowed():
+                raise PermissionError(
+                    "Inline code execution is disabled (Allow Inline Code is off or Safe Mode is on). "
+                    "Use script_path instead."
+                )
             source_label = f"inline ({_truncate(code, LOG_CODE_PREVIEW_LEN)})"
         else:
-            validated = self._validate_script_path(script_path)
+            validated = self._validate_script_path(str(script_path))
             with open(validated) as f:
                 code = f.read()
             source_label = f"file ({script_path})"
@@ -987,10 +1072,25 @@ class JobManager:
         }
 
         with self._lock:
+            self._prune_finished_jobs()
             self._jobs[job_id] = job
 
         bpy.app.timers.register(lambda: self._execute_job(job_id), first_interval=0.01)
         return job_id
+
+    def _prune_finished_jobs(self) -> None:
+        """Drop the oldest finished jobs so the job table cannot grow without bound. Caller holds the lock."""
+        finished = [j for j in self._jobs.values() if j["status"] in {"succeeded", "failed", "cancelled"}]
+        excess = len(finished) - MAX_FINISHED_JOBS + 1
+        for job in sorted(finished, key=lambda j: j["created_at"])[: max(excess, 0)]:
+            del self._jobs[job["job_id"]]
+
+    @staticmethod
+    def _release_job_inputs(job: dict[str, Any]) -> None:
+        """Free the script source and handler once a job can no longer run. Caller holds the lock."""
+        job["code"] = None
+        job["args"] = None
+        job["handler"] = None
 
     def _execute_job(self, job_id: str) -> None:
         global _last_execution
@@ -1008,6 +1108,7 @@ class JobManager:
             with self._lock:
                 job["status"] = "cancelled"
                 job["completed_at"] = time.time()
+                self._release_job_inputs(job)
             logger.info("Job [%s] cancelled before start", job_id)
             return
 
@@ -1031,6 +1132,7 @@ class JobManager:
             else:
                 job["status"] = "failed" if result.get("error") else "succeeded"
             job["completed_at"] = time.time()
+            self._release_job_inputs(job)
 
         elapsed = (job["completed_at"] - job["started_at"]) if job["started_at"] else 0
         logger.info("Job [%s] %s in %.3fs", job_id, job["status"], elapsed)
@@ -1073,6 +1175,7 @@ class JobManager:
             if job["status"] == "queued":
                 job["status"] = "cancelled"
                 job["completed_at"] = time.time()
+                self._release_job_inputs(job)
 
             status = job["status"]
             cancellation_requested = job["cancellation_requested"]
@@ -1114,10 +1217,12 @@ class BlenderMCPServer:
         self._drain_timer_callback = self._drain_request_queue
 
     def start(self):
+        global AUTH_TOKEN
         if self._running:
             self._register_request_queue_timer()
             return
         _sync_runtime_settings()
+        AUTH_TOKEN = _load_or_create_token()
         self._host = HOST
         self._port = PORT
         self._server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -1181,6 +1286,7 @@ class BlenderMCPServer:
     def _accept_loop(self):
         while self._running:
             try:
+                assert self._server_socket is not None
                 conn, addr = self._server_socket.accept()
                 logger.info(f"MCP client connected from {addr}")
                 client_thread = threading.Thread(target=self._handle_client, args=(conn,), daemon=True)
@@ -1189,6 +1295,18 @@ class BlenderMCPServer:
                 continue
             except OSError:
                 break
+
+    @staticmethod
+    def _is_authorized(request: dict) -> bool:
+        token = request.get("token")
+        if AUTH_TOKEN is None or not isinstance(token, str):
+            return False
+        return hmac.compare_digest(token.encode(), AUTH_TOKEN.encode())
+
+    @staticmethod
+    def _reject(conn: socket.socket, request_id: Any, error: str) -> None:
+        with contextlib.suppress(OSError):
+            conn.sendall(json.dumps({"id": request_id, "success": False, "error": error}).encode() + b"\n")
 
     def _handle_client(self, conn: socket.socket):
         conn.settimeout(None)
@@ -1199,20 +1317,30 @@ class BlenderMCPServer:
                 if not data:
                     break
                 buffer += data
+                if b"\n" not in buffer and len(buffer) > MAX_REQUEST_SIZE:
+                    self._reject(conn, None, f"Request exceeds {MAX_REQUEST_SIZE} bytes")
+                    return
                 # Messages are newline-delimited JSON
                 while b"\n" in buffer:
                     line, buffer = buffer.split(b"\n", 1)
                     if not line.strip():
                         continue
+                    # Any malformed line closes the connection. This stops cross-protocol
+                    # payloads (e.g. a browser POST whose body smuggles a JSON command).
                     try:
                         request = json.loads(line)
-                        response = self._submit_request(request)
-                    except json.JSONDecodeError as e:
-                        response = {
-                            "id": None,
-                            "success": False,
-                            "error": f"Invalid JSON: {e}",
-                        }
+                    except (json.JSONDecodeError, UnicodeDecodeError) as e:
+                        self._reject(conn, None, f"Invalid JSON: {e}")
+                        return
+                    if not isinstance(request, dict):
+                        self._reject(conn, None, "Request must be a JSON object")
+                        return
+                    if not self._is_authorized(request):
+                        logger.warning("Rejected unauthenticated MCP bridge request")
+                        # id=None marks a connection-level rejection; the connection is closed next.
+                        self._reject(conn, None, "Unauthorized: missing or invalid token")
+                        return
+                    response = self._submit_request(request)
                     conn.sendall(json.dumps(response).encode() + b"\n")
         except Exception as e:
             logger.error(f"Client handler error: {e}")
@@ -1233,12 +1361,20 @@ class BlenderMCPServer:
         "material.set_texture",
     }
 
+    # Commands answered on the socket thread. They only touch the thread-safe JobManager,
+    # so they stay responsive while an async job occupies Blender's main thread.
+    WORKER_THREAD_COMMANDS = {"job.status", "job.cancel", "job.list"}
+
     def _submit_request(self, request: dict) -> dict:
-        queued = {"request": request, "event": threading.Event(), "response": None}
+        if request.get("command") in self.WORKER_THREAD_COMMANDS:
+            return self._process_request(request, sync_settings=False)
+        event = threading.Event()
+        queued: dict[str, Any] = {"request": request, "event": event, "response": None}
         logger.debug("Enqueue MCP request id=%s command=%s", request.get("id"), request.get("command"))
         self._request_queue.put(queued)
-        queued["event"].wait()
-        return queued["response"]
+        event.wait()
+        response: dict = queued["response"]
+        return response
 
     def _drain_request_queue(self):
         while True:
@@ -1252,13 +1388,17 @@ class BlenderMCPServer:
                 request.get("id"),
                 request.get("command"),
             )
-            queued["response"] = self._process_request(queued["request"])
+            try:
+                queued["response"] = self._process_request(queued["request"])
+            except BaseException as exc:  # Never leave a client waiting or let this kill the timer
+                queued["response"] = {"id": request.get("id"), "success": False, "error": repr(exc)}
+            finally:
+                queued["event"].set()
             logger.debug(
                 "Finished MCP request id=%s command=%s",
                 request.get("id"),
                 request.get("command"),
             )
-            queued["event"].set()
         return 0.01 if self._running else None
 
     @staticmethod
@@ -1270,7 +1410,7 @@ class BlenderMCPServer:
             return
         undo_push(message=f"MCP: {command}")
 
-    def _process_request(self, request: dict) -> dict:
+    def _process_request(self, request: dict, sync_settings: bool = True) -> dict:
         req_id = request.get("id")
         command = request.get("command", "")
         params = request.get("params", {})
@@ -1278,7 +1418,7 @@ class BlenderMCPServer:
             # Auto-push undo before mutations
             if command in self.MUTATION_COMMANDS:
                 self._maybe_push_undo(command)
-            result = self._handler.handle(command, params)
+            result = self._handler.handle(command, params, sync_settings=sync_settings)
             return {"id": req_id, "success": True, "result": result}
         except Exception as e:
             logger.error(f"Command '{command}' failed: {e}\n{traceback.format_exc()}")
@@ -1297,12 +1437,14 @@ def _server_healthy() -> bool:
         and _server._server_socket is not None
         and _server._thread is not None
         and _server._thread.is_alive()
+        and _server._port == PORT
     )
 
 
 def _ensure_server_running():
     global _server
-    if _server_healthy():
+    _sync_runtime_settings()
+    if _server is not None and _server_healthy():
         _server._register_request_queue_timer()
         return None
     if _server:
@@ -1321,29 +1463,43 @@ def _on_load_post(_dummy):
     bpy.app.timers.register(_ensure_server_running, first_interval=0.1)
 
 
+def _on_port_changed(_prefs, _context):
+    """Rebind the bridge when the port preference changes."""
+    bpy.app.timers.register(_ensure_server_running, first_interval=0.1)
+
+
 class MCP_AddonPreferences(bpy.types.AddonPreferences):
     bl_idname = __name__
 
-    safe_mode: bpy.props.BoolProperty(
+    safe_mode: bpy.props.BoolProperty(  # type: ignore[valid-type]
         name="Safe Mode",
-        description="Restrict file access to project directory and enable tool whitelist",
+        description=(
+            "Restrict file access to the approved directories (or the .blend file's directory) "
+            "and disable inline Python code"
+        ),
         default=False,
     )
-    port: bpy.props.IntProperty(
+    port: bpy.props.IntProperty(  # type: ignore[valid-type]
         name="Port",
         description="TCP port for the MCP bridge",
         default=9876,
         min=1024,
         max=65535,
+        update=_on_port_changed,
     )
-    allow_inline_code: bpy.props.BoolProperty(
+    allow_inline_code: bpy.props.BoolProperty(  # type: ignore[valid-type]
         name="Allow Inline Code",
         description="Allow python.execute to run inline code strings. Disable to only allow script files",
         default=True,
     )
-    approved_script_roots: bpy.props.StringProperty(
+    approved_script_roots: bpy.props.StringProperty(  # type: ignore[valid-type]
         name="Approved Script Roots",
         description="Semicolon-separated list of directories from which script files may be loaded",
+        default="",
+    )
+    allowed_commands: bpy.props.StringProperty(  # type: ignore[valid-type]
+        name="Allowed Commands",
+        description="Comma-separated bridge commands to accept (e.g. scene.get_info,object.create_mesh). Empty = all",
         default="",
     )
 
@@ -1351,6 +1507,8 @@ class MCP_AddonPreferences(bpy.types.AddonPreferences):
         layout = self.layout
         layout.prop(self, "safe_mode")
         layout.prop(self, "port")
+        layout.prop(self, "allowed_commands")
+        layout.label(text=f"Auth token file: {_token_file_path()}")
         layout.separator()
         layout.label(text="Python Execution")
         layout.prop(self, "allow_inline_code")

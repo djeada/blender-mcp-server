@@ -20,6 +20,7 @@ rm -f "${ZIP_PATH}"
 mkdir -p "${ADDON_DIR}"
 cp "${REPO_ROOT}/addon/__init__.py" "${ADDON_DIR}/__init__.py"
 cp "${REPO_ROOT}/addon/models.py" "${ADDON_DIR}/models.py"
+cp "${REPO_ROOT}/addon/blender_manifest.toml" "${ADDON_DIR}/blender_manifest.toml"
 
 (
     cd "${DIST_DIR}"

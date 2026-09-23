@@ -7,6 +7,65 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+- `scripts/setup.sh`: one-command setup on macOS and Linux (venv, add-on install as a Blender 4.2+
+  extension or legacy add-on, replacing old copies; optional `--register claude,codex,claude-desktop`).
+- `scripts/start.sh claude|codex|none`: opens Blender with the bridge and launches the client already
+  connected to it (MCP server passed on the command line, no client config changes); `scripts/stop.sh`.
+- `docs/demos/`: three demos recorded end to end with Claude Code and Codex against a live Blender
+  (prompt, tool calls, agent reply, render and Blender screenshot), re-recordable with
+  `scripts/record_demos.sh`.
+- Plain Blender Python scripts for each demo and `scripts/run_demo.sh` to run them without an AI
+  (GUI, background, or through the bridge).
+- The add-on honours `BLENDER_MCP_PORT`, so one variable sets the port for both sides.
+
+### Removed
+- `scripts/server_start.sh` and `scripts/launch_blender_gui.py` (superseded by `setup.sh` / `start.sh`).
+
+### Security
+- The bridge now requires a shared-secret token on every request. The add-on creates
+  `~/.blender-mcp/token` (mode 0600); the server and helper scripts read it
+  (`BLENDER_MCP_TOKEN` / `BLENDER_MCP_TOKEN_FILE` override). **Update the add-on and server together.**
+- Any malformed line now closes the bridge connection, blocking cross-protocol requests
+  (e.g. a web page POSTing a JSON command to `localhost:9876`).
+- Safe Mode path checks resolve symlinks and no longer accept sibling directories that share a prefix.
+- Safe Mode now disables inline code. With no approved roots and an unsaved `.blend`, script and
+  Safe Mode paths are refused instead of falling back to the working directory.
+- Added the **Allowed Commands** preference (the previously documented tool whitelist was never wired up).
+- Docs now describe the module blocklist accurately (it is not a sandbox; `shutil` was never blocked).
+- `BLENDER_MCP_HEADLESS=0` disables the headless transport.
+
+### Fixed
+- `blender_material_set_color` and `blender_material_set_texture` always failed validation.
+- Bridge responses larger than 64 KiB failed; the client stream limit is now 32 MiB.
+- Responses are matched by request `id`, and the connection is reset after a cancelled or timed-out
+  request so a late reply can no longer be returned to the next tool call.
+- `SystemExit`/`KeyboardInterrupt` in a script no longer hang the bridge or stop its request timer.
+- Script timeouts and cancellation can no longer be swallowed by `except Exception:`.
+- `job.status`/`job.cancel`/`job.list` no longer wait behind a running async job, so cancelling
+  a running bridge job works.
+- Headless jobs that fail to start (bad `BLENDER_BIN`, missing code) are marked `failed` instead of
+  staying `running`; invalid requests are rejected before a job is created.
+- Headless cancellation kills Blender and propagates; headless runs default to a 3600 s timeout
+  (`BLENDER_MCP_HEADLESS_TIMEOUT`); `sys.exit()` in headless scripts still returns a result payload.
+- Changing the add-on's Port preference rebinds the bridge.
+- `object.translate` rejects `location` and `offset` together; colors accept RGBA; non-finite numbers are rejected.
+- Finished jobs are pruned (100 kept) in both job managers; oversized bridge requests are rejected.
+
+### Changed
+- Server host/port are configurable via `BLENDER_MCP_HOST`/`BLENDER_MCP_PORT`, plus an optional
+  `BLENDER_MCP_TIMEOUT`.
+- `transport` is a `"bridge" | "headless"` enum in tool schemas.
+- Requires `mcp>=1.2.0,<2` (FastMCP was added in 1.2.0); dropped the unused `pydantic` dependency.
+- Add-on ships a `blender_manifest.toml` (Blender 4.2+ extension) and its version matches the package.
+- Docker image runs as a non-root user and documents host networking and token mounting.
+
+### CI
+- The add-on test suite, mypy checks for the add-on, and add-on coverage now run in CI.
+- New end-to-end job runs the bridge and headless transports against a real Blender.
+- The publish workflow runs once per GitHub release, grants `id-token` only to the publish job,
+  pins actions by SHA, and attaches the add-on zip to the release.
+
 ## [0.1.3] — 2026-06-21
 
 ### Fixed
@@ -24,9 +83,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - pytest-cov integration with 50 % minimum coverage threshold.
 - `CONTRIBUTING.md` with development workflow, code style, and PR guidelines.
 - This `CHANGELOG.md`.
-- Pydantic models for runtime validation of all bridge command parameters (`addon/models.py`).
+- Runtime validation models for all bridge command parameters (`addon/models.py`).
 - `Dockerfile` and `.dockerignore` for containerized deployment.
-- Explicit `pydantic>=2.0` dependency.
+- Explicit `pydantic>=2.0` dependency (removed again in the next release; it was unused).
 
 ### Fixed
 - Import sorting and formatting across all source files.

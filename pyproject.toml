@@ -26,8 +26,8 @@ classifiers = [
     "Topic :: Software Development :: Libraries",
 ]
 dependencies = [
-    "mcp>=1.0.0",
-    "pydantic>=2.0",
+    # FastMCP (mcp.server.fastmcp) first shipped in mcp 1.2.0
+    "mcp>=1.2.0,<2",
 ]
 
 [project.urls]
@@ -63,13 +63,14 @@ blender-mcp-server = "blender_mcp_server:main"
 
 [tool.pytest.ini_options]
 asyncio_mode = "strict"
-addopts = "--cov=blender_mcp_server --cov-report=term-missing --cov-report=xml:coverage.xml"
+testpaths = ["tests"]
+addopts = "--cov --cov-report=term-missing --cov-report=xml:coverage.xml"
 
 [tool.coverage.run]
-source = ["src/blender_mcp_server"]
+source = ["src/blender_mcp_server", "addon"]
 
 [tool.coverage.report]
-fail_under = 50
+fail_under = 70
 show_missing = true
 exclude_lines = [
     "pragma: no cover",
@@ -114,7 +115,3 @@ warn_unused_configs = true
 disallow_untyped_defs = false
 check_untyped_defs = true
 ignore_missing_imports = true
-
-[[tool.mypy.overrides]]
-module = "addon.*"
-ignore_errors = true

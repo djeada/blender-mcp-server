@@ -17,9 +17,42 @@ Control Blender from any AI assistant using the [Model Context Protocol (MCP)](h
 
 1. The **Blender add-on** runs inside Blender and listens on `localhost:9876`.
 2. The **MCP server** connects to your AI client via stdio and forwards tool calls to Blender over TCP.
+   Every request carries a shared secret that the add-on writes to `~/.blender-mcp/token` (mode `0600`).
 3. You ask the AI → it calls MCP tools → Blender executes commands → results flow back.
 
-## Quick Start
+## Quick Start (macOS & Linux)
+
+Install [Blender](https://www.blender.org/download/) 3.6+ and Python 3.10+, then:
+
+```bash
+git clone https://github.com/djeada/blender-mcp-server.git
+cd blender-mcp-server
+scripts/setup.sh              # venv + MCP server, installs and enables the Blender add-on
+scripts/start.sh claude       # opens Blender and a Claude Code session already connected to it
+```
+
+`scripts/start.sh codex` does the same with Codex, and `scripts/start.sh none` just opens Blender
+with the bridge running. Anything after the client name goes to the client, e.g.
+`scripts/start.sh claude "Build a snowman and render it"`. Stop the Blender it opened with `scripts/stop.sh`.
+
+`start.sh` hands the MCP server to the client on the command line, so it changes no client config. To
+register the server permanently instead, run `scripts/setup.sh --register claude,codex,claude-desktop`.
+The scripts find Blender on your `PATH`, in `/Applications/Blender.app`, or via `BLENDER_BIN`.
+
+## Demos
+
+Each demo is one prompt, recorded end to end against a live Blender. `scripts/record_demos.sh`
+re-records them. Every demo also has a plain Blender Python script, so you can build the same kind of
+scene without an AI: `scripts/run_demo.sh 1` (GUI), `--background 1` (render only), or `--bridge 1`
+(send it through the MCP bridge to the Blender that `start.sh` opened).
+
+| | Demo | Client |
+|---|---|---|
+| <img src="docs/demos/images/01-still-life.png" width="240"> | [Still life from a sentence](docs/demos/01-still-life.md): object, material and render tools | Claude Code |
+| <img src="docs/demos/images/02-city.png" width="240"> | [Procedural city with Python](docs/demos/02-procedural-city.md): `blender_python_exec` | Codex |
+| <img src="docs/demos/images/03-frame-024.png" width="240"> | [Animate live, render headless](docs/demos/03-animation-headless.md): keyframes, then `transport="headless"` | Claude Code |
+
+## Manual Setup
 
 ### 1. Install the MCP Server
 
@@ -35,7 +68,7 @@ This creates the executable `.venv/bin/blender-mcp-server`.
 
 ### 2. Install the Blender Add-on
 
-Build the add-on zip:
+Download `blender_mcp_bridge.zip` from the [latest release](https://github.com/djeada/blender-mcp-server/releases/latest), or build it yourself:
 
 ```bash
 ./scripts/build_addon_zip.sh
@@ -43,7 +76,7 @@ Build the add-on zip:
 
 Then in Blender:
 
-1. Go to **Edit → Preferences → Add-ons → Install**.
+1. Go to **Edit → Preferences → Add-ons → Install from Disk** (Blender 4.2+ installs it as an extension; older versions as a legacy add-on).
 2. Select `dist/blender_mcp_bridge.zip` and enable **Blender MCP Bridge**.
 3. In the 3D Viewport, press **N** → open the **MCP** tab.
 4. Confirm it shows **Listening on 127.0.0.1:9876**.
@@ -98,6 +131,37 @@ Point any MCP-compatible client at the server executable:
 ```
 
 The server uses **stdio** transport. No additional flags are needed.
+
+</details>
+
+<details>
+<summary><strong>Environment variables</strong></summary>
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `BLENDER_MCP_HOST` | `127.0.0.1` | Bridge host |
+| `BLENDER_MCP_PORT` | `9876` | Bridge port (match the add-on's **Port** preference) |
+| `BLENDER_MCP_TOKEN` | — | Auth token; overrides the token file (set it for both Blender and the server) |
+| `BLENDER_MCP_TOKEN_FILE` | `~/.blender-mcp/token` | Where the add-on writes and the server reads the token |
+| `BLENDER_MCP_TIMEOUT` | none | Seconds to wait for a bridge response before giving up |
+| `BLENDER_BIN` | `blender` | Blender binary for `transport="headless"` |
+| `BLENDER_MCP_HEADLESS` | `1` | Set to `0` to disable the headless transport |
+| `BLENDER_MCP_HEADLESS_TIMEOUT` | `3600` | Default timeout (seconds) for headless runs |
+
+</details>
+
+<details>
+<summary><strong>Docker</strong></summary>
+
+The image contains only the MCP server. For the bridge transport, share the host network and mount the token:
+
+```bash
+docker build -t blender-mcp-server .
+docker run -i --rm --network host \
+  -v ~/.blender-mcp/token:/home/mcp/.blender-mcp/token:ro blender-mcp-server
+```
+
+For the headless transport, mount a Blender install and set `BLENDER_BIN`.
 
 </details>
 
@@ -260,14 +324,22 @@ See [`scripts/library/README.md`](scripts/library/README.md) for full argument d
 
 ## Safety & Security
 
+`blender_python_exec` runs arbitrary Python inside Blender, so anything that can talk to the bridge can run code as you.
+The bridge is therefore locked to clients that can read your token file.
+
 | Feature | Description |
 |---|---|
+| **Token authentication** | Every bridge request must carry the secret from `~/.blender-mcp/token` (created `0600`). Unauthenticated connections are dropped. |
+| **Strict framing** | The first malformed line closes the connection, so a web page cannot smuggle a command inside an HTTP request to `localhost`. |
 | **Automatic undo push** | Mutation tools push an undo step before executing (Python exec excluded for stability). |
-| **Safe Mode** | Restricts file I/O to the project directory only. |
-| **Tool whitelist** | Limits which commands the bridge accepts. |
-| **Script path restrictions** | `script_path` must be under configured approved roots. |
+| **Safe Mode** | Restricts render/export/texture paths to the approved roots (or the saved `.blend` file's folder) and disables inline code. |
+| **Allowed Commands** | Optional allowlist of bridge commands (e.g. read-only tools only). |
+| **Script path restrictions** | `script_path` must be under the approved roots; symlinks are resolved. With no roots and an unsaved file, scripts are refused. |
 | **Inline code toggle** | Disable inline code execution via add-on preferences. |
-| **Module blocklist** | `subprocess`, `shutil`, `socket`, `webbrowser`, `ctypes`, `multiprocessing` are blocked by default. |
+| **Module blocklist** | Imports of `subprocess`, `socket`, `webbrowser`, `ctypes`, `multiprocessing` fail by default. This is a speed bump, **not a sandbox**: `os`, `importlib`, and file access remain available. |
+
+The headless transport runs in a separate `blender -b` process under the MCP server's user and is not subject to the
+add-on's preferences. Set `BLENDER_MCP_HEADLESS=0` to turn it off.
 
 ## Add-on Preferences
 
@@ -275,10 +347,13 @@ In Blender → **Edit → Preferences → Add-ons → Blender MCP Bridge**:
 
 | Setting | Default | Description |
 |---|---|---|
-| Safe Mode | Off | Restrict file I/O to the project directory |
-| Port | 9876 | TCP port for the MCP bridge |
+| Safe Mode | Off | Restrict file paths to the approved roots and disable inline code |
+| Port | 9876 | TCP port for the MCP bridge (the bridge rebinds on change; set `BLENDER_MCP_PORT` for the server) |
+| Allowed Commands | *(empty = all)* | Comma-separated bridge commands to accept, e.g. `scene.get_info,scene.list_objects` |
 | Allow Inline Code | On | Allow `python.execute` to run inline code strings |
-| Approved Script Roots | *(blend file dir)* | Semicolon-separated directories for script file access |
+| Approved Script Roots | *(saved blend file dir)* | Semicolon-separated directories for script file access |
+
+The preferences panel also shows where the auth token file lives.
 
 ## Advanced Usage
 
@@ -294,34 +369,23 @@ python3 scripts/blender_bridge_request.py scene.get_info
 python3 scripts/blender_bridge_request.py object.translate --params '{"name":"TestCube","offset":[0,0,2]}'
 ```
 
-All scripts accept `--host`, `--port`, and `--timeout` flags.
+All scripts accept `--host`, `--port`, and `--timeout` flags, and read the auth token the same way the server does.
 
 </details>
 
 <details>
 <summary><strong>Headless / background mode</strong></summary>
 
-Run Blender without a GUI for automation:
+For one-off scripts and renders you don't need the add-on at all: pass `transport="headless"` to
+`blender_python_exec`, `blender_python_exec_async`, or the render tools and the server runs a separate
+`blender -b` process.
+
+To serve the bridge from background Blender, note that `bpy.app.timers` does not fire after the startup
+script returns, so the script has to drain the request queue itself. See
+[`tests/integration/blender_bridge_harness.py`](tests/integration/blender_bridge_harness.py):
 
 ```bash
-blender -b --python your_script.py
-```
-
-Where `your_script.py` starts the MCP bridge:
-
-```python
-import sys
-sys.path.insert(0, "/path/to/blender-mcp-server")
-from addon import CommandHandler, BlenderMCPServer
-
-server = BlenderMCPServer()
-server.start()
-
-import socket
-s = socket.socket()
-s.bind(("127.0.0.1", 9877))
-s.listen(1)
-s.accept()  # Blocks until shutdown signal
+BLENDER_MCP_PORT=9876 blender -b --factory-startup --python tests/integration/blender_bridge_harness.py
 ```
 
 </details>
@@ -377,7 +441,8 @@ git clone https://github.com/djeada/blender-mcp-server.git
 cd blender-mcp-server
 pip install -e ".[dev]"
 
-pytest tests/ -v
+pytest -v                                                    # unit tests, no Blender needed
+BLENDER_MCP_INTEGRATION=1 pytest tests/integration --no-cov  # end-to-end against real Blender
 ```
 
 ### Project Structure
@@ -387,11 +452,14 @@ blender-mcp-server/
 ├── addon/                        # Blender add-on (TCP server + command handlers + job manager)
 ├── src/blender_mcp_server/       # MCP server (stdio transport + tool definitions)
 ├── scripts/
+│   ├── setup.sh / start.sh / stop.sh  # One-command install and launch (macOS & Linux)
+│   ├── run_demo.sh               # Run a demo scene script yourself (no AI)
+│   ├── record_demos.sh           # Re-record docs/demos with a real AI client
 │   ├── library/                  # Reusable Blender scripts for common tasks
-│   ├── demos/                    # End-to-end demo scenes
+│   ├── demos/                    # Bridge-driven dam-break demo scenes
 │   └── blender_bridge_request.py # Direct bridge test helpers
-├── tests/                        # Unit tests (mocked bpy, no Blender required)
-├── docs/                         # Architecture & design docs
+├── tests/                        # Unit tests (mocked bpy) + integration tests (real Blender)
+├── docs/                         # Architecture & design docs, recorded demos
 ├── pyproject.toml
 └── README.md
 ```

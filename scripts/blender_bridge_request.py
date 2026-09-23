@@ -5,10 +5,24 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import socket
 import sys
 import uuid
+from pathlib import Path
 from typing import Any
+
+
+def load_token() -> str:
+    """Read the bridge auth token the Blender add-on writes on startup."""
+    token = os.environ.get("BLENDER_MCP_TOKEN")
+    if token:
+        return token
+    path = Path(os.environ.get("BLENDER_MCP_TOKEN_FILE") or Path.home() / ".blender-mcp" / "token")
+    try:
+        return path.read_text(encoding="utf-8").strip()
+    except FileNotFoundError as exc:
+        raise ConnectionError(f"Bridge auth token not found at {path}; is the Blender add-on enabled?") from exc
 
 
 def parse_args() -> argparse.Namespace:
@@ -33,6 +47,7 @@ def send_request(host: str, port: int, command: str, params: dict[str, Any], tim
         "id": str(uuid.uuid4()),
         "command": command,
         "params": params,
+        "token": load_token(),
     }
     with socket.create_connection((host, port), timeout=timeout) as sock:
         sock.sendall((json.dumps(request) + "\n").encode("utf-8"))
