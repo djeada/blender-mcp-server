@@ -281,14 +281,15 @@ A configurable list of module names is blocked from import during script
 execution. The default blocklist includes:
 
 - `subprocess`
-- `shutil`
+- `socket`
 - `webbrowser`
 - `ctypes`
 - `multiprocessing`
 
 This is enforced via a lightweight import hook installed during `exec()` and
 removed after execution completes. It is a guardrail, not a sandbox — a
-determined script can bypass it.
+script can bypass it trivially (e.g. `os.popen`, `importlib.import_module`).
+The real access control is the bridge's token authentication.
 
 ### Timeouts
 
@@ -299,8 +300,11 @@ Every execution has a wall-clock timeout:
 | Synchronous | 30 seconds | 300 seconds |
 | Asynchronous | 300 seconds | 3600 seconds |
 
-When a timeout fires, the execution is flagged via `__cancel_event__` (async)
-or interrupted directly (sync). The response includes a timeout error.
+A cooperative trace hook checks the deadline and the cancel flag between Python
+lines and raises an exception derived from `BaseException`, so scripts cannot
+swallow it with `except Exception:`. The response includes a timeout error.
+Long-running C calls (e.g. `bpy.ops.fluid.bake_all()`) cannot be interrupted
+mid-call; use `transport="headless"` for those.
 
 ---
 
@@ -324,14 +328,17 @@ or interrupted directly (sync). The response includes a timeout error.
 - **failed**: Exception raised; `error`, `stdout`, `stderr` available
 - **cancelled**: Client requested cancellation via `job.cancel`
 
-Jobs are stored in memory for the lifetime of the Blender session. Completed
-jobs are retained until Blender is restarted or the addon is disabled.
+Jobs are stored in memory for the lifetime of the Blender session. The 100 most
+recent finished jobs are retained; their script source is released on completion.
 
 ### Main-thread scheduling
 
 Blender's `bpy` API must be called from the main thread. The job manager uses
 `bpy.app.timers.register()` to schedule job execution on the main thread, the
-same pattern used by the existing request queue drain loop.
+same pattern used by the existing request queue drain loop. A running job
+therefore blocks the Blender UI and other bridge commands until it finishes.
+`job.status`, `job.cancel`, and `job.list` bypass the main-thread queue so they
+stay responsive and cancellation reaches a running job.
 
 ---
 

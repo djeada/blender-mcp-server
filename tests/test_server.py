@@ -6,19 +6,49 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from blender_mcp_server.headless import HeadlessBlenderExecutor
+from blender_mcp_server.headless import HeadlessBlenderExecutor, HeadlessJobManager
 from blender_mcp_server.server import (
     HEADLESS_JOB_MANAGER,
+    STREAM_LIMIT,
     BlenderConnection,
     job_cancel,
     job_list,
     job_status,
+    load_auth_token,
     main,
     mcp,
     python_exec,
     python_exec_async,
     render_still,
 )
+from blender_mcp_server.server import (
+    material_set_color as material_set_color_tool,
+)
+from blender_mcp_server.server import (
+    object_create as object_create_tool,
+)
+
+
+def _echo_stream(response_fields: dict, stale_first: dict | None = None):
+    """Mock reader/writer pair that answers each written request with a matching id."""
+    sent: list[dict] = []
+    mock_writer = AsyncMock()
+    mock_writer.write = MagicMock(side_effect=lambda data: sent.append(json.loads(data)))
+    mock_writer.drain = AsyncMock()
+    mock_writer.close = MagicMock()
+    mock_writer.sent = sent
+    lines: list[bytes] = []
+
+    async def readline():
+        if not lines:
+            if stale_first is not None:
+                lines.append(json.dumps(stale_first).encode() + b"\n")
+            lines.append(json.dumps({"id": sent[-1]["id"], **response_fields}).encode() + b"\n")
+        return lines.pop(0)
+
+    mock_reader = AsyncMock()
+    mock_reader.readline = readline
+    return mock_reader, mock_writer
 
 
 class TestToolRegistration:
@@ -110,16 +140,7 @@ class TestBlenderConnection:
     @pytest.mark.asyncio
     async def test_send_command_success(self):
         conn = BlenderConnection()
-        response = {"id": "test-id", "success": True, "result": {"name": "Cube"}}
-
-        mock_reader = AsyncMock()
-        mock_reader.readline = AsyncMock(return_value=json.dumps(response).encode() + b"\n")
-        mock_writer = AsyncMock()
-        mock_writer.write = MagicMock()
-        mock_writer.drain = AsyncMock()
-
-        conn._reader = mock_reader
-        conn._writer = mock_writer
+        conn._reader, conn._writer = _echo_stream({"success": True, "result": {"name": "Cube"}})
 
         result = await conn.send_command("scene.get_info")
         assert result == {"name": "Cube"}
@@ -127,16 +148,7 @@ class TestBlenderConnection:
     @pytest.mark.asyncio
     async def test_send_command_error_response(self):
         conn = BlenderConnection()
-        response = {"id": "test-id", "success": False, "error": "Object not found"}
-
-        mock_reader = AsyncMock()
-        mock_reader.readline = AsyncMock(return_value=json.dumps(response).encode() + b"\n")
-        mock_writer = AsyncMock()
-        mock_writer.write = MagicMock()
-        mock_writer.drain = AsyncMock()
-
-        conn._reader = mock_reader
-        conn._writer = mock_writer
+        conn._reader, conn._writer = _echo_stream({"success": False, "error": "Object not found"})
 
         with pytest.raises(RuntimeError, match="Object not found"):
             await conn.send_command("object.get_transform", {"name": "Missing"})
@@ -150,6 +162,7 @@ class TestBlenderConnection:
         mock_writer = AsyncMock()
         mock_writer.write = MagicMock()
         mock_writer.drain = AsyncMock()
+        mock_writer.close = MagicMock()
 
         conn._reader = mock_reader
         conn._writer = mock_writer
@@ -166,13 +179,7 @@ class TestBlenderConnection:
     @pytest.mark.asyncio
     async def test_auto_reconnect_on_first_call(self):
         conn = BlenderConnection()
-        response = {"id": "test-id", "success": True, "result": {}}
-
-        mock_reader = AsyncMock()
-        mock_reader.readline = AsyncMock(return_value=json.dumps(response).encode() + b"\n")
-        mock_writer = AsyncMock()
-        mock_writer.write = MagicMock()
-        mock_writer.drain = AsyncMock()
+        mock_reader, mock_writer = _echo_stream({"success": True, "result": {}})
 
         with patch("asyncio.open_connection", return_value=(mock_reader, mock_writer)):
             result = await conn.send_command("scene.get_info")
@@ -362,3 +369,186 @@ class TestMCPProtocol:
         with patch.object(mcp, "run") as run:
             main()
         run.assert_called_once_with(transport="stdio")
+
+
+class TestConnectionHardening:
+    @pytest.mark.asyncio
+    async def test_requests_carry_auth_token(self):
+        conn = BlenderConnection()
+        conn._reader, conn._writer = _echo_stream({"success": True, "result": {}})
+        await conn.send_command("scene.get_info")
+        assert conn._writer.sent[0]["token"] == "test-token"
+
+    def test_token_read_from_file(self, monkeypatch, tmp_path):
+        monkeypatch.delenv("BLENDER_MCP_TOKEN")
+        token_file = tmp_path / "token"
+        token_file.write_text("from-file\n")
+        monkeypatch.setenv("BLENDER_MCP_TOKEN_FILE", str(token_file))
+        assert load_auth_token() == "from-file"
+
+    def test_missing_token_raises_helpful_error(self, monkeypatch, tmp_path):
+        monkeypatch.delenv("BLENDER_MCP_TOKEN")
+        monkeypatch.setenv("BLENDER_MCP_TOKEN_FILE", str(tmp_path / "absent"))
+        with pytest.raises(ConnectionError, match="auth token not found"):
+            load_auth_token()
+
+    def test_host_and_port_from_environment(self, monkeypatch):
+        monkeypatch.setenv("BLENDER_MCP_HOST", "10.0.0.5")
+        monkeypatch.setenv("BLENDER_MCP_PORT", "9999")
+        conn = BlenderConnection()
+        assert (conn.host, conn.port) == ("10.0.0.5", 9999)
+
+    @pytest.mark.asyncio
+    async def test_stream_limit_allows_large_responses(self):
+        with patch("asyncio.open_connection", new=AsyncMock(return_value=(AsyncMock(), AsyncMock()))) as open_conn:
+            await BlenderConnection().connect()
+        assert open_conn.await_args.kwargs["limit"] == STREAM_LIMIT
+        assert STREAM_LIMIT > 150_000
+
+    @pytest.mark.asyncio
+    async def test_stale_response_is_discarded(self):
+        conn = BlenderConnection()
+        stale = {"id": "old-request", "success": True, "result": "stale"}
+        conn._reader, conn._writer = _echo_stream({"success": True, "result": "fresh"}, stale_first=stale)
+        assert await conn.send_command("scene.get_info") == "fresh"
+
+    @pytest.mark.asyncio
+    async def test_connection_level_rejection_resets_connection(self):
+        conn = BlenderConnection()
+        reader, writer = _echo_stream({})
+        rejection = json.dumps({"id": None, "success": False, "error": "Unauthorized"}).encode() + b"\n"
+        reader.readline = AsyncMock(return_value=rejection)
+        conn._reader, conn._writer = reader, writer
+        with pytest.raises(ConnectionError, match="Unauthorized"):
+            await conn.send_command("scene.get_info")
+        assert conn._writer is None
+
+    @pytest.mark.asyncio
+    async def test_cancelled_request_resets_connection(self):
+        conn = BlenderConnection()
+        reader, writer = _echo_stream({})
+
+        async def never():
+            await asyncio.sleep(10)
+
+        reader.readline = never
+        conn._reader, conn._writer = reader, writer
+        task = asyncio.create_task(conn.send_command("render.animation"))
+        await asyncio.sleep(0.01)
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+        assert conn._writer is None, "a late response must not be read by the next request"
+
+    @pytest.mark.asyncio
+    async def test_timeout_resets_connection(self):
+        conn = BlenderConnection(timeout=0.01)
+        reader, writer = _echo_stream({})
+
+        async def never():
+            await asyncio.sleep(10)
+
+        reader.readline = never
+        conn._reader, conn._writer = reader, writer
+        with pytest.raises(TimeoutError):
+            await conn.send_command("scene.get_info")
+        assert conn._writer is None
+
+
+class TestToolParameters:
+    def _ctx(self):
+        ctx = MagicMock()
+        ctx.request_context.lifespan_context.send_command = AsyncMock(return_value={})
+        return ctx
+
+    @pytest.mark.asyncio
+    async def test_unset_parameters_are_omitted(self):
+        ctx = self._ctx()
+        await object_create_tool(ctx, mesh_type="cube")
+        command, params = ctx.request_context.lifespan_context.send_command.await_args.args
+        assert command == "object.create_mesh"
+        assert params == {"type": "cube", "size": 2.0}
+
+    @pytest.mark.asyncio
+    async def test_material_set_color_params(self):
+        ctx = self._ctx()
+        await material_set_color_tool(ctx, name="M", color=[1, 0, 0])
+        _command, params = ctx.request_context.lifespan_context.send_command.await_args.args
+        assert params == {"name": "M", "color": [1, 0, 0]}
+
+    def test_transport_schema_is_an_enum(self):
+        for tool in mcp._tool_manager._tools.values():
+            schema = getattr(tool, "parameters", {})
+            transport = schema.get("properties", {}).get("transport")
+            if transport is not None:
+                assert set(transport["enum"]) == {"bridge", "headless"}, tool.name
+
+    @pytest.mark.asyncio
+    async def test_headless_can_be_disabled(self, monkeypatch):
+        monkeypatch.setenv("BLENDER_MCP_HEADLESS", "0")
+        with pytest.raises(PermissionError):
+            await python_exec(self._ctx(), code="pass", transport="headless")
+
+    @pytest.mark.asyncio
+    async def test_async_headless_validates_before_creating_job(self):
+        HEADLESS_JOB_MANAGER._jobs.clear()
+        with pytest.raises(ValueError):
+            await python_exec_async(self._ctx(), transport="headless")
+        assert HEADLESS_JOB_MANAGER._jobs == {}
+
+
+class TestHeadlessJobFailures:
+    @pytest.mark.asyncio
+    async def test_executor_exception_marks_job_failed(self):
+        manager = HeadlessJobManager()
+        job_id = await manager.create_job(HeadlessBlenderExecutor("/nonexistent/blender"), code="pass")
+        await manager._jobs[job_id]["task"]
+        status = manager.get_status(job_id)
+        assert status["status"] == "failed"
+        assert "FileNotFoundError" in status["error"]
+
+    @pytest.mark.asyncio
+    async def test_cancel_kills_process_and_propagates(self):
+        executor = HeadlessBlenderExecutor("blender")
+        proc = MagicMock()
+        proc.returncode = None
+
+        async def hang():
+            await asyncio.sleep(10)
+
+        proc.communicate = hang
+        proc.wait = AsyncMock(return_value=-9)
+        with patch("asyncio.create_subprocess_exec", new=AsyncMock(return_value=proc)):
+            task = asyncio.create_task(executor.execute(code="pass"))
+            await asyncio.sleep(0.01)
+            task.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await task
+        proc.kill.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_default_timeout_is_applied(self, monkeypatch):
+        monkeypatch.setenv("BLENDER_MCP_HEADLESS_TIMEOUT", "0.01")
+        executor = HeadlessBlenderExecutor("blender")
+        proc = MagicMock()
+        proc.returncode = None
+        calls = {"n": 0}
+
+        async def communicate():
+            calls["n"] += 1
+            if calls["n"] == 1:
+                await asyncio.sleep(10)
+            return b"", b""
+
+        proc.communicate = communicate
+        with patch("asyncio.create_subprocess_exec", new=AsyncMock(return_value=proc)):
+            result = await executor.execute(code="pass")
+        assert result["timed_out"] is True
+
+    def test_finished_jobs_are_pruned(self):
+        manager = HeadlessJobManager()
+        for i in range(150):
+            manager._jobs[f"headless-job-{i}"] = {"job_id": f"headless-job-{i}", "status": "succeeded", "created_at": i}
+        manager._prune_finished_jobs()
+        assert len(manager._jobs) < 100
+        assert "headless-job-149" in manager._jobs

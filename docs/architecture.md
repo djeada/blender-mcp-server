@@ -18,15 +18,15 @@ The Blender MCP Server enables AI assistants (Claude Desktop, etc.) to control B
 - Built with the official **MCP Python SDK** (`mcp`)
 - Uses **stdio** transport (standard for Claude Desktop)
 - Registers tools with proper names, descriptions, and JSON schemas
-- On tool invocation: serializes the request as JSON, sends it to the Blender add-on via TCP, waits for a JSON response
-- Handles errors, timeouts, and connection failures gracefully
+- On tool invocation: serializes the request as JSON (including the auth token), sends it to the Blender add-on via TCP, and waits for the response with the matching `id`
+- Drops the connection after a timeout, cancellation, or malformed response so a late reply can never be read by the next request
 - Includes structured logging
 
 ### 2. Blender Add-on (`addon/__init__.py`)
 
 - Standard Blender add-on (register/unregister lifecycle)
-- On enable: starts a **TCP socket server** on `localhost:9876`
-- Listens for JSON command messages from the MCP server
+- On enable: starts a **TCP socket server** on `localhost:9876` and creates the auth token file if needed
+- Listens for JSON command messages from the MCP server; unauthenticated or malformed input closes the connection
 - Executes commands in Blender's Python context (`bpy`)
 - Returns structured JSON results
 - On disable / Blender exit: gracefully shuts down the socket server
@@ -38,9 +38,16 @@ The Blender MCP Server enables AI assistants (Claude Desktop, etc.) to control B
 {
   "id": "unique-request-id",
   "command": "scene.list_objects",
-  "params": {}
+  "params": {},
+  "token": "<contents of ~/.blender-mcp/token>"
 }
 ```
+
+Connection-level rejections (bad token, malformed JSON, oversized request) are
+answered with `"id": null` and the connection is closed. `job.status`,
+`job.cancel`, and `job.list` are answered on the socket thread so they work while
+an async job occupies Blender's main thread; all other commands run on the main
+thread through a `bpy.app.timers` queue.
 
 ### Response (Blender Add-on → MCP Server)
 ```json
@@ -159,15 +166,23 @@ MCP Client                MCP Server             Blender Add-on
 
 Script execution runs with a pragmatic local trust model:
 
+0. **Authentication** — only clients that can read the token file (or know
+   `BLENDER_MCP_TOKEN`) can reach the bridge at all.
 1. **Script path restriction** — `script_path` must be under an explicitly
    configured project root (add-on preference `approved_script_roots`).
    Symlinks are resolved before checking.
 2. **Inline code toggle** — `allow_inline_code` preference (default: on). When
    off, only file-based execution is allowed.
 3. **Module blocklist** — A lightweight import hook blocks `subprocess`,
-   `shutil`, `socket`, `ctypes`, and other dangerous modules during execution.
+   `socket`, `ctypes`, and a few other modules. It is trivially bypassed (for
+   example via `os` or `importlib`) and exists only to catch accidents.
 4. **Timeout** — Per-request cooperative timeout (default 30s sync, 300s async).
-5. **Output bounding** — stdout/stderr are capped at 50 KB to prevent
+   The timeout and cancellation exceptions derive from `BaseException`, so a
+   script's `except Exception:` cannot swallow them. They are checked between
+   Python lines and cannot interrupt a long C call such as a bake.
+5. **Safe Mode** — disables inline code and restricts render/export/texture
+   paths to the approved roots.
+6. **Output bounding** — stdout/stderr are capped at 50 KB to prevent
    memory exhaustion.
 
 This is not a sandbox. It is an explicit, auditable policy suitable for local

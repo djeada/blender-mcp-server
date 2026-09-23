@@ -25,11 +25,14 @@ from __future__ import annotations
 
 import argparse
 import json
-import socket
+import sys
 import time
-import uuid
 from pathlib import Path
 from typing import Any
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
+from blender_bridge_request import send_request
 
 BRIDGE_HOST = "127.0.0.1"
 BRIDGE_PORT = 9876
@@ -50,16 +53,7 @@ def send_command(
     timeout: float = TIMEOUT,
 ) -> dict[str, Any]:
     """Send a single command to the Blender bridge and return the response."""
-    request = {"id": str(uuid.uuid4()), "command": command, "params": params}
-    with socket.create_connection((host, port), timeout=timeout) as sock:
-        sock.sendall((json.dumps(request) + "\n").encode("utf-8"))
-        buf = b""
-        while b"\n" not in buf:
-            chunk = sock.recv(65536)
-            if not chunk:
-                raise ConnectionError("Connection closed before response")
-            buf += chunk
-    return json.loads(buf.split(b"\n", 1)[0].decode("utf-8"))
+    return send_request(host, port, command, params, timeout)
 
 
 def exec_inline(code: str, args: dict | None = None, **kw: Any) -> dict:

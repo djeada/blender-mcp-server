@@ -1,0 +1,17 @@
+schema_version = "1.0.0"
+
+id = "blender_mcp_bridge"
+version = "0.1.3"
+name = "Blender MCP Bridge"
+tagline = "TCP bridge that lets an MCP server control Blender"
+maintainer = "Adam Djellouli <adam@djellouli.com>"
+type = "add-on"
+website = "https://github.com/djeada/blender-mcp-server"
+tags = ["Development", "Pipeline"]
+
+blender_version_min = "4.2.0"
+license = ["SPDX:MIT"]
+
+[permissions]
+network = "Listens on 127.0.0.1 for authenticated MCP server requests"
+files = "Reads scripts and writes renders/exports requested via MCP"

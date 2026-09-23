@@ -42,15 +42,17 @@ mypy src/ addon/
 ```
 
 All three commands must pass with zero errors. CI will reject PRs that fail.
+Shell scripts are checked with `shellcheck -x -P scripts scripts/*.sh`; keep them bash 3.2 compatible (macOS).
 
 ### 4. Run Tests
 
 ```bash
-pytest tests/test_server.py -v     # MCP server tests (no Blender required)
-pytest tests/test_addon.py -v      # Add-on tests (mocked bpy, no Blender required)
+pytest -v                          # Server + add-on unit tests (mocked bpy, no Blender required)
+BLENDER_MCP_INTEGRATION=1 pytest tests/integration -v --no-cov   # End-to-end against a real Blender
 ```
 
-Coverage is collected automatically. The minimum coverage threshold is 50 %.
+Coverage (server and add-on) is collected automatically; the minimum threshold is 70 %.
+CI runs the unit tests on Python 3.10–3.13 and the integration tests against Ubuntu's Blender package.
 
 ### 5. Commit and Push
 
@@ -92,9 +94,11 @@ blender-mcp-server/
 
 1. Add the bridge command handler in `addon/__init__.py` under `CommandHandler`.
 2. Register the MCP tool in `src/blender_mcp_server/server.py` using `@mcp.tool(...)`.
-3. Add tests in `tests/test_server.py` (tool registration) and `tests/test_addon.py`
-   (handler logic).
-4. Document the tool in `README.md` under the appropriate namespace.
+3. Add a validator in `addon/models.py` and register it in `CommandHandler._VALIDATORS`.
+4. Add tests in `tests/test_server.py` (tool registration) and `tests/test_addon.py`
+   (handler logic), and add the tool to `TestServerAddonContract.CALLS` so the server's
+   parameter names are checked against the add-on's validator.
+5. Document the tool in `README.md` under the appropriate namespace.
 
 ## Reporting Issues
 

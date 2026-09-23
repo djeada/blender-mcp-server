@@ -8,6 +8,7 @@ tiny validation API used by the command handler:
 
 from __future__ import annotations
 
+import math
 from copy import deepcopy
 from typing import Any
 
@@ -60,8 +61,8 @@ class BridgeParams:
         if expected == "int" and (not isinstance(value, int) or isinstance(value, bool)):
             raise ValueError(f"Parameter '{name}' must be an integer")
         if expected == "float":
-            if not isinstance(value, (int, float)) or isinstance(value, bool):
-                raise ValueError(f"Parameter '{name}' must be a number")
+            if not _is_finite_number(value):
+                raise ValueError(f"Parameter '{name}' must be a finite number")
             value = float(value)
         if expected == "number_list":
             if not isinstance(value, list):
@@ -72,8 +73,8 @@ class BridgeParams:
                 raise ValueError(f"Parameter '{name}' must have at least {min_length} items")
             if max_length is not None and len(value) > max_length:
                 raise ValueError(f"Parameter '{name}' must have at most {max_length} items")
-            if any(not isinstance(item, (int, float)) or isinstance(item, bool) for item in value):
-                raise ValueError(f"Parameter '{name}' must contain only numbers")
+            if not all(_is_finite_number(item) for item in value):
+                raise ValueError(f"Parameter '{name}' must contain only finite numbers")
             value = [float(item) for item in value]
 
         if spec.get("gt") is not None and value <= spec["gt"]:
@@ -84,6 +85,10 @@ class BridgeParams:
         if exclude_none:
             return {key: value for key, value in self._values.items() if value is not None}
         return dict(self._values)
+
+
+def _is_finite_number(value: Any) -> bool:
+    return isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value)
 
 
 def field(
@@ -169,7 +174,7 @@ class ObjectDuplicateParams(BridgeParams):
 class MaterialCreateParams(BridgeParams):
     fields = {
         "name": field("str", required=True),
-        "color": field("number_list", allow_none=True, min_length=3, max_length=3),
+        "color": field("number_list", allow_none=True, min_length=3, max_length=4),
     }
 
 
@@ -179,13 +184,13 @@ class MaterialAssignParams(BridgeParams):
 
 class MaterialSetColorParams(BridgeParams):
     fields = {
-        "material": field("str", required=True),
-        "color": field("number_list", required=True, min_length=3, max_length=3),
+        "name": field("str", required=True),
+        "color": field("number_list", required=True, min_length=3, max_length=4),
     }
 
 
 class MaterialSetTextureParams(BridgeParams):
-    fields = {"material": field("str", required=True), "path": field("str", required=True)}
+    fields = {"name": field("str", required=True), "filepath": field("str", required=True)}
 
 
 class RenderStillParams(BridgeParams):
