@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.2.0] — 2026-09-23
+
 ### Added
 - `scripts/setup.sh`: one-command setup on macOS and Linux (venv, add-on install as a Blender 4.2+
   extension or legacy add-on, replacing old copies; optional `--register claude,codex,claude-desktop`).
@@ -36,6 +38,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - `BLENDER_MCP_HEADLESS=0` disables the headless transport.
 
 ### Fixed
+- Request timeouts now raise `TimeoutError` instead of being reported as a lost connection on
+  Python 3.11+, where `asyncio.TimeoutError` is a subclass of `OSError`.
 - `blender_material_set_color` and `blender_material_set_texture` always failed validation.
 - Bridge responses larger than 64 KiB failed; the client stream limit is now 32 MiB.
 - Responses are matched by request `id`, and the connection is reset after a cancelled or timed-out
@@ -116,7 +120,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - Architecture documentation and Python execution design spec.
 - Unit tests for MCP server and add-on (mocked `bpy`).
 
-[Unreleased]: https://github.com/djeada/blender-mcp-server/compare/v0.1.3...HEAD
+[Unreleased]: https://github.com/djeada/blender-mcp-server/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/djeada/blender-mcp-server/compare/v0.1.3...v0.2.0
 [0.1.3]: https://github.com/djeada/blender-mcp-server/compare/v0.1.2...v0.1.3
 [0.1.2]: https://github.com/djeada/blender-mcp-server/compare/v0.1.1...v0.1.2
 [0.1.1]: https://github.com/djeada/blender-mcp-server/compare/v0.1.0...v0.1.1

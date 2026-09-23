@@ -108,13 +108,14 @@ class BlenderConnection:
                 self._writer.write(json.dumps(request).encode() + b"\n")
                 await self._writer.drain()
                 response = await asyncio.wait_for(self._read_response(request_id), timeout=self.timeout)
+            except asyncio.TimeoutError as e:
+                # Must precede OSError: on 3.11+ asyncio.TimeoutError is the builtin TimeoutError (an OSError).
+                self._reset()
+                raise TimeoutError(f"Blender did not answer '{command}' within {self.timeout}s") from e
             except (ConnectionError, OSError, ValueError) as e:
                 # ValueError covers stream limit overruns and undecodable lines.
                 self._reset()
                 raise ConnectionError(f"Lost connection to Blender: {e}") from e
-            except asyncio.TimeoutError as e:
-                self._reset()
-                raise TimeoutError(f"Blender did not answer '{command}' within {self.timeout}s") from e
             except BaseException:
                 # Cancelled mid-request: the response is still in flight, so the stream is unusable.
                 self._reset()
