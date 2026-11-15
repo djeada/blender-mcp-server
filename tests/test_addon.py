@@ -1128,6 +1128,164 @@ class TestParameterValidation:
         assert result["color"] == [1.0, 0.0, 0.0, 0.5]
 
 
+class _FakeRender:
+    """Render settings whose engine enum rejects unknown names the way bpy does."""
+
+    resolution_x = 1920
+    resolution_y = 1080
+    filepath = ""
+
+    def __init__(self, engines):
+        self._engines = engines
+        self._engine = engines[0]
+
+    @property
+    def engine(self):
+        return self._engine
+
+    @engine.setter
+    def engine(self, value):
+        if value not in self._engines:
+            raise TypeError(f'enum "{value}" not found in {self._engines}')
+        self._engine = value
+
+
+class TestOutputPaths:
+    def test_export_creates_folder_adds_extension_and_returns_absolute_path(self, handler, mock_bpy, tmp_path):
+        target = tmp_path / "new" / "dir" / "model"
+        result = handler.handle("export.gltf", {"filepath": str(target)})
+        assert result["filepath"] == f"{target}.glb"
+        assert target.parent.is_dir()
+        mock_bpy.ops.export_scene.gltf.assert_called_once_with(filepath=f"{target}.glb")
+
+    def test_export_extension_check_ignores_case(self, handler, tmp_path):
+        result = handler.handle("export.obj", {"filepath": str(tmp_path / "a.OBJ")})
+        assert result["filepath"] == str(tmp_path / "a.OBJ")
+
+    def test_blend_relative_path_uses_temp_folder_while_unsaved(self, handler, mock_bpy, monkeypatch, tmp_path):
+        mock_bpy.data.filepath = ""
+        monkeypatch.setattr(tempfile, "gettempdir", lambda: str(tmp_path))
+        result = handler.handle("render.still", {})
+        expected = str(tmp_path / "blender-mcp" / "render.png")
+        assert result["output_path"] == expected
+        assert mock_bpy.context.scene.render.filepath == expected
+        assert (tmp_path / "blender-mcp").is_dir()
+
+    def test_blend_relative_path_is_left_to_blender_when_saved(self, handler, mock_bpy, tmp_path):
+        mock_bpy.data.filepath = str(tmp_path / "scene.blend")
+        mock_bpy.path.abspath = lambda path: str(tmp_path / path[2:])
+        result = handler.handle("export.fbx", {"filepath": "//out/model.fbx"})
+        assert result["filepath"] == str(tmp_path / "out" / "model.fbx")
+
+    def test_directory_style_render_path_keeps_trailing_separator(self, handler, tmp_path):
+        frames = str(tmp_path / "frames") + os.sep
+        result = handler.handle("render.animation", {"output_path": frames})
+        assert result["output_path"] == frames
+        assert (tmp_path / "frames").is_dir()
+
+    def test_safe_mode_is_enforced_on_the_resolved_path(self, handler, addon_module, tmp_path):
+        allowed = tmp_path / "ok"
+        allowed.mkdir()
+        addon_module.SAFE_MODE = True
+        addon_module.ALLOWED_PATHS = [str(allowed)]
+        with pytest.raises(PermissionError):
+            handler.handle("export.fbx", {"filepath": str(tmp_path / "outside" / "x.fbx")})
+        assert not (tmp_path / "outside").exists(), "a denied export must not create folders"
+        assert handler.handle("export.fbx", {"filepath": str(allowed / "x")})["filepath"] == str(allowed / "x.fbx")
+
+
+class TestRenderEngineNames:
+    @pytest.mark.parametrize(
+        ("available", "requested", "expected"),
+        [
+            (("BLENDER_EEVEE_NEXT", "CYCLES"), "BLENDER_EEVEE", "BLENDER_EEVEE_NEXT"),  # Blender 4.2-4.5
+            (("BLENDER_EEVEE_NEXT", "CYCLES"), "eevee", "BLENDER_EEVEE_NEXT"),
+            (("BLENDER_EEVEE", "CYCLES"), "BLENDER_EEVEE_NEXT", "BLENDER_EEVEE"),  # Blender 5.x
+            (("BLENDER_EEVEE", "CYCLES"), "Eevee", "BLENDER_EEVEE"),
+            (("BLENDER_EEVEE", "BLENDER_WORKBENCH"), "workbench", "BLENDER_WORKBENCH"),
+            (("BLENDER_EEVEE", "CYCLES"), "cycles", "CYCLES"),
+        ],
+    )
+    def test_engine_name_is_resolved_for_the_running_blender(
+        self, handler, mock_bpy, tmp_path, available, requested, expected
+    ):
+        mock_bpy.context.scene.render = _FakeRender(available)
+        result = handler.handle("render.still", {"output_path": str(tmp_path / "r.png"), "engine": requested})
+        assert result["engine"] == expected
+
+    def test_unknown_engine_lists_the_available_ones(self, handler, mock_bpy, tmp_path):
+        mock_bpy.context.scene.render = _FakeRender(("BLENDER_EEVEE", "CYCLES"))
+        with pytest.raises(ValueError, match="Unknown render engine 'luxrender'.*CYCLES"):
+            handler.handle("render.animation", {"output_path": str(tmp_path / "r_"), "engine": "luxrender"})
+        mock_bpy.ops.render.render.assert_not_called()
+
+
+class TestNonMeshObjects:
+    def test_duplicate_object_without_data(self, handler, mock_bpy):
+        empty = MagicMock()
+        empty.name = "Empty"
+        empty.data = None
+        duplicate = empty.copy.return_value
+        duplicate.data = None
+        mock_bpy.data.objects.get = lambda name: empty
+        result = handler.handle("object.duplicate", {"name": "Empty", "new_name": "Empty2"})
+        assert result["name"] == "Empty2"
+        assert duplicate.data is None
+        mock_bpy.context.collection.objects.link.assert_called_once_with(duplicate)
+
+    @pytest.mark.parametrize("data", [None, types.SimpleNamespace()], ids=["empty", "camera"])
+    def test_material_assign_rejects_objects_without_material_slots(self, handler, mock_bpy, data):
+        obj = types.SimpleNamespace(name="Thing", type="EMPTY" if data is None else "CAMERA", data=data)
+        mock_bpy.data.objects.get = lambda name: obj
+        mock_bpy.data.materials.get = MagicMock(return_value=MagicMock())
+        with pytest.raises(ValueError, match=f"type {obj.type}, which cannot have materials"):
+            handler.handle("material.assign", {"object": "Thing", "material": "M"})
+
+    @pytest.mark.parametrize("existing", [[], ["old"]], ids=["no-slot", "first-slot"])
+    def test_material_assign_fills_first_slot(self, handler, mock_bpy, existing):
+        slots = list(existing)
+        obj = types.SimpleNamespace(name="Cube", type="MESH", data=types.SimpleNamespace(materials=slots))
+        material = MagicMock()
+        mock_bpy.data.objects.get = lambda name: obj
+        mock_bpy.data.materials.get = MagicMock(return_value=material)
+        handler.handle("material.assign", {"object": "Cube", "material": "M"})
+        assert slots == [material]
+
+
+class TestMaterialTexture:
+    def _material(self, mock_bpy):
+        material = MagicMock()
+        material.name = "M"
+        mock_bpy.data.materials.get = MagicMock(return_value=material)
+        return material
+
+    def test_failed_image_load_adds_no_node(self, handler, mock_bpy):
+        material = self._material(mock_bpy)
+        mock_bpy.data.images.load.side_effect = RuntimeError("Cannot read '/missing.png'")
+        with pytest.raises(RuntimeError, match="Cannot read"):
+            handler.handle("material.set_texture", {"name": "M", "filepath": "/missing.png"})
+        material.node_tree.nodes.new.assert_not_called()
+
+    def test_first_texture_creates_and_links_a_node(self, handler, mock_bpy):
+        material = self._material(mock_bpy)
+        handler.handle("material.set_texture", {"name": "M", "filepath": "/a.png"})
+        node = material.node_tree.nodes.new.return_value
+        material.node_tree.nodes.new.assert_called_once_with("ShaderNodeTexImage")
+        material.node_tree.links.new.assert_called_once()
+        assert node.image is mock_bpy.data.images.load.return_value
+
+    def test_replacing_a_texture_reuses_the_linked_node(self, handler, mock_bpy):
+        material = self._material(mock_bpy)
+        existing = MagicMock()
+        existing.bl_idname = "ShaderNodeTexImage"
+        link = MagicMock()
+        link.from_node = existing
+        material.node_tree.nodes.get.return_value.inputs.__getitem__.return_value.links = [link]
+        handler.handle("material.set_texture", {"name": "M", "filepath": "/b.png"})
+        material.node_tree.nodes.new.assert_not_called()
+        assert existing.image is mock_bpy.data.images.load.return_value
+
+
 class TestServerAddonContract:
     """Every MCP tool must send parameters the add-on's validator accepts."""
 

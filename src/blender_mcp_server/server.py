@@ -93,7 +93,13 @@ class BlenderConnection:
         """Send a command to Blender and return the result."""
         async with self._lock:
             if not self._writer:
-                await self.connect()
+                try:
+                    await self.connect()
+                except OSError as e:
+                    raise ConnectionError(
+                        f"Cannot reach Blender at {self.host}:{self.port} ({e}). Start Blender and enable the "
+                        "Blender MCP Bridge add-on (View3D > Sidebar > MCP > Start Server)."
+                    ) from e
             assert self._reader is not None
             assert self._writer is not None
 
@@ -323,48 +329,99 @@ async def material_set_texture(ctx: Context, name: str, filepath: str) -> str:
 
 # -- Render tools --
 
-_HEADLESS_RENDER_STILL = """
+# Mirrors _resolve_output_path / _set_render_engine in the add-on, which headless Blender does not load.
+_HEADLESS_PATH_PRELUDE = """
+import os
+import tempfile
+
 import bpy
+
+
+def output_path(path, extensions=()):
+    if path.startswith("//") and not bpy.data.filepath:
+        resolved = os.path.join(tempfile.gettempdir(), "blender-mcp", path[2:].lstrip("/" + os.sep))
+    else:
+        resolved = bpy.path.abspath(path)
+    absolute = os.path.abspath(resolved)
+    if path.endswith(("/", os.sep)) and not absolute.endswith(os.sep):
+        absolute += os.sep
+    if extensions and not absolute.lower().endswith(extensions):
+        absolute += extensions[0]
+    os.makedirs(os.path.dirname(absolute), exist_ok=True)
+    return absolute
+"""
+
+_HEADLESS_RENDER_PRELUDE = (
+    _HEADLESS_PATH_PRELUDE
+    + """
+ENGINE_ALIASES = {
+    "EEVEE": ("BLENDER_EEVEE", "BLENDER_EEVEE_NEXT"),
+    "EEVEE_NEXT": ("BLENDER_EEVEE_NEXT", "BLENDER_EEVEE"),
+    "BLENDER_EEVEE": ("BLENDER_EEVEE_NEXT",),
+    "BLENDER_EEVEE_NEXT": ("BLENDER_EEVEE",),
+    "WORKBENCH": ("BLENDER_WORKBENCH",),
+}
+
+
+def set_engine(scene, engine):
+    requested = engine.strip().upper().replace(" ", "_")
+    first_error = None
+    for candidate in (requested, *ENGINE_ALIASES.get(requested, ())):
+        try:
+            scene.render.engine = candidate
+            return
+        except TypeError as exc:
+            first_error = first_error or exc
+    raise ValueError(f"Unknown render engine {engine!r}: {first_error}")
+
+
 scene = bpy.context.scene
-scene.render.filepath = args["output_path"]
+scene.render.filepath = output_path(args["output_path"])
+if args.get("engine"):
+    set_engine(scene, args["engine"])
+"""
+)
+
+_HEADLESS_RENDER_STILL = (
+    _HEADLESS_RENDER_PRELUDE
+    + """
 if args.get("resolution_x") is not None:
     scene.render.resolution_x = args["resolution_x"]
 if args.get("resolution_y") is not None:
     scene.render.resolution_y = args["resolution_y"]
-if args.get("engine"):
-    scene.render.engine = args["engine"].upper()
 bpy.ops.render.render(write_still=True)
 __result__ = {
-    "output_path": bpy.path.abspath(scene.render.filepath),
+    "output_path": scene.render.filepath,
     "engine": scene.render.engine,
     "resolution": [scene.render.resolution_x, scene.render.resolution_y],
 }
 """
+)
 
-_HEADLESS_RENDER_ANIMATION = """
-import bpy
-scene = bpy.context.scene
-scene.render.filepath = args["output_path"]
+_HEADLESS_RENDER_ANIMATION = (
+    _HEADLESS_RENDER_PRELUDE
+    + """
 if args.get("frame_start") is not None:
     scene.frame_start = args["frame_start"]
 if args.get("frame_end") is not None:
     scene.frame_end = args["frame_end"]
-if args.get("engine"):
-    scene.render.engine = args["engine"].upper()
 bpy.ops.render.render(animation=True)
 __result__ = {
-    "output_path": bpy.path.abspath(scene.render.filepath),
+    "output_path": scene.render.filepath,
     "engine": scene.render.engine,
     "frame_range": [scene.frame_start, scene.frame_end],
 }
 """
+)
 
 
 @mcp.tool(
     name="blender_render_still",
     description=(
-        "Render the current scene as a still image. Optionally set output path, resolution, and render engine "
-        "(BLENDER_EEVEE, CYCLES, etc.). Use transport='bridge' for the live Blender add-on session, or "
+        "Render the current scene as a still image and return the absolute path of the written file. "
+        "Optionally set output path, resolution, and render engine (EEVEE, CYCLES, or WORKBENCH). "
+        "A path starting with '//' is relative to the .blend file, or to a temp folder while the file is unsaved. "
+        "Use transport='bridge' for the live Blender add-on session, or "
         "transport='headless' with blend_file='/path/to/file.blend' to render in a separate background Blender process."
     ),
 )
@@ -404,7 +461,8 @@ async def render_still(
 @mcp.tool(
     name="blender_render_animation",
     description=(
-        "Render an animation. Optionally set output path, frame range, and render engine. "
+        "Render an animation and return the absolute output path prefix. Optionally set output path, frame range, "
+        "and render engine (EEVEE, CYCLES, or WORKBENCH). "
         "Use transport='bridge' for the live Blender add-on session, or transport='headless' with a blend_file "
         "to render in a separate background Blender process."
     ),
@@ -444,28 +502,92 @@ async def render_animation(
 
 # -- Export tools --
 
+_HEADLESS_EXPORT_PRELUDE = _HEADLESS_PATH_PRELUDE
+
+
+def _headless_export_script(operator: str, extensions: tuple[str, ...]) -> str:
+    """Build a headless export script whose result carries the absolute path written."""
+    return (
+        _HEADLESS_EXPORT_PRELUDE
+        + f"""
+__result__ = {{"filepath": output_path(args["filepath"], {extensions!r})}}
+{operator}(filepath=__result__["filepath"])
+"""
+    )
+
+
+_HEADLESS_EXPORT_GLTF = _headless_export_script("bpy.ops.export_scene.gltf", (".glb", ".gltf"))
+_HEADLESS_EXPORT_OBJ = _headless_export_script("bpy.ops.wm.obj_export", (".obj",))
+_HEADLESS_EXPORT_FBX = _headless_export_script("bpy.ops.export_scene.fbx", (".fbx",))
+
+
+async def _headless_export(script: str, filepath: str, blend_file: str | None, factory_startup: bool | None) -> str:
+    result = await _headless_executor().execute(
+        code=script,
+        args={"filepath": filepath},
+        blend_file=blend_file,
+        factory_startup=factory_startup,
+    )
+    return json.dumps(result, indent=2)
+
 
 @mcp.tool(
     name="blender_export_gltf",
-    description="Export the scene as glTF/GLB. Provide the output file path.",
+    description=(
+        "Export the scene as glTF/GLB and return the absolute path written. "
+        "Use transport='bridge' for the live Blender add-on session, or transport='headless' with blend_file="
+        "'/path/to/file.blend' to export in a separate background Blender process."
+    ),
 )
-async def export_gltf(ctx: Context, filepath: str) -> str:
+async def export_gltf(
+    ctx: Context,
+    filepath: str,
+    transport: Transport = "bridge",
+    blend_file: str | None = None,
+    factory_startup: bool | None = None,
+) -> str:
+    if transport == "headless":
+        return await _headless_export(_HEADLESS_EXPORT_GLTF, filepath, blend_file, factory_startup)
     return await _bridge(ctx, "export.gltf", filepath=filepath)
 
 
 @mcp.tool(
     name="blender_export_obj",
-    description="Export the scene as OBJ. Provide the output file path.",
+    description=(
+        "Export the scene as OBJ and return the absolute path written. "
+        "Use transport='bridge' for the live Blender add-on session, or transport='headless' with blend_file="
+        "'/path/to/file.blend' to export in a separate background Blender process."
+    ),
 )
-async def export_obj(ctx: Context, filepath: str) -> str:
+async def export_obj(
+    ctx: Context,
+    filepath: str,
+    transport: Transport = "bridge",
+    blend_file: str | None = None,
+    factory_startup: bool | None = None,
+) -> str:
+    if transport == "headless":
+        return await _headless_export(_HEADLESS_EXPORT_OBJ, filepath, blend_file, factory_startup)
     return await _bridge(ctx, "export.obj", filepath=filepath)
 
 
 @mcp.tool(
     name="blender_export_fbx",
-    description="Export the scene as FBX. Provide the output file path.",
+    description=(
+        "Export the scene as FBX and return the absolute path written. "
+        "Use transport='bridge' for the live Blender add-on session, or transport='headless' with blend_file="
+        "'/path/to/file.blend' to export in a separate background Blender process."
+    ),
 )
-async def export_fbx(ctx: Context, filepath: str) -> str:
+async def export_fbx(
+    ctx: Context,
+    filepath: str,
+    transport: Transport = "bridge",
+    blend_file: str | None = None,
+    factory_startup: bool | None = None,
+) -> str:
+    if transport == "headless":
+        return await _headless_export(_HEADLESS_EXPORT_FBX, filepath, blend_file, factory_startup)
     return await _bridge(ctx, "export.fbx", filepath=filepath)
 
 
