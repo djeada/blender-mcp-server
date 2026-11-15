@@ -3,7 +3,7 @@
 #
 # Usage: scripts/run_demo.sh [--gui|--background|--bridge] DEMO [script options...]
 #
-#   DEMO is 1, 2, 3 or a path to a .py file (see docs/demos/scripts/).
+#   DEMO is 1, 2, 3 or a path to a .py file (see examples/demos/).
 #   --gui         (default) open Blender, build the scene and render it; Blender stays open
 #   --background  build and render in a background Blender; only the image files are produced
 #   --bridge      send the script to the Blender that is already running with the MCP add-on
@@ -35,10 +35,10 @@ shift
 case "${DEMO}" in
     [0-9])
         SCRIPT=""
-        for candidate in "${REPO_ROOT}/docs/demos/scripts/0${DEMO}_"*.py; do
+        for candidate in "${REPO_ROOT}/examples/demos/0${DEMO}_"*.py; do
             [ -f "${candidate}" ] && SCRIPT="${candidate}" && break
         done
-        [ -n "${SCRIPT}" ] || die "no demo script numbered ${DEMO} in docs/demos/scripts/"
+        [ -n "${SCRIPT}" ] || die "no demo script numbered ${DEMO} in examples/demos/"
         ;;
     *) SCRIPT="${DEMO}" ;;
 esac

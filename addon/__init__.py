@@ -18,7 +18,6 @@ import logging
 import math
 import os
 import queue
-import random
 import secrets
 import socket
 import sys
@@ -36,24 +35,22 @@ from bpy.app.handlers import persistent
 if TYPE_CHECKING:
     from collections.abc import Callable
 
+from .geometry import build_primitive_pydata
 from .models import (
     BridgeParams,
     ExportFileParams,
     JobIdParams,
     MaterialAssignParams,
-    MaterialCreateEmissiveParams,
     MaterialCreateParams,
     MaterialSetColorParams,
     MaterialSetTextureParams,
     ObjectCreateMeshParams,
-    ObjectCreateTreeParams,
     ObjectDeleteParams,
     ObjectDuplicateParams,
     ObjectGetHierarchyParams,
     ObjectGetTransformParams,
     ObjectRotateParams,
     ObjectScaleParams,
-    ObjectScatterParams,
     ObjectTranslateParams,
     PythonExecuteParams,
     RenderAnimationParams,
@@ -95,7 +92,6 @@ MAX_ASYNC_TIMEOUT = 3600
 MAX_OUTPUT_SIZE = 50000  # Cap stdout/stderr returned to client
 LOG_CODE_PREVIEW_LEN = 120  # Max chars of code shown in log messages
 MAX_FINISHED_JOBS = 100  # Finished async jobs kept for status queries
-MAX_SCATTER_COUNT = 500  # Upper bound for a single object.scatter request
 
 # EEVEE's identifier is BLENDER_EEVEE_NEXT in Blender 4.2-4.5 and BLENDER_EEVEE everywhere else,
 # so each spelling falls back to the one the running Blender knows.
@@ -205,182 +201,6 @@ def _cap_output(text: str) -> str:
     return text[:MAX_OUTPUT_SIZE] + f"\n… (truncated, {len(text)} total chars)"
 
 
-def _build_cube_pydata(
-    size: float,
-) -> tuple[list[tuple[float, float, float]], list[tuple[int, ...]]]:
-    half = size / 2.0
-    verts = [
-        (-half, -half, -half),
-        (half, -half, -half),
-        (half, half, -half),
-        (-half, half, -half),
-        (-half, -half, half),
-        (half, -half, half),
-        (half, half, half),
-        (-half, half, half),
-    ]
-    faces: list[tuple[int, ...]] = [
-        (0, 1, 2, 3),
-        (4, 5, 6, 7),
-        (0, 1, 5, 4),
-        (1, 2, 6, 5),
-        (2, 3, 7, 6),
-        (3, 0, 4, 7),
-    ]
-    return verts, faces
-
-
-def _build_plane_pydata(
-    size: float,
-) -> tuple[list[tuple[float, float, float]], list[tuple[int, ...]]]:
-    half = size / 2.0
-    verts = [
-        (-half, -half, 0.0),
-        (half, -half, 0.0),
-        (half, half, 0.0),
-        (-half, half, 0.0),
-    ]
-    return verts, [(0, 1, 2, 3)]
-
-
-def _build_cylinder_pydata(
-    size: float, segments: int = 24
-) -> tuple[list[tuple[float, float, float]], list[tuple[int, ...]]]:
-    radius = size / 2.0
-    half_depth = size / 2.0
-    verts: list[tuple[float, float, float]] = []
-    for ring_z in (-half_depth, half_depth):
-        for i in range(segments):
-            angle = 2.0 * math.pi * i / segments
-            verts.append((radius * math.cos(angle), radius * math.sin(angle), ring_z))
-
-    faces: list[tuple[int, ...]] = []
-    for i in range(segments):
-        nxt = (i + 1) % segments
-        faces.append((i, nxt, segments + nxt, segments + i))
-    faces.append(tuple(range(segments - 1, -1, -1)))
-    faces.append(tuple(range(segments, 2 * segments)))
-    return verts, faces
-
-
-def _build_cone_pydata(
-    size: float, segments: int = 24
-) -> tuple[list[tuple[float, float, float]], list[tuple[int, ...]]]:
-    radius = size / 2.0
-    half_depth = size / 2.0
-    verts: list[tuple[float, float, float]] = []
-    for i in range(segments):
-        angle = 2.0 * math.pi * i / segments
-        verts.append((radius * math.cos(angle), radius * math.sin(angle), -half_depth))
-    apex_index = len(verts)
-    verts.append((0.0, 0.0, half_depth))
-
-    faces: list[tuple[int, ...]] = []
-    for i in range(segments):
-        nxt = (i + 1) % segments
-        faces.append((i, nxt, apex_index))
-    faces.append(tuple(range(segments - 1, -1, -1)))
-    return verts, faces
-
-
-def _build_uv_sphere_pydata(
-    size: float, segments: int = 24, rings: int = 12
-) -> tuple[list[tuple[float, float, float]], list[tuple[int, ...]]]:
-    radius = size / 2.0
-    verts: list[tuple[float, float, float]] = [(0.0, 0.0, radius)]
-    for ring in range(1, rings):
-        phi = math.pi * ring / rings
-        sin_phi = math.sin(phi)
-        cos_phi = math.cos(phi)
-        for seg in range(segments):
-            theta = 2.0 * math.pi * seg / segments
-            verts.append(
-                (
-                    radius * sin_phi * math.cos(theta),
-                    radius * sin_phi * math.sin(theta),
-                    radius * cos_phi,
-                )
-            )
-    bottom_index = len(verts)
-    verts.append((0.0, 0.0, -radius))
-
-    faces: list[tuple[int, ...]] = []
-    for seg in range(segments):
-        nxt = (seg + 1) % segments
-        faces.append((0, 1 + nxt, 1 + seg))
-
-    for ring in range(rings - 2):
-        ring_start = 1 + ring * segments
-        next_start = ring_start + segments
-        for seg in range(segments):
-            nxt = (seg + 1) % segments
-            faces.append(
-                (
-                    ring_start + seg,
-                    ring_start + nxt,
-                    next_start + nxt,
-                    next_start + seg,
-                )
-            )
-
-    last_ring_start = 1 + (rings - 2) * segments
-    for seg in range(segments):
-        nxt = (seg + 1) % segments
-        faces.append((last_ring_start + seg, last_ring_start + nxt, bottom_index))
-    return verts, faces
-
-
-def _build_torus_pydata(
-    size: float, major_segments: int = 24, minor_segments: int = 12
-) -> tuple[list[tuple[float, float, float]], list[tuple[int, ...]]]:
-    major_radius = size * 0.35
-    minor_radius = size * 0.15
-    verts: list[tuple[float, float, float]] = []
-    for major in range(major_segments):
-        major_angle = 2.0 * math.pi * major / major_segments
-        cos_major = math.cos(major_angle)
-        sin_major = math.sin(major_angle)
-        for minor in range(minor_segments):
-            minor_angle = 2.0 * math.pi * minor / minor_segments
-            ring = major_radius + minor_radius * math.cos(minor_angle)
-            verts.append(
-                (
-                    ring * cos_major,
-                    ring * sin_major,
-                    minor_radius * math.sin(minor_angle),
-                )
-            )
-
-    faces: list[tuple[int, ...]] = []
-    for major in range(major_segments):
-        major_next = (major + 1) % major_segments
-        for minor in range(minor_segments):
-            minor_next = (minor + 1) % minor_segments
-            v0 = major * minor_segments + minor
-            v1 = major * minor_segments + minor_next
-            v2 = major_next * minor_segments + minor_next
-            v3 = major_next * minor_segments + minor
-            faces.append((v0, v1, v2, v3))
-    return verts, faces
-
-
-def _build_primitive_pydata(
-    mesh_type: str, size: float
-) -> tuple[list[tuple[float, float, float]], list[tuple[int, ...]]]:
-    builders = {
-        "cube": _build_cube_pydata,
-        "sphere": _build_uv_sphere_pydata,
-        "cylinder": _build_cylinder_pydata,
-        "plane": _build_plane_pydata,
-        "cone": _build_cone_pydata,
-        "torus": _build_torus_pydata,
-    }
-    builder = builders.get(mesh_type)
-    if builder is None:
-        raise ValueError(f"Unknown mesh type: {mesh_type}. Options: {list(builders.keys())}")
-    return builder(size)
-
-
 def _create_primitive_mesh_object(
     mesh_type: str,
     *,
@@ -389,7 +209,7 @@ def _create_primitive_mesh_object(
     size: float = 2.0,
 ):
     obj_name = name or mesh_type.capitalize()
-    verts, faces = _build_primitive_pydata(mesh_type.lower(), size)
+    verts, faces = build_primitive_pydata(mesh_type.lower(), size)
     mesh = bpy.data.meshes.new(f"{obj_name}Mesh")
     mesh.from_pydata(verts, [], faces)
     mesh.update()
@@ -398,68 +218,6 @@ def _create_primitive_mesh_object(
     if location is not None:
         obj.location = tuple(location)
     return obj
-
-
-def _build_tree_pydata(
-    height: float, seed: int | None = None
-) -> tuple[list[tuple[float, float, float]], list[tuple[int, ...]], list[int]]:
-    """Build a low-poly tree (tapered trunk plus canopy blobs) as one mesh.
-
-    Faces are tagged with material slots: 0 = bark, 1 = leaves.
-    """
-    rng = random.Random(seed)
-    verts: list[tuple[float, float, float]] = []
-    faces: list[tuple[int, ...]] = []
-    material_indices: list[int] = []
-
-    def append_part(part_verts, part_faces, material_index):
-        offset = len(verts)
-        verts.extend(part_verts)
-        for face in part_faces:
-            faces.append(tuple(index + offset for index in face))
-            material_indices.append(material_index)
-
-    trunk_radius = max(height * 0.055, 0.03)
-    trunk_verts, trunk_faces = _build_cone_pydata(1.0, segments=12)
-    append_part(
-        [(x * 2.0 * trunk_radius, y * 2.0 * trunk_radius, z * height + height / 2.0) for x, y, z in trunk_verts],
-        trunk_faces,
-        0,
-    )
-
-    for blob in range(3):
-        if blob == 0:
-            ox = oy = 0.0
-            oz = height * 0.95
-            radius = height * 0.34
-        else:
-            angle = rng.uniform(0.0, math.tau)
-            distance = rng.uniform(0.15, 0.3) * height
-            ox = math.cos(angle) * distance
-            oy = math.sin(angle) * distance
-            oz = height * rng.uniform(0.78, 0.9)
-            radius = height * rng.uniform(0.24, 0.3)
-        blob_verts, blob_faces = _build_uv_sphere_pydata(1.0, segments=16, rings=10)
-        append_part(
-            [(x * 2.0 * radius + ox, y * 2.0 * radius + oy, z * 1.6 * radius + oz) for x, y, z in blob_verts],
-            blob_faces,
-            1,
-        )
-
-    return verts, faces, material_indices
-
-
-def _get_or_create_material(name: str, base_color: tuple[float, float, float], roughness: float = 0.7):
-    mat = bpy.data.materials.get(name)
-    if mat is not None:
-        return mat
-    mat = bpy.data.materials.new(name=name)
-    mat.use_nodes = True
-    bsdf = mat.node_tree.nodes.get("Principled BSDF")
-    if bsdf:
-        bsdf.inputs["Base Color"].default_value = (*base_color, 1.0)
-        bsdf.inputs["Roughness"].default_value = roughness
-    return mat
 
 
 def _make_exec_builtins(blocked_modules: set[str]) -> dict[str, Any]:
@@ -572,10 +330,7 @@ class CommandHandler:
         self._handlers["object.rotate"] = self._object_rotate
         self._handlers["object.scale"] = self._object_scale
         self._handlers["object.duplicate"] = self._object_duplicate
-        self._handlers["object.create_tree"] = self._object_create_tree
-        self._handlers["object.scatter"] = self._object_scatter
         self._handlers["material.create"] = self._material_create
-        self._handlers["material.create_emissive"] = self._material_create_emissive
         self._handlers["material.assign"] = self._material_assign
         self._handlers["material.set_color"] = self._material_set_color
         self._handlers["material.set_texture"] = self._material_set_texture
@@ -602,10 +357,7 @@ class CommandHandler:
         "object.rotate": ObjectRotateParams,
         "object.scale": ObjectScaleParams,
         "object.duplicate": ObjectDuplicateParams,
-        "object.create_tree": ObjectCreateTreeParams,
-        "object.scatter": ObjectScatterParams,
         "material.create": MaterialCreateParams,
-        "material.create_emissive": MaterialCreateEmissiveParams,
         "material.assign": MaterialAssignParams,
         "material.set_color": MaterialSetColorParams,
         "material.set_texture": MaterialSetTextureParams,
@@ -775,8 +527,6 @@ class CommandHandler:
         return {"name": obj.name, "location": list(obj.location)}
 
     def _object_rotate(self, params: dict) -> dict:
-        import math
-
         name = params["name"]
         obj = bpy.data.objects.get(name)
         if not obj:
@@ -815,99 +565,6 @@ class CommandHandler:
             "location": list(new_obj.location),
         }
 
-    def _object_create_tree(self, params: dict) -> dict:
-        name = params.get("name") or "Tree"
-        location = params.get("location", [0, 0, 0])
-        height = params.get("height", 3.0)
-        verts, faces, material_indices = _build_tree_pydata(height, params.get("seed"))
-
-        mesh = bpy.data.meshes.new(f"{name}Mesh")
-        mesh.from_pydata(verts, [], faces)
-        mesh.update()
-        for poly, material_index in zip(mesh.polygons, material_indices, strict=False):
-            poly.material_index = material_index
-            poly.use_smooth = material_index == 1
-
-        trunk_material_name = params.get("trunk_material")
-        if trunk_material_name:
-            trunk_mat = bpy.data.materials.get(trunk_material_name)
-            if trunk_mat is None:
-                raise ValueError(f"Material '{trunk_material_name}' not found")
-        else:
-            trunk_mat = _get_or_create_material("TreeBark", (0.08, 0.05, 0.035), 0.9)
-        leaves_material_name = params.get("leaves_material")
-        if leaves_material_name:
-            leaves_mat = bpy.data.materials.get(leaves_material_name)
-            if leaves_mat is None:
-                raise ValueError(f"Material '{leaves_material_name}' not found")
-        else:
-            leaves_mat = _get_or_create_material("TreeLeaves", (0.03, 0.18, 0.06), 0.7)
-        mesh.materials.append(trunk_mat)
-        mesh.materials.append(leaves_mat)
-
-        obj = bpy.data.objects.new(name, mesh)
-        bpy.context.scene.collection.objects.link(obj)
-        obj.location = tuple(location)
-        return {
-            "name": obj.name,
-            "location": list(obj.location),
-            "height": height,
-            "vertices": len(verts),
-            "faces": len(faces),
-            "materials": [trunk_mat.name, leaves_mat.name],
-        }
-
-    def _object_scatter(self, params: dict) -> dict:
-        source_name = params["source"]
-        source = bpy.data.objects.get(source_name)
-        if not source:
-            raise ValueError(f"Object '{source_name}' not found")
-        count = params.get("count", 10)
-        if count > MAX_SCATTER_COUNT:
-            raise ValueError(f"'count' must be at most {MAX_SCATTER_COUNT}")
-        scale_min = params.get("scale_min", 1.0)
-        scale_max = params.get("scale_max", 1.0)
-        if scale_max < scale_min:
-            raise ValueError("'scale_max' must be greater than or equal to 'scale_min'")
-        location = params.get("location", [0, 0, 0])
-        radius = params.get("radius", 5.0)
-        rotation_z_min = params.get("rotation_z_min", 0.0)
-        rotation_z_max = params.get("rotation_z_max", 360.0)
-        name_prefix = params.get("name_prefix") or f"{source.name}_scatter"
-
-        rng = random.Random(params.get("seed"))
-        created: list[str] = []
-        for index in range(count):
-            distance = radius * math.sqrt(rng.random())
-            angle = rng.uniform(0.0, math.tau)
-            duplicate = source.copy()
-            duplicate.name = f"{name_prefix}_{index:03d}"
-            bpy.context.collection.objects.link(duplicate)
-            duplicate.location = (
-                location[0] + math.cos(angle) * distance,
-                location[1] + math.sin(angle) * distance,
-                location[2],
-            )
-            duplicate.rotation_euler = (
-                source.rotation_euler[0],
-                source.rotation_euler[1],
-                math.radians(rng.uniform(rotation_z_min, rotation_z_max)),
-            )
-            scale = rng.uniform(scale_min, scale_max)
-            duplicate.scale = (
-                source.scale[0] * scale,
-                source.scale[1] * scale,
-                source.scale[2] * scale,
-            )
-            created.append(duplicate.name)
-        return {
-            "source": source.name,
-            "count": len(created),
-            "names": created,
-            "location": location,
-            "radius": radius,
-        }
-
     # -- Material tools --
 
     def _material_create(self, params: dict) -> dict:
@@ -922,36 +579,6 @@ class CommandHandler:
                 rgba = list(color) + [1.0] * (4 - len(color))
                 bsdf.inputs["Base Color"].default_value = rgba[:4]
         return {"name": mat.name, "use_nodes": mat.use_nodes}
-
-    def _material_create_emissive(self, params: dict) -> dict:
-        name = params["name"]
-        mat = bpy.data.materials.new(name=name)
-        mat.use_nodes = True
-        bsdf = mat.node_tree.nodes.get("Principled BSDF")
-        if not bsdf:
-            raise ValueError("Material has no Principled BSDF node")
-
-        color = params.get("color")
-        if color:
-            rgba = list(color) + [1.0] * (4 - len(color))
-            bsdf.inputs["Base Color"].default_value = rgba[:4]
-
-        emission = list(params.get("emission_color", [1, 1, 1]))
-        rgba = (emission + [1.0] * (4 - len(emission)))[:4]
-        emission_socket = bsdf.inputs.get("Emission Color") or bsdf.inputs.get("Emission")
-        if emission_socket is None:
-            raise ValueError("Material has no emission input")
-        emission_socket.default_value = rgba
-
-        strength = params.get("emission_strength", 5.0)
-        strength_socket = bsdf.inputs.get("Emission Strength")
-        if strength_socket is not None:
-            strength_socket.default_value = strength
-        return {
-            "name": mat.name,
-            "emission_color": rgba,
-            "emission_strength": strength,
-        }
 
     def _material_assign(self, params: dict) -> dict:
         obj_name = params["object"]
@@ -1603,10 +1230,7 @@ class BlenderMCPServer:
         "object.rotate",
         "object.scale",
         "object.duplicate",
-        "object.create_tree",
-        "object.scatter",
         "material.create",
-        "material.create_emissive",
         "material.assign",
         "material.set_color",
         "material.set_texture",

@@ -171,32 +171,6 @@ class ObjectDuplicateParams(BridgeParams):
     fields = {"name": field("str", required=True), "new_name": field("str", allow_none=True)}
 
 
-class ObjectCreateTreeParams(BridgeParams):
-    fields = {
-        "name": field("str", allow_none=True),
-        "location": field("number_list", default_factory=lambda: [0, 0, 0], min_length=3, max_length=3),
-        "height": field("float", 3.0, gt=0),
-        "seed": field("int", allow_none=True),
-        "trunk_material": field("str", allow_none=True),
-        "leaves_material": field("str", allow_none=True),
-    }
-
-
-class ObjectScatterParams(BridgeParams):
-    fields = {
-        "source": field("str", required=True),
-        "count": field("int", 10, gt=0),
-        "location": field("number_list", default_factory=lambda: [0, 0, 0], min_length=3, max_length=3),
-        "radius": field("float", 5.0, gt=0),
-        "scale_min": field("float", 1.0, gt=0),
-        "scale_max": field("float", 1.0, gt=0),
-        "rotation_z_min": field("float", 0.0),
-        "rotation_z_max": field("float", 360.0),
-        "name_prefix": field("str", allow_none=True),
-        "seed": field("int", allow_none=True),
-    }
-
-
 class MaterialCreateParams(BridgeParams):
     fields = {
         "name": field("str", required=True),
@@ -206,15 +180,6 @@ class MaterialCreateParams(BridgeParams):
 
 class MaterialAssignParams(BridgeParams):
     fields = {"object": field("str", required=True), "material": field("str", required=True)}
-
-
-class MaterialCreateEmissiveParams(BridgeParams):
-    fields = {
-        "name": field("str", required=True),
-        "color": field("number_list", allow_none=True, min_length=3, max_length=4),
-        "emission_color": field("number_list", default_factory=lambda: [1, 1, 1], min_length=3, max_length=4),
-        "emission_strength": field("float", 5.0, gt=0),
-    }
 
 
 class MaterialSetColorParams(BridgeParams):

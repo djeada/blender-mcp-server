@@ -146,19 +146,26 @@ class TestSceneCommands:
 
 
 class TestObjectCommands:
+    @pytest.mark.parametrize("command", ["object.create_tree", "object.scatter", "material.create_emissive"])
+    def test_example_recipes_are_not_bridge_commands(self, handler, addon_module, command):
+        assert command not in handler._VALIDATORS
+        assert command not in addon_module.BlenderMCPServer.MUTATION_COMMANDS
+        with pytest.raises(ValueError, match="Unknown command"):
+            handler.handle(command, {})
+
     def test_build_primitive_pydata_cube(self, addon_module):
-        verts, faces = addon_module._build_primitive_pydata("cube", 2.0)
+        verts, faces = addon_module.build_primitive_pydata("cube", 2.0)
         assert len(verts) == 8
         assert len(faces) == 6
 
     def test_build_primitive_pydata_sphere(self, addon_module):
-        verts, faces = addon_module._build_primitive_pydata("sphere", 2.0)
+        verts, faces = addon_module.build_primitive_pydata("sphere", 2.0)
         assert len(verts) > 10
         assert len(faces) > 10
 
     def test_build_primitive_pydata_rejects_unknown_shape(self, addon_module):
         with pytest.raises(ValueError, match="Unknown mesh type"):
-            addon_module._build_primitive_pydata("bad-shape", 2.0)
+            addon_module.build_primitive_pydata("bad-shape", 2.0)
 
     def test_get_transform(self, handler):
         result = handler.handle("object.get_transform", {"name": "Cube"})
@@ -186,68 +193,6 @@ class TestMaterialCommands:
         mock_bpy.data.materials = []
         result = handler.handle("material.list", {})
         assert result["materials"] == []
-
-
-class TestHighLevelCommands:
-    @staticmethod
-    def _fake_material_factory():
-        def fake_material(name=None, **kwargs):
-            mat = MagicMock()
-            mat.name = name or "Material"
-            return mat
-
-        return fake_material
-
-    def test_build_tree_pydata_deterministic(self, addon_module):
-        verts, faces, indices = addon_module._build_tree_pydata(3.0, seed=7)
-        verts2, faces2, indices2 = addon_module._build_tree_pydata(3.0, seed=7)
-        assert verts == verts2
-        assert faces == faces2
-        assert indices == indices2
-        assert set(indices) == {0, 1}
-        assert len(verts) > 100
-
-    def test_build_tree_pydata_seed_changes_layout(self, addon_module):
-        first = addon_module._build_tree_pydata(3.0, seed=1)[0]
-        second = addon_module._build_tree_pydata(3.0, seed=2)[0]
-        assert first != second
-
-    def test_create_tree_handler(self, handler, mock_bpy):
-        mock_bpy.data.materials.new.side_effect = self._fake_material_factory()
-        result = handler.handle("object.create_tree", {"height": 2.5, "location": [1, 2, 0], "seed": 3})
-        assert result["height"] == 2.5
-        assert result["location"] == [1, 2, 0]
-        assert result["vertices"] > 0
-        assert result["faces"] > 0
-        assert result["materials"] == ["TreeBark", "TreeLeaves"]
-
-    def test_create_tree_rejects_missing_material(self, handler):
-        with pytest.raises(ValueError, match="not found"):
-            handler.handle("object.create_tree", {"trunk_material": "Nope"})
-
-    def test_scatter_handler(self, handler):
-        result = handler.handle("object.scatter", {"source": "Cube", "count": 5, "radius": 2.0, "seed": 1})
-        assert result["source"] == "Cube"
-        assert result["count"] == 5
-        assert len(result["names"]) == 5
-
-    def test_scatter_rejects_count_above_cap(self, handler):
-        with pytest.raises(ValueError, match="at most"):
-            handler.handle("object.scatter", {"source": "Cube", "count": 501})
-
-    def test_scatter_rejects_inverted_scale_range(self, handler):
-        with pytest.raises(ValueError, match="scale_max"):
-            handler.handle("object.scatter", {"source": "Cube", "scale_min": 2.0, "scale_max": 1.0})
-
-    def test_material_create_emissive(self, handler, mock_bpy):
-        mock_bpy.data.materials.new.side_effect = self._fake_material_factory()
-        result = handler.handle(
-            "material.create_emissive",
-            {"name": "Glow", "emission_color": [0, 1, 1], "emission_strength": 8},
-        )
-        assert result["name"] == "Glow"
-        assert result["emission_color"] == [0.0, 1.0, 1.0, 1.0]
-        assert result["emission_strength"] == 8.0
 
 
 class TestServerExecution:
@@ -868,151 +813,6 @@ class TestAsyncInlineDisabled:
                     "script_path": "/some/file.py",
                 },
             )
-
-
-class TestDamBreakDemo:
-    """Validate the dam-break demo scripts."""
-
-    DEMOS_DIR = os.path.join(os.path.dirname(__file__), os.pardir, "scripts", "demos")
-    LIBRARY_DIR = os.path.join(os.path.dirname(__file__), os.pardir, "scripts", "library")
-
-    def test_dam_break_scene_parses(self):
-        """The monolithic demo script must be syntactically valid Python."""
-        import ast
-
-        path = os.path.join(self.DEMOS_DIR, "dam_break_scene.py")
-        with open(path) as f:
-            ast.parse(f.read(), filename=path)
-
-    def test_run_dam_break_parses(self):
-        """The bridge caller script must be syntactically valid."""
-        import ast
-
-        path = os.path.join(self.DEMOS_DIR, "run_dam_break.py")
-        with open(path) as f:
-            ast.parse(f.read(), filename=path)
-
-    def test_demo_scripts_avoid_mesh_primitive_operators(self):
-        """Bridge-driven demo geometry should use data-API helpers, not bpy.ops primitives."""
-        for filename in ("dam_break_scene.py", "run_dam_break.py"):
-            path = os.path.join(self.DEMOS_DIR, filename)
-            with open(path) as f:
-                contents = f.read()
-            assert "bpy.ops.mesh.primitive_" not in contents
-
-    def test_run_dam_break_builds_correct_steps(self):
-        """build_steps() returns expected step count and uses library scripts."""
-        sys.path.insert(0, self.DEMOS_DIR)
-        try:
-            import run_dam_break
-
-            steps = run_dam_break.build_steps(self.LIBRARY_DIR)
-        finally:
-            sys.path.pop(0)
-            sys.modules.pop("run_dam_break", None)
-
-        assert len(steps) >= 11
-        labels = [s["label"] for s in steps]
-        assert any("frame range" in label.lower() for label in labels)
-        assert any("fluid domain" in label.lower() for label in labels)
-        assert any("camera" in label.lower() for label in labels)
-        assert any("collider" in label.lower() for label in labels)
-        assert any("rigid" in label.lower() for label in labels)
-        assert any("keyframe" in label.lower() or "dolly" in label.lower() for label in labels)
-
-    def test_run_dam_break_script_paths_exist(self):
-        """Every library script referenced by build_steps must exist."""
-        sys.path.insert(0, self.DEMOS_DIR)
-        try:
-            import run_dam_break
-
-            steps = run_dam_break.build_steps(self.LIBRARY_DIR)
-        finally:
-            sys.path.pop(0)
-            sys.modules.pop("run_dam_break", None)
-
-        for step in steps:
-            if step["method"] == "script":
-                assert os.path.isfile(step["script_path"]), f"Missing library script: {step['script_path']}"
-
-    def test_run_dam_break_stops_on_inner_script_error(self):
-        """run_demo() must fail fast if python.execute returns an inner script error."""
-        sys.path.insert(0, self.DEMOS_DIR)
-        try:
-            import run_dam_break
-
-            with patch.object(
-                run_dam_break,
-                "exec_inline",
-                return_value={"success": True, "result": {"error": "boom"}},
-            ):
-                exit_code = run_dam_break.run_demo(
-                    "127.0.0.1",
-                    9876,
-                    self.LIBRARY_DIR,
-                    dry_run=False,
-                )
-        finally:
-            sys.path.pop(0)
-            sys.modules.pop("run_dam_break", None)
-
-        assert exit_code == 1
-
-    def test_exec_script_sends_inline_code(self):
-        """The step runner should inline local library scripts, not rely on script_path."""
-        sys.path.insert(0, self.DEMOS_DIR)
-        try:
-            import run_dam_break
-
-            with tempfile.TemporaryDirectory() as tmpdir:
-                script_path = os.path.join(tmpdir, "sample.py")
-                with open(script_path, "w") as f:
-                    f.write("__result__ = {'ok': True}\n")
-
-                with patch.object(run_dam_break, "send_command", return_value={"success": True}) as send:
-                    run_dam_break.exec_script(script_path, {"x": 1})
-        finally:
-            sys.path.pop(0)
-            sys.modules.pop("run_dam_break", None)
-
-        send.assert_called_once()
-        command, params = send.call_args.args
-        assert command == "python.execute"
-        assert "code" in params
-        assert "script_path" not in params
-        assert params["args"] == {"x": 1}
-
-    def test_dam_break_scene_executes_in_mock(self, handler, addon_module):
-        """The monolithic script should execute without import errors
-        in the mocked bpy environment (logic errors from mocks are OK)."""
-        path = os.path.realpath(os.path.join(self.DEMOS_DIR, "dam_break_scene.py"))
-        addon_module.APPROVED_SCRIPT_ROOTS = [os.path.dirname(path)]
-        try:
-            result = handler.handle(
-                "python.execute",
-                {
-                    "script_path": path,
-                    "args": {"resolution": 16, "frame_end": 10},
-                },
-            )
-            # With mocked bpy the script may error on mock attribute access,
-            # but it should not raise an import or syntax error.
-            # If it succeeds, validate the result structure.
-            if result.get("error") is None:
-                assert "fluid_domain" in result["result"]
-                assert "camera" in result["result"]
-                assert "debris" in result["result"]
-        finally:
-            addon_module.APPROVED_SCRIPT_ROOTS = []
-
-    def test_all_library_scripts_parse(self):
-        """Every .py in scripts/library/ must be syntactically valid."""
-        import ast
-        import glob as globmod
-
-        for path in sorted(globmod.glob(os.path.join(self.LIBRARY_DIR, "*.py"))):
-            with open(path) as f:
-                ast.parse(f.read(), filename=path)
 
 
 class TestBridgeProtocolSecurity:

@@ -1,4 +1,21 @@
-# Dam-Break Demo
+# Demo Scenes
+
+Run the numbered demos from the repository root with `scripts/run_demo.sh`:
+
+| Script | Description |
+|---|---|
+| `01_still_life.py` | Primitives and materials rendered with Cycles |
+| `02_procedural_city.py` | A seeded city block rendered with EEVEE |
+| `03_bouncing_ball.py` | Keyframed squash-and-stretch animation |
+| `procedural_dam_break_scene.py` | Procedural flood animation |
+| `dam_break_scene.py` | Experimental Mantaflow dam break |
+| `pipe_movement_study.py` | Animated pipe movement study |
+| `pipe_pressure_failure_scene.py` | Pipe pressure failure scene |
+
+See the [recorded demos](../../docs/demos/README.md) for prompts and renders,
+and the [recipe library](../library/README.md) for smaller building blocks.
+
+## Dam-Break Demo
 
 End-to-end validation that the MCP python execution path can build a complete
 flood-through-town scene without manual Blender UI steps (beyond enabling the
@@ -13,13 +30,13 @@ For Blender 4.0.x use the procedural scene. It produces visible water in the
 viewport and avoids the Mantaflow viewport crash.
 
 ```bash
-python3 scripts/demos/run_dam_break.py
+python3 examples/demos/run_dam_break.py
 ```
 
 To force the older Mantaflow path:
 
 ```bash
-python3 scripts/demos/run_dam_break.py --simulation mantaflow --bake
+python3 examples/demos/run_dam_break.py --simulation mantaflow --bake
 ```
 
 ## What the Procedural Demo Builds
@@ -44,7 +61,7 @@ Send the monolithic scene script through MCP:
 {
   "tool": "blender_python_exec",
   "args": {
-    "script_path": "/path/to/scripts/demos/procedural_dam_break_scene.py",
+    "script_path": "/path/to/examples/demos/procedural_dam_break_scene.py",
     "args": {"frame_end": 120}
   }
 }
@@ -54,7 +71,7 @@ Or via the bridge test helper:
 
 ```bash
 python3 scripts/blender_bridge_request.py python.execute \
-  --params '{"script_path":"/path/to/scripts/demos/procedural_dam_break_scene.py","args":{"frame_end":120}}'
+  --params '{"script_path":"/path/to/examples/demos/procedural_dam_break_scene.py","args":{"frame_end":120}}'
 ```
 
 ### Option B — Step-by-step bridge caller
@@ -65,13 +82,13 @@ portability, so it does not depend on approved script roots inside Blender):
 
 ```bash
 # Dry run — see what would be sent:
-python3 scripts/demos/run_dam_break.py --dry-run
+python3 examples/demos/run_dam_break.py --dry-run
 
 # Run against live Blender (stable procedural mode):
-python3 scripts/demos/run_dam_break.py
+python3 examples/demos/run_dam_break.py
 
 # Run Mantaflow mode instead:
-python3 scripts/demos/run_dam_break.py --simulation mantaflow --bake --render
+python3 examples/demos/run_dam_break.py --simulation mantaflow --bake --render
 ```
 
 ## Mantaflow Notes
@@ -134,7 +151,7 @@ work:
 
 **Status:** mitigated
 
-The repo now includes `scripts/library/create_mesh.py`, and the bridge injects
+The repo now includes `examples/library/create_mesh.py`, and the bridge injects
 an `mcp_create_mesh(...)` helper into `python.execute` scripts. Use those
 instead of `bpy.ops.mesh.primitive_*_add` for bridge-driven blockouts,
 especially near Mantaflow setup.
@@ -147,7 +164,7 @@ resolution, color management, or output format. The demo uses inline code.
 **Impact:** Render configuration is a common task that would benefit from a
 reusable, validated script.
 
-**Recommendation:** Add `scripts/library/render_settings.py` supporting engine
+**Recommendation:** Add `examples/library/render_settings.py` supporting engine
 selection, resolution, samples, output format, and color management.
 
 ### GAP-3: No fluid bake library script
@@ -158,7 +175,7 @@ the async path. There is no library wrapper.
 **Impact:** Minor — the inline call is simple. But a library script could add
 validation (check domain exists, check cache dir).
 
-**Recommendation:** Add `scripts/library/fluid_bake.py` that validates the
+**Recommendation:** Add `examples/library/fluid_bake.py` that validates the
 domain setup before calling bake.
 
 ### GAP-4: No viewport/OpenGL render for quick preview
