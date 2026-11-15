@@ -153,6 +153,12 @@ class TestToolRegistration:
     def test_example_recipes_are_not_core_tools(self, name):
         assert name not in self._get_tool_names()
 
+    @pytest.mark.parametrize(
+        "name", ["blender_object_create_tree", "blender_object_scatter", "blender_material_create_emissive"]
+    )
+    def test_example_recipes_are_not_core_tools(self, name):
+        assert name not in self._get_tool_names()
+
     def test_all_tools_have_descriptions(self):
         for tool in mcp._tool_manager._tools.values():
             assert tool.description, f"Tool {tool.name} has no description"
