@@ -8,6 +8,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 ## [Unreleased]
 
 ### Added
+- Typed timeline and keyframe tools: `blender_timeline_get` / `blender_timeline_set` and
+  `blender_keyframe_add` / `blender_keyframe_list` / `blender_keyframe_remove` over a small allowlist of
+  object transforms (`location`, `rotation` in degrees, `scale`) with explicit interpolation modes,
+  inserted-vs-overwritten reporting, and clear failures for absent objects/actions.
+- Scene organization tools: `blender_collection_create` / `blender_collection_list` /
+  `blender_collection_rename` / `blender_collection_add_object` / `blender_collection_remove_object` and
+  `blender_object_rename` / `blender_object_parent` / `blender_object_unparent`, including keep-world-transform
+  parenting, cycle detection, orphan re-linking, and canonical (collision-suffixed) name reporting.
+- `blender_scene_list_objects` gained filters (`name` substring, `collection`, `visibility`) and pagination
+  (`limit`, `offset`) with total-match counts; existing callers are unaffected.
+- First-class camera and light tools: `blender_camera_create` / `blender_camera_update` (projection, focal
+  length or orthographic scale, clipping ranges, rotation or look-at orientation, set active scene camera) and
+  `blender_light_create` / `blender_light_update` (`POINT`, `SUN`, `SPOT`, `AREA` with color, energy and
+  type-specific shape parameters). Parameters that do not apply to the chosen type return explicit errors.
 - `blender_export_gltf` / `blender_export_obj` / `blender_export_fbx` accept `transport="headless"`, exporting
   a `.blend` file in a separate `blender -b` process without a live Blender session (same resolution rules as
   renders: absolute path returned, missing folders created, extensions appended only when absent).

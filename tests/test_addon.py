@@ -1,5 +1,6 @@
 """Tests for the Blender add-on command handler using mocked bpy."""
 
+import math
 import os
 import sys
 import tempfile
@@ -1230,3 +1231,851 @@ def test_port_environment_variable_overrides_preference(handler, addon_module, m
     monkeypatch.setenv("BLENDER_MCP_PORT", "9911")
     addon_module._sync_runtime_settings()
     assert addon_module.PORT == 9911
+
+
+# -- Camera & light helpers --
+
+
+class _FakeVector:
+    """Minimal mathutils.Vector stand-in for look-at tests."""
+
+    def __init__(self, xyz):
+        self.xyz = [float(v) for v in xyz]
+
+    def __sub__(self, other):
+        return _FakeVector([a - b for a, b in zip(self.xyz, other.xyz, strict=False)])
+
+    @property
+    def length(self):
+        return sum(v * v for v in self.xyz) ** 0.5
+
+    def to_track_quat(self, track, up):
+        return _FakeQuaternion()
+
+
+class _FakeQuaternion:
+    def to_euler(self):
+        return (0.0, 0.0, math.pi)
+
+
+@pytest.fixture
+def fake_mathutils(monkeypatch):
+    module = types.ModuleType("mathutils")
+    module.Vector = _FakeVector
+    monkeypatch.setitem(sys.modules, "mathutils", module)
+    return module
+
+
+def _make_camera_data(mock_bpy):
+    cam_data = MagicMock()
+    cam_data.type = "PERSP"
+    cam_data.lens = 50.0
+    cam_data.ortho_scale = 1.0
+    cam_data.clip_start = 0.1
+    cam_data.clip_end = 100.0
+    mock_bpy.data.cameras.new.return_value = cam_data
+    return cam_data
+
+
+def _make_camera_object(mock_bpy, name="Camera"):
+    obj = MagicMock()
+    obj.name = name
+    obj.type = "CAMERA"
+    obj.location = (0.0, 0.0, 0.0)
+    mock_bpy.data.objects.new.return_value = obj
+    return obj
+
+
+def _make_light_data(mock_bpy, light_type="POINT"):
+    light_data = MagicMock()
+    light_data.type = light_type
+    light_data.energy = 1000.0
+    light_data.color = (1.0, 1.0, 1.0)
+    mock_bpy.data.lights.new.return_value = light_data
+    return light_data
+
+
+def _make_light_object(mock_bpy, name="Light"):
+    obj = MagicMock()
+    obj.name = name
+    obj.type = "LIGHT"
+    obj.location = (0.0, 0.0, 0.0)
+    mock_bpy.data.objects.new.return_value = obj
+    return obj
+
+
+class TestCameraCommands:
+    def test_camera_create_defaults(self, handler, mock_bpy):
+        _make_camera_data(mock_bpy)
+        obj = _make_camera_object(mock_bpy, name="Front Cam")
+        result = handler.handle("camera.create", {"name": "Front Cam"})
+
+        mock_bpy.data.cameras.new.assert_called_once_with("Front Cam")
+        mock_bpy.context.scene.collection.objects.link.assert_called_once_with(obj)
+        assert result["name"] == "Front Cam"
+        assert result["type"] == "CAMERA"
+        assert result["projection"] == "PERSP"
+        assert result["lens"] == 50.0
+        assert result["clip_start"] == 0.1
+        assert result["clip_end"] == 100.0
+        assert result["active"] is False
+
+    def test_camera_create_with_look_at_aims_at_target(self, handler, mock_bpy, fake_mathutils):
+        _make_camera_data(mock_bpy)
+        obj = _make_camera_object(mock_bpy)
+        result = handler.handle(
+            "camera.create",
+            {"name": "Cam", "location": [7.0, -6.0, 5.0], "look_at": [0.0, 0.0, 0.0]},
+        )
+
+        assert list(obj.location) == [7.0, -6.0, 5.0]
+        assert obj.rotation_euler == (0.0, 0.0, math.pi)
+        assert result["location"] == [7.0, -6.0, 5.0]
+
+    def test_camera_create_with_rotation(self, handler, mock_bpy):
+        _make_camera_data(mock_bpy)
+        obj = _make_camera_object(mock_bpy)
+        handler.handle("camera.create", {"rotation": [0, 0, 90]})
+        assert obj.rotation_euler == pytest.approx([0.0, 0.0, math.pi / 2])
+
+    def test_camera_create_rejects_rotation_and_look_at_together(self, handler, mock_bpy, fake_mathutils):
+        _make_camera_data(mock_bpy)
+        _make_camera_object(mock_bpy)
+        with pytest.raises(ValueError, match="not both"):
+            handler.handle("camera.create", {"rotation": [0, 0, 0], "look_at": [0, 0, 0]})
+
+    def test_camera_create_set_active(self, handler, mock_bpy):
+        _make_camera_data(mock_bpy)
+        obj = _make_camera_object(mock_bpy)
+        mock_bpy.context.scene.camera = None
+        result = handler.handle("camera.create", {"set_active": True})
+        assert mock_bpy.context.scene.camera is obj
+        assert result["active"] is True
+
+    def test_camera_create_ortho_with_ortho_scale(self, handler, mock_bpy):
+        cam_data = _make_camera_data(mock_bpy)
+        _make_camera_object(mock_bpy)
+        result = handler.handle("camera.create", {"projection": "ortho", "ortho_scale": 10.0})
+        assert cam_data.type == "ORTHO"
+        assert result["projection"] == "ORTHO"
+        assert cam_data.ortho_scale == 10.0
+
+    def test_camera_create_rejects_lens_for_ortho(self, handler, mock_bpy):
+        cam_data = _make_camera_data(mock_bpy)
+        cam_data.type = "ORTHO"
+        _make_camera_object(mock_bpy)
+        with pytest.raises(ValueError, match="'lens' applies to PERSP"):
+            handler.handle("camera.create", {"lens": 35.0})
+
+    def test_camera_create_rejects_ortho_scale_for_persp(self, handler, mock_bpy):
+        _make_camera_data(mock_bpy)
+        _make_camera_object(mock_bpy)
+        with pytest.raises(ValueError, match="'ortho_scale' applies to ORTHO"):
+            handler.handle("camera.create", {"ortho_scale": 10.0})
+
+    def test_camera_create_rejects_unknown_projection(self, handler, mock_bpy):
+        _make_camera_data(mock_bpy)
+        _make_camera_object(mock_bpy)
+        with pytest.raises(ValueError, match="Unsupported camera projection"):
+            handler.handle("camera.create", {"projection": "FISHEYE"})
+
+    def test_camera_create_rejects_non_positive_lens(self, handler, mock_bpy):
+        _make_camera_data(mock_bpy)
+        _make_camera_object(mock_bpy)
+        with pytest.raises(ValueError, match="greater than 0"):
+            handler.handle("camera.create", {"lens": 0})
+
+    def test_camera_create_rejects_inverted_clipping(self, handler, mock_bpy):
+        _make_camera_data(mock_bpy)
+        _make_camera_object(mock_bpy)
+        with pytest.raises(ValueError, match="clip_start"):
+            handler.handle("camera.create", {"clip_start": 5.0, "clip_end": 1.0})
+
+    def test_camera_update_requires_camera_object(self, handler, mock_bpy):
+        cube = MagicMock()
+        cube.name = "Cube"
+        cube.type = "MESH"
+        mock_bpy.data.objects.get = lambda name: cube
+        with pytest.raises(ValueError, match="is of type MESH, not CAMERA"):
+            handler.handle("camera.update", {"name": "Cube", "lens": 35.0})
+
+    def test_camera_update_missing_object(self, handler, mock_bpy):
+        mock_bpy.data.objects.get = lambda name: None
+        with pytest.raises(ValueError, match="not found"):
+            handler.handle("camera.update", {"name": "Missing"})
+
+    def test_camera_update_applies_settings(self, handler, mock_bpy):
+        cam_data = _make_camera_data(mock_bpy)
+        existing = MagicMock()
+        existing.name = "Camera"
+        existing.type = "CAMERA"
+        existing.data = cam_data
+        existing.location = (0.0, 0.0, 0.0)
+        mock_bpy.data.objects.get = lambda name: existing
+        result = handler.handle("camera.update", {"name": "Camera", "lens": 85.0, "clip_end": 500.0})
+        assert cam_data.lens == 85.0
+        assert cam_data.clip_end == 500.0
+        assert result["lens"] == 85.0
+
+
+class TestLightCommands:
+    @pytest.mark.parametrize("light_type", ["POINT", "SUN", "SPOT", "AREA"])
+    def test_light_create_supported_types(self, handler, mock_bpy, light_type):
+        _make_light_data(mock_bpy, light_type)
+        _make_light_object(mock_bpy)
+        result = handler.handle("light.create", {"type": light_type.lower()})
+
+        mock_bpy.data.lights.new.assert_called_once_with(f"{light_type.capitalize()}Light", type=light_type)
+        assert result["light_type"] == light_type
+        assert result["type"] == "LIGHT"
+
+    def test_light_create_unsupported_type(self, handler, mock_bpy):
+        with pytest.raises(ValueError, match="Unsupported light type"):
+            handler.handle("light.create", {"type": "VOLUMETRIC"})
+
+    def test_light_create_defaults_to_point(self, handler, mock_bpy):
+        _make_light_data(mock_bpy)
+        _make_light_object(mock_bpy)
+        result = handler.handle("light.create", {})
+        assert result["light_type"] == "POINT"
+        assert result["energy"] == 1000.0
+
+    def test_light_create_rejects_out_of_range_color(self, handler, mock_bpy):
+        _make_light_data(mock_bpy)
+        _make_light_object(mock_bpy)
+        with pytest.raises(ValueError, match="between 0 and 1"):
+            handler.handle("light.create", {"color": [0.5, 1.5, 0.5]})
+
+    def test_light_create_rejects_non_positive_energy(self, handler, mock_bpy):
+        _make_light_data(mock_bpy)
+        _make_light_object(mock_bpy)
+        with pytest.raises(ValueError, match="greater than 0"):
+            handler.handle("light.create", {"energy": 0})
+
+    def test_light_create_point_size_sets_radius(self, handler, mock_bpy):
+        light_data = _make_light_data(mock_bpy)
+        _make_light_object(mock_bpy)
+        handler.handle("light.create", {"type": "POINT", "size": 0.5})
+        assert light_data.shadow_soft_size == 0.5
+
+    def test_light_create_size_on_sun_is_rejected(self, handler, mock_bpy):
+        _make_light_data(mock_bpy, "SUN")
+        _make_light_object(mock_bpy)
+        with pytest.raises(ValueError, match="'size' does not apply to SUN"):
+            handler.handle("light.create", {"type": "SUN", "size": 1.0})
+
+    def test_light_create_sun_angle(self, handler, mock_bpy):
+
+        light_data = _make_light_data(mock_bpy, "SUN")
+        _make_light_object(mock_bpy)
+        handler.handle("light.create", {"type": "SUN", "angle": 5.0})
+        assert light_data.angle == pytest.approx(math.radians(5.0))
+
+    def test_light_create_angle_on_point_is_rejected(self, handler, mock_bpy):
+        _make_light_data(mock_bpy)
+        _make_light_object(mock_bpy)
+        with pytest.raises(ValueError, match="'angle' applies to SUN"):
+            handler.handle("light.create", {"angle": 5.0})
+
+    def test_light_create_spot_full_configuration(self, handler, mock_bpy):
+
+        light_data = _make_light_data(mock_bpy, "SPOT")
+        _make_light_object(mock_bpy)
+        handler.handle(
+            "light.create",
+            {"type": "SPOT", "size": 0.2, "spot_angle": 45.0, "spot_blend": 0.3},
+        )
+        assert light_data.shadow_soft_size == 0.2
+        assert light_data.spot_size == pytest.approx(math.radians(45.0))
+        assert light_data.spot_blend == 0.3
+
+    def test_light_create_spot_blend_out_of_range(self, handler, mock_bpy):
+        _make_light_data(mock_bpy, "SPOT")
+        _make_light_object(mock_bpy)
+        with pytest.raises(ValueError, match="spot_blend"):
+            handler.handle("light.create", {"type": "SPOT", "spot_blend": 1.5})
+
+    def test_light_create_spot_angle_on_area_is_rejected(self, handler, mock_bpy):
+        _make_light_data(mock_bpy, "AREA")
+        _make_light_object(mock_bpy)
+        with pytest.raises(ValueError, match="'spot_angle' applies to SPOT"):
+            handler.handle("light.create", {"type": "AREA", "spot_angle": 30.0})
+
+    def test_light_create_area_rectangle(self, handler, mock_bpy):
+        light_data = _make_light_data(mock_bpy, "AREA")
+        _make_light_object(mock_bpy)
+        handler.handle("light.create", {"type": "AREA", "size": 2.0, "size_y": 4.0})
+        assert light_data.size == 2.0
+        assert light_data.shape == "RECTANGLE"
+        assert light_data.size_y == 4.0
+
+    def test_light_create_size_y_on_spot_is_rejected(self, handler, mock_bpy):
+        _make_light_data(mock_bpy, "SPOT")
+        _make_light_object(mock_bpy)
+        with pytest.raises(ValueError, match="'size_y' applies to AREA"):
+            handler.handle("light.create", {"type": "SPOT", "size_y": 2.0})
+
+    def test_light_create_with_look_at(self, handler, mock_bpy, fake_mathutils):
+        _make_light_data(mock_bpy)
+        obj = _make_light_object(mock_bpy)
+        handler.handle("light.create", {"location": [3.0, 0.0, 5.0], "look_at": [0.0, 0.0, 0.0]})
+        assert obj.rotation_euler == (0.0, 0.0, math.pi)
+
+    def test_light_update_missing_object(self, handler, mock_bpy):
+        mock_bpy.data.objects.get = lambda name: None
+        with pytest.raises(ValueError, match="not found"):
+            handler.handle("light.update", {"name": "Missing"})
+
+    def test_light_update_requires_light_object(self, handler, mock_bpy):
+        cube = MagicMock()
+        cube.name = "Cube"
+        cube.type = "MESH"
+        mock_bpy.data.objects.get = lambda name: cube
+        with pytest.raises(ValueError, match="is of type MESH, not LIGHT"):
+            handler.handle("light.update", {"name": "Cube", "energy": 5.0})
+
+    def test_light_update_energy_and_color(self, handler, mock_bpy):
+        light_data = _make_light_data(mock_bpy)
+        existing = MagicMock()
+        existing.name = "KeyLight"
+        existing.type = "LIGHT"
+        existing.data = light_data
+        existing.location = (0.0, 0.0, 0.0)
+        mock_bpy.data.objects.get = lambda name: existing
+        result = handler.handle("light.update", {"name": "KeyLight", "energy": 42.0, "color": [1.0, 0.5, 0.25]})
+        assert light_data.energy == 42.0
+        assert light_data.color == [1.0, 0.5, 0.25]
+        assert result["energy"] == 42.0
+
+    def test_light_update_type_change(self, handler, mock_bpy):
+        light_data = _make_light_data(mock_bpy)
+        existing = MagicMock()
+        existing.name = "KeyLight"
+        existing.type = "LIGHT"
+        existing.data = light_data
+        existing.location = (0.0, 0.0, 0.0)
+        mock_bpy.data.objects.get = lambda name: existing
+        result = handler.handle("light.update", {"name": "KeyLight", "type": "spot"})
+        assert light_data.type == "SPOT"
+        assert result["light_type"] == "SPOT"
+
+    def test_camera_and_light_commands_push_undo(self, addon_module):
+        assert {
+            "camera.create",
+            "camera.update",
+            "light.create",
+            "light.update",
+        } <= addon_module.BlenderMCPServer.MUTATION_COMMANDS
+
+
+# -- Timeline & keyframe helpers --
+
+
+class _FakeKey:
+    def __init__(self, frame, value=0.0):
+        self.co = (frame, value)
+        self.interpolation = None
+
+
+class _FakeFCurve:
+    def __init__(self, data_path, array_index, keys=None):
+        self.data_path = data_path
+        self.array_index = array_index
+        self.keyframe_points = list(keys or [])
+
+
+def _make_animatable_object(mock_bpy, fcurves=None, name="Cube"):
+    obj = MagicMock()
+    obj.name = name
+    anim = MagicMock()
+    obj.animation_data = anim
+    obj.animation_data_create.return_value = anim
+    if fcurves is not None:
+        anim.action = MagicMock(name="CubeAction")
+        anim.action.name = "CubeAction"
+        anim.action.fcurves = list(fcurves)
+    mock_bpy.data.objects.get = lambda n: obj if n == name else None
+    return obj, anim
+
+
+class TestTimelineCommands:
+    def test_timeline_get(self, handler):
+        result = handler.handle("timeline.get", {})
+        assert result == {"frame_current": 1, "frame_start": 1, "frame_end": 250}
+
+    def test_timeline_set_frame_and_range(self, handler, mock_bpy):
+        scene = mock_bpy.context.scene
+        scene.frame_set.side_effect = lambda f: setattr(scene, "frame_current", f)
+        result = handler.handle("timeline.set", {"frame_start": 10, "frame_end": 50, "frame_current": 20})
+        assert result == {"frame_current": 20, "frame_start": 10, "frame_end": 50}
+        scene.frame_set.assert_called_once_with(20)
+
+    def test_timeline_set_partial(self, handler, mock_bpy):
+        result = handler.handle("timeline.set", {"frame_end": 120})
+        assert result["frame_end"] == 120
+        assert result["frame_start"] == 1
+        mock_bpy.context.scene.frame_set.assert_not_called()
+
+    def test_timeline_set_rejects_inverted_range(self, handler, mock_bpy):
+        with pytest.raises(ValueError, match="must not exceed"):
+            handler.handle("timeline.set", {"frame_start": 100, "frame_end": 50})
+
+
+class TestKeyframeCommands:
+    def _location_fcurves(self):
+        return [_FakeFCurve("location", i) for i in range(3)]
+
+    def test_keyframe_insert_new_keys(self, handler, mock_bpy):
+        fcurves = self._location_fcurves()
+        obj, anim = _make_animatable_object(mock_bpy, fcurves)
+
+        def insert_side_effect(data_path, frame):
+            for fc in fcurves:
+                fc.keyframe_points.append(_FakeKey(frame, 0.0))
+            return True
+
+        obj.keyframe_insert.side_effect = insert_side_effect
+        result = handler.handle("keyframe.insert", {"name": "Cube", "property": "location", "frame": 10})
+        assert result["result"] == "inserted"
+        assert result["keyframe_count"] == 3
+        assert result["action"] == "CubeAction"
+        assert result["frame"] == 10
+
+    def test_keyframe_insert_overwrites_existing_key(self, handler, mock_bpy):
+        fcurves = [_FakeFCurve("location", i, [_FakeKey(10, 0.0)]) for i in range(3)]
+        obj, anim = _make_animatable_object(mock_bpy, fcurves)
+        obj.keyframe_insert.return_value = True
+        result = handler.handle("keyframe.insert", {"name": "Cube", "property": "location", "frame": 10})
+        assert result["result"] == "overwritten"
+        assert result["keyframe_count"] == 3
+
+    def test_keyframe_insert_sets_value_before_insert(self, handler, mock_bpy):
+        fcurves = self._location_fcurves()
+        obj, anim = _make_animatable_object(mock_bpy, fcurves)
+        obj.keyframe_insert.return_value = True
+        handler.handle(
+            "keyframe.insert",
+            {"name": "Cube", "property": "location", "frame": 5, "value": [1.0, 2.0, 3.0]},
+        )
+        assert list(obj.location) == [1.0, 2.0, 3.0]
+
+    def test_keyframe_insert_rotation_converts_degrees(self, handler, mock_bpy):
+        fcurves = [_FakeFCurve("rotation_euler", i) for i in range(3)]
+        obj, anim = _make_animatable_object(mock_bpy, fcurves)
+        obj.keyframe_insert.return_value = True
+        handler.handle(
+            "keyframe.insert",
+            {"name": "Cube", "property": "rotation", "frame": 5, "value": [0.0, 0.0, 90.0]},
+        )
+        assert obj.rotation_euler == pytest.approx([0.0, 0.0, math.pi / 2])
+
+    def test_keyframe_insert_applies_interpolation(self, handler, mock_bpy):
+        fcurves = self._location_fcurves()
+        obj, anim = _make_animatable_object(mock_bpy, fcurves)
+
+        def insert_side_effect(data_path, frame):
+            for fc in fcurves:
+                fc.keyframe_points.append(_FakeKey(frame, 0.0))
+            return True
+
+        obj.keyframe_insert.side_effect = insert_side_effect
+        handler.handle(
+            "keyframe.insert",
+            {"name": "Cube", "property": "location", "frame": 10, "interpolation": "linear"},
+        )
+        assert all(key.interpolation == "LINEAR" for fc in fcurves for key in fc.keyframe_points)
+
+    def test_keyframe_insert_rejects_unknown_property(self, handler, mock_bpy):
+        obj, anim = _make_animatable_object(mock_bpy, [])
+        with pytest.raises(ValueError, match="Unsupported animatable property"):
+            handler.handle("keyframe.insert", {"name": "Cube", "property": "visibility", "frame": 1})
+
+    def test_keyframe_insert_rejects_unknown_interpolation(self, handler, mock_bpy):
+        fcurves = self._location_fcurves()
+        obj, anim = _make_animatable_object(mock_bpy, fcurves)
+        obj.keyframe_insert.return_value = True
+        with pytest.raises(ValueError, match="Unsupported interpolation"):
+            handler.handle(
+                "keyframe.insert",
+                {"name": "Cube", "property": "location", "frame": 1, "interpolation": "WARP"},
+            )
+
+    def test_keyframe_insert_failed_insert(self, handler, mock_bpy):
+        fcurves = self._location_fcurves()
+        obj, anim = _make_animatable_object(mock_bpy, fcurves)
+        obj.keyframe_insert.return_value = False
+        with pytest.raises(ValueError, match="Keyframe insertion failed"):
+            handler.handle("keyframe.insert", {"name": "Cube", "property": "location", "frame": 1})
+
+    def test_keyframe_insert_missing_object(self, handler, mock_bpy):
+        mock_bpy.data.objects.get = lambda n: None
+        with pytest.raises(ValueError, match="not found"):
+            handler.handle("keyframe.insert", {"name": "Missing", "property": "location", "frame": 1})
+
+    def test_keyframe_list(self, handler, mock_bpy):
+        fcurves = [
+            _FakeFCurve("location", 0, [_FakeKey(1, 0.0), _FakeKey(10, 2.0)]),
+            _FakeFCurve("location", 1, [_FakeKey(1, 1.0)]),
+        ]
+        obj, anim = _make_animatable_object(mock_bpy, fcurves)
+        result = handler.handle("keyframe.list", {"name": "Cube", "property": "location"})
+        assert result["keyframe_count"] == 3
+        assert result["keys"][0] == {"channel": 0, "frame": 1, "value": 0.0}
+        assert result["keys"][-1] == {"channel": 1, "frame": 1, "value": 1.0}
+
+    def test_keyframe_list_requires_animation_data(self, handler, mock_bpy):
+        obj = MagicMock()
+        obj.name = "Cube"
+        obj.animation_data = None
+        mock_bpy.data.objects.get = lambda n: obj
+        with pytest.raises(ValueError, match="no animation data"):
+            handler.handle("keyframe.list", {"name": "Cube", "property": "location"})
+
+    def test_keyframe_remove(self, handler, mock_bpy):
+        fcurves = [_FakeFCurve("location", i, [_FakeKey(1), _FakeKey(10)]) for i in range(3)]
+        obj, anim = _make_animatable_object(mock_bpy, fcurves)
+
+        def delete_side_effect(data_path, frame):
+            for fc in fcurves:
+                fc.keyframe_points = [k for k in fc.keyframe_points if k.co[0] != frame]
+            return True
+
+        obj.keyframe_delete.side_effect = delete_side_effect
+        result = handler.handle("keyframe.remove", {"name": "Cube", "property": "location", "frame": 10})
+        assert result["removed"] == 3
+        assert result["keyframe_count"] == 3
+
+    def test_keyframe_remove_no_key_at_frame(self, handler, mock_bpy):
+        fcurves = [_FakeFCurve("location", i, [_FakeKey(1)]) for i in range(3)]
+        obj, anim = _make_animatable_object(mock_bpy, fcurves)
+        obj.keyframe_delete.return_value = False
+        with pytest.raises(ValueError, match="No keyframe"):
+            handler.handle("keyframe.remove", {"name": "Cube", "property": "location", "frame": 99})
+
+    def test_keyframe_remove_requires_animation_data(self, handler, mock_bpy):
+        obj = MagicMock()
+        obj.name = "Cube"
+        obj.animation_data = None
+        mock_bpy.data.objects.get = lambda n: obj
+        with pytest.raises(ValueError, match="no animation data"):
+            handler.handle("keyframe.remove", {"name": "Cube", "property": "scale", "frame": 1})
+
+
+# -- Scene organization helpers --
+
+
+class _FakeCollection:
+    """Standalone collection with bpy-like name collision handling."""
+
+    def __init__(self, name, taken_names):
+        self.taken_names = taken_names
+        self._name = name
+        self.objects = _FakeBpyList()
+        self.children = _FakeBpyList()
+
+    @property
+    def name(self):
+        return self._name
+
+    @name.setter
+    def name(self, value):
+        if value in self.taken_names and value != self._name:
+            self._name = f"{value}.001"
+        else:
+            self._name = value
+
+
+class _FakeBpyList:
+    def __init__(self):
+        self.items = []
+
+    def get(self, name):
+        return next((item for item in self.items if getattr(item, "name", None) == name), None)
+
+    def link(self, item):
+        self.items.append(item)
+
+    def unlink(self, item):
+        if item in self.items:
+            self.items.remove(item)
+
+    def __iter__(self):
+        return iter(self.items)
+
+    def __len__(self):
+        return len(self.items)
+
+
+def _install_fake_collections(mock_bpy):
+    colls: dict[str, _FakeCollection] = {}
+    taken: set[str] = set()
+
+    def get(name):
+        return colls.get(name)
+
+    def new(name):
+        taken.add(name)
+        coll = _FakeCollection(name, taken)
+        colls[name] = coll
+        return coll
+
+    mock_bpy.data.collections.get = get
+    mock_bpy.data.collections.new = new
+    mock_bpy.data.collections.__iter__ = lambda self: iter(colls.values())
+    mock_bpy.context.scene.collection = types.SimpleNamespace(
+        name="Scene Collection", children=_FakeBpyList(), objects=_FakeBpyList()
+    )
+    return colls
+
+
+class _FakeObject:
+    """Object stub with bpy-like name collision handling and dynamic collection membership."""
+
+    def __init__(self, name, taken_names=None, colls=None):
+        self.taken_names = taken_names or set()
+        self.colls = colls or []
+        self._name = name
+
+    @property
+    def name(self):
+        return self._name
+
+    @name.setter
+    def name(self, value):
+        if value in self.taken_names and value != self._name:
+            self._name = f"{value}.001"
+        else:
+            self._name = value
+
+    @property
+    def users_collection(self):
+        return [coll for coll in self.colls if self in coll.objects.items]
+
+
+class TestSceneListObjectsPagination:
+    def _objects(self, mock_bpy):
+        scene = mock_bpy.context.scene
+        return scene.objects
+
+    def test_pagination_and_total(self, handler, mock_bpy):
+        cube, camera = mock_bpy.context.scene.objects
+        extra = MagicMock()
+        extra.name = "Ball"
+        extra.type = "MESH"
+        extra.location = MagicMock()
+        extra.visible_get.return_value = True
+        mock_bpy.context.scene.objects = [cube, camera, extra]
+
+        result = handler.handle("scene.list_objects", {"limit": 2, "offset": 1})
+        assert result["total"] == 3
+        assert result["count"] == 2
+        assert result["offset"] == 1
+        assert [o["name"] for o in result["objects"]] == ["Camera", "Cube"]
+
+    def test_name_filter_is_case_insensitive(self, handler, mock_bpy):
+        result = handler.handle("scene.list_objects", {"name": "CUB"})
+        assert [o["name"] for o in result["objects"]] == ["Cube"]
+
+    def test_visible_filter(self, handler, mock_bpy):
+        cube, camera = mock_bpy.context.scene.objects
+        cube.visible_get.return_value = False
+        result = handler.handle("scene.list_objects", {"visible": False})
+        assert [o["name"] for o in result["objects"]] == ["Cube"]
+
+    def test_collection_filter_missing_collection(self, handler, mock_bpy):
+        _install_fake_collections(mock_bpy)
+        with pytest.raises(ValueError, match="not found"):
+            handler.handle("scene.list_objects", {"collection": "Props"})
+
+    def test_collection_filter(self, handler, mock_bpy):
+        colls = _install_fake_collections(mock_bpy)
+        props = colls.setdefault("Props", _FakeCollection("Props", {"Props"}))
+        member = types.SimpleNamespace(name="Cube")
+        props.objects.link(member)
+        cube = MagicMock()
+        cube.name = "Cube"
+        cube.type = "MESH"
+        mock_bpy.context.scene.objects = [cube]
+        result = handler.handle("scene.list_objects", {"collection": "Props"})
+        assert [o["name"] for o in result["objects"]] == ["Cube"]
+        assert result["total"] == 1
+
+
+class TestCollectionCommands:
+    def test_collection_create_at_scene_root(self, handler, mock_bpy):
+        colls = _install_fake_collections(mock_bpy)
+        result = handler.handle("collection.create", {"name": "Props"})
+        assert result == {"name": "Props", "parent": "Scene Collection"}
+        assert colls["Props"] in mock_bpy.context.scene.collection.children.items
+
+    def test_collection_create_under_parent(self, handler, mock_bpy):
+        colls = _install_fake_collections(mock_bpy)
+        parent = colls.setdefault("Sets", _FakeCollection("Sets", {"Sets"}))
+        result = handler.handle("collection.create", {"name": "Props", "parent": "Sets"})
+        assert result["parent"] == "Sets"
+        assert colls["Props"] in parent.children.items
+
+    def test_collection_create_missing_parent(self, handler, mock_bpy):
+        _install_fake_collections(mock_bpy)
+        with pytest.raises(ValueError, match="Parent collection 'Nope' not found"):
+            handler.handle("collection.create", {"name": "Props", "parent": "Nope"})
+
+    def test_collection_create_rejects_duplicate(self, handler, mock_bpy):
+        _install_fake_collections(mock_bpy)
+        handler.handle("collection.create", {"name": "Props"})
+        with pytest.raises(ValueError, match="already exists"):
+            handler.handle("collection.create", {"name": "Props"})
+
+    def test_collection_create_rejects_empty_name(self, handler, mock_bpy):
+        _install_fake_collections(mock_bpy)
+        with pytest.raises(ValueError, match="must not be empty"):
+            handler.handle("collection.create", {"name": "  "})
+
+    def test_collection_list(self, handler, mock_bpy):
+        colls = _install_fake_collections(mock_bpy)
+        props = colls.setdefault("Props", _FakeCollection("Props", {"Props"}))
+        props.objects.link(types.SimpleNamespace(name="Cube"))
+        result = handler.handle("collection.list", {})
+        assert {"name": "Props", "object_count": 1} in result["collections"]
+
+    def test_collection_rename_reports_canonical_name(self, handler, mock_bpy):
+        colls = _install_fake_collections(mock_bpy)
+        colls.setdefault("Existing", _FakeCollection("Existing", {"Existing"}))
+        colls.setdefault("Props", _FakeCollection("Props", {"Existing"}))
+        result = handler.handle("collection.rename", {"name": "Props", "new_name": "Existing"})
+        assert result["name"] == "Existing.001"
+        assert result["requested"] == "Existing"
+
+    def test_collection_rename_missing(self, handler, mock_bpy):
+        _install_fake_collections(mock_bpy)
+        with pytest.raises(ValueError, match="not found"):
+            handler.handle("collection.rename", {"name": "Nope", "new_name": "X"})
+
+    def test_collection_add_object_moves_and_reports_previous(self, handler, mock_bpy):
+        colls = _install_fake_collections(mock_bpy)
+        old = colls.setdefault("Old", _FakeCollection("Old", {"Old"}))
+        target = colls.setdefault("New", _FakeCollection("New", {"New"}))
+        obj = MagicMock()
+        obj.name = "Cube"
+        obj.users_collection = [old]
+        mock_bpy.data.objects.get = lambda n: obj
+        result = handler.handle("collection.add_object", {"collection": "New", "object": "Cube"})
+        assert result["moved"] is True
+        assert result["previous_collections"] == ["Old"]
+        assert obj not in old.objects.items
+        assert obj in target.objects.items
+
+    def test_collection_add_object_already_member(self, handler, mock_bpy):
+        colls = _install_fake_collections(mock_bpy)
+        target = colls.setdefault("New", _FakeCollection("New", {"New"}))
+        obj = MagicMock()
+        obj.name = "Cube"
+        obj.users_collection = [target]
+        mock_bpy.data.objects.get = lambda n: obj
+        result = handler.handle("collection.add_object", {"collection": "New", "object": "Cube"})
+        assert result["moved"] is False
+
+    def test_collection_remove_object_relinks_orphans_to_scene(self, handler, mock_bpy):
+        colls = _install_fake_collections(mock_bpy)
+        props = colls.setdefault("Props", _FakeCollection("Props", {"Props"}))
+        obj = _FakeObject("Cube", colls=[props])
+        props.objects.link(obj)
+        mock_bpy.data.objects.get = lambda n: obj
+        result = handler.handle("collection.remove_object", {"collection": "Props", "object": "Cube"})
+        assert result["relinked_to_scene"] is True
+        assert obj not in props.objects.items
+
+    def test_collection_remove_object_not_member(self, handler, mock_bpy):
+        colls = _install_fake_collections(mock_bpy)
+        colls.setdefault("Props", _FakeCollection("Props", {"Props"}))
+        obj = MagicMock()
+        obj.name = "Cube"
+        obj.users_collection = []
+        mock_bpy.data.objects.get = lambda n: obj
+        with pytest.raises(ValueError, match="is not in collection"):
+            handler.handle("collection.remove_object", {"collection": "Props", "object": "Cube"})
+
+
+class TestRenameAndParentCommands:
+    def test_object_rename_reports_canonical_name(self, handler, mock_bpy):
+        obj = _FakeObject("Cube", taken_names={"Existing"})
+        mock_bpy.data.objects.get = lambda n: obj
+        result = handler.handle("object.rename", {"name": "Cube", "new_name": "Existing"})
+        assert result["name"] == "Existing.001"
+        assert result["requested"] == "Existing"
+
+    def test_object_rename_missing(self, handler, mock_bpy):
+        mock_bpy.data.objects.get = lambda n: None
+        with pytest.raises(ValueError, match="not found"):
+            handler.handle("object.rename", {"name": "Nope", "new_name": "X"})
+
+    def test_object_parent_with_keep_transform(self, handler, mock_bpy):
+        parent = MagicMock()
+        parent.name = "Parent"
+        parent.parent = None
+        child = MagicMock()
+        child.name = "Child"
+        child.parent = None
+        objects = {"Child": child, "Parent": parent}
+        mock_bpy.data.objects.get = lambda n: objects.get(n)
+        result = handler.handle("object.parent", {"name": "Child", "parent": "Parent", "keep_transform": True})
+        assert result == {"name": "Child", "parent": "Parent", "keep_transform": True}
+        assert child.parent is parent
+        inverse = parent.matrix_world.inverted.return_value
+        assert child.matrix_parent_inverse is inverse
+
+    def test_object_parent_without_keep_transform(self, handler, mock_bpy):
+        parent = MagicMock()
+        parent.name = "Parent"
+        parent.parent = None
+        child = MagicMock()
+        child.name = "Child"
+        child.parent = None
+        objects = {"Child": child, "Parent": parent}
+        mock_bpy.data.objects.get = lambda n: objects.get(n)
+        handler.handle("object.parent", {"name": "Child", "parent": "Parent"})
+        assert child.parent is parent
+        parent.matrix_world.inverted.assert_not_called()
+
+    def test_object_parent_rejects_self(self, handler, mock_bpy):
+        obj = MagicMock()
+        obj.name = "Cube"
+        mock_bpy.data.objects.get = lambda n: obj
+        with pytest.raises(ValueError, match="cannot be parented to itself"):
+            handler.handle("object.parent", {"name": "Cube", "parent": "Cube"})
+
+    def test_object_parent_rejects_cycles(self, handler, mock_bpy):
+        child = types.SimpleNamespace(name="Child", parent=None)
+        parent = types.SimpleNamespace(name="Parent", parent=child)
+        child.parent = parent
+        objects = {"Child": child, "Parent": parent}
+        mock_bpy.data.objects.get = lambda n: objects.get(n)
+        with pytest.raises(ValueError, match="cycle"):
+            handler.handle("object.parent", {"name": "Child", "parent": "Parent"})
+
+    def test_object_parent_missing_parent(self, handler, mock_bpy):
+        obj = MagicMock()
+        obj.name = "Cube"
+        objects = {"Cube": obj}
+        mock_bpy.data.objects.get = lambda n: objects.get(n)
+        with pytest.raises(ValueError, match="not found"):
+            handler.handle("object.parent", {"name": "Cube", "parent": "Missing"})
+
+    def test_object_unparent_bakes_world_transform(self, handler, mock_bpy):
+        obj = MagicMock()
+        obj.name = "Child"
+        obj.parent = MagicMock()
+        mock_bpy.data.objects.get = lambda n: obj
+        result = handler.handle("object.unparent", {"name": "Child", "keep_transform": True})
+        world = obj.matrix_world
+        assert obj.matrix_world == world
+        assert obj.parent is None
+        assert result == {"name": "Child", "unparented": True, "keep_transform": True}
+
+    def test_object_unparent_without_parent(self, handler, mock_bpy):
+        obj = MagicMock()
+        obj.name = "Root"
+        obj.parent = None
+        mock_bpy.data.objects.get = lambda n: obj
+        with pytest.raises(ValueError, match="has no parent"):
+            handler.handle("object.unparent", {"name": "Root"})

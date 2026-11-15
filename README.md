@@ -196,6 +196,15 @@ The AI calls MCP tools like `blender_scene_list_objects` and `blender_object_cre
 </details>
 
 <details>
+<summary><strong>💡 Camera & lighting</strong></summary>
+
+- *"Create a camera named 'ProductCam' at [3, -3, 2] looking at the origin with an 85mm lens and make it the active camera"*
+- *"Add a warm key light above the cube using an area light with energy 400"*
+- *"Turn the 'KeyLight' into a spot light with a 45 degree cone"*
+
+</details>
+
+<details>
 <summary><strong>🎨 Materials & colors</strong></summary>
 
 - *"Create a red material and assign it to the Cube"*
@@ -210,6 +219,25 @@ The AI calls MCP tools like `blender_scene_list_objects` and `blender_object_cre
 - *"Move the Cube up 2 units on the Z axis"*
 - *"Rotate the Cylinder 45 degrees on the Z axis"*
 - *"Scale the Sphere to [2, 2, 2]"*
+
+</details>
+
+<details>
+<summary><strong>🗂 Organizing the scene</strong></summary>
+
+- *"Create a collection called 'Props' and move the Cube into it"*
+- *"Rename the object 'Cube' to 'Base'"*
+- *"Parent the 'Lamp' to the 'Rig' object while keeping its world position"*
+- *"List the first 20 mesh objects in the scene"*
+
+</details>
+
+<details>
+<summary><strong>🎬 Animation</strong></summary>
+
+- *"Set the frame range to 1–120 and go to frame 60"*
+- *"Keyframe the Cube's location at frames 1 and 60, moving it up 3 units"*
+- *"Show me the keyframes on the Cube's rotation"*
 
 </details>
 
@@ -245,9 +273,35 @@ The AI calls MCP tools like `blender_scene_list_objects` and `blender_object_cre
 | Tool | Description |
 |---|---|
 | `blender_scene_get_info` | Scene metadata — name, frame range, render engine, resolution, object count |
-| `blender_scene_list_objects` | List all objects, optionally filter by type (`MESH`, `CAMERA`, `LIGHT`, …) |
+| `blender_scene_list_objects` | List objects with stable name sorting, optional filters (`type`, `name` substring, `collection`, `visibility`) and pagination (`limit`, `offset`); returns total matches |
 | `blender_object_get_transform` | Get position, rotation, and scale of an object by name |
 | `blender_object_get_hierarchy` | Parent/child hierarchy tree (full scene or subtree) |
+
+### Scene Organization
+
+| Tool | Description |
+|---|---|
+| `blender_collection_create` | Create a collection, optionally under a `parent` collection |
+| `blender_collection_list` | List collections with object counts |
+| `blender_collection_rename` | Rename a collection (returns the canonical name — Blender appends `.001` on collision) |
+| `blender_collection_add_object` | Move an object into a collection, leaving its previous collection(s) |
+| `blender_collection_remove_object` | Remove an object from a collection; orphans are re-linked to the scene root |
+| `blender_object_rename` | Rename an object (returns the canonical name after collision handling) |
+| `blender_object_parent` | Parent an object; `keep_transform=true` preserves the world transform. Self/descendant parenting is refused |
+| `blender_object_unparent` | Clear an object's parent; `keep_transform=true` bakes the world transform first |
+
+### Timeline & Animation
+
+| Tool | Description |
+|---|---|
+| `blender_timeline_get` | Get current frame and scene frame range |
+| `blender_timeline_set` | Set current frame and/or frame range |
+| `blender_keyframe_add` | Insert a keyframe on `location`, `rotation` (degrees) or `scale`, optionally setting its value and interpolation (`BEZIER`, `LINEAR`, `CONSTANT`); reports inserted vs. overwritten |
+| `blender_keyframe_list` | List keys per channel (index, frame, value — rotation stored as radians) |
+| `blender_keyframe_remove` | Remove key(s) at a frame; reports how many were removed |
+
+Keyframe tools cover a small allowlist of object transforms; full rigging, constraints and fcurve editing remain
+available through `blender_python_exec` and the script library (e.g. `examples/library/keyframes.py`).
 
 ### Object Manipulation
 
@@ -259,6 +313,28 @@ The AI calls MCP tools like `blender_scene_list_objects` and `blender_object_cre
 | `blender_object_rotate` | Set rotation `[x, y, z]` in degrees (default) or radians |
 | `blender_object_scale` | Set scale `[x, y, z]` |
 | `blender_object_duplicate` | Duplicate with optional new name |
+
+### Camera & Lighting
+
+| Tool | Description |
+|---|---|
+| `blender_camera_create` | Create a camera — `name`, `location`, orientation via `rotation` (degrees) or `look_at` `[x, y, z]` target, `projection` (`PERSP`/`ORTHO`), `lens` (mm, PERSP), `ortho_scale` (ORTHO), `clip_start`/`clip_end`, `set_active` |
+| `blender_camera_update` | Update an existing camera by `name` with any of the camera settings above |
+| `blender_light_create` | Create a light — `light_type` (`POINT`, `SUN`, `SPOT`, `AREA`), `color` `[r, g, b]` (0–1), `energy`, `size`, `size_y` (AREA), `angle` (SUN, degrees), `spot_angle`/`spot_blend` (SPOT), `look_at` |
+| `blender_light_update` | Update an existing light by `name` with any of the light settings above |
+
+Parameters that do not apply to the chosen type (e.g. `spot_angle` on a `POINT` light) return an explicit error
+instead of being silently ignored. For advanced camera rigging, see [`examples/library/camera.py`](examples/library/camera.py).
+
+Example — frame and light a product shot:
+
+```
+blender_camera_create(name="ProductCam", location=[3, -3, 2], look_at=[0, 0, 0.5],
+                      lens=85, clip_start=0.1, clip_end=100, set_active=true)
+blender_light_create(light_type="AREA", name="KeyLight", location=[2, -2, 3],
+                     look_at=[0, 0, 0.5], energy=400, color=[1.0, 0.97, 0.92],
+                     size=2, size_y=3)
+```
 
 ### Materials
 

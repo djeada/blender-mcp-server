@@ -38,8 +38,18 @@ if TYPE_CHECKING:
 from .geometry import build_primitive_pydata
 from .models import (
     BridgeParams,
+    CameraCreateParams,
+    CameraUpdateParams,
+    CollectionCreateParams,
+    CollectionObjectParams,
+    CollectionRenameParams,
     ExportFileParams,
     JobIdParams,
+    KeyframeInsertParams,
+    KeyframeListParams,
+    KeyframeRemoveParams,
+    LightCreateParams,
+    LightUpdateParams,
     MaterialAssignParams,
     MaterialCreateParams,
     MaterialSetColorParams,
@@ -49,13 +59,17 @@ from .models import (
     ObjectDuplicateParams,
     ObjectGetHierarchyParams,
     ObjectGetTransformParams,
+    ObjectParentParams,
+    ObjectRenameParams,
     ObjectRotateParams,
     ObjectScaleParams,
     ObjectTranslateParams,
+    ObjectUnparentParams,
     PythonExecuteParams,
     RenderAnimationParams,
     RenderStillParams,
     SceneListObjectsParams,
+    TimelineSetParams,
 )
 
 logger = logging.getLogger(__name__)
@@ -334,6 +348,23 @@ class CommandHandler:
         self._handlers["material.assign"] = self._material_assign
         self._handlers["material.set_color"] = self._material_set_color
         self._handlers["material.set_texture"] = self._material_set_texture
+        self._handlers["camera.create"] = self._camera_create
+        self._handlers["camera.update"] = self._camera_update
+        self._handlers["light.create"] = self._light_create
+        self._handlers["light.update"] = self._light_update
+        self._handlers["timeline.get"] = self._timeline_get
+        self._handlers["timeline.set"] = self._timeline_set
+        self._handlers["keyframe.insert"] = self._keyframe_insert
+        self._handlers["keyframe.list"] = self._keyframe_list
+        self._handlers["keyframe.remove"] = self._keyframe_remove
+        self._handlers["collection.create"] = self._collection_create
+        self._handlers["collection.list"] = self._collection_list
+        self._handlers["collection.rename"] = self._collection_rename
+        self._handlers["collection.add_object"] = self._collection_add_object
+        self._handlers["collection.remove_object"] = self._collection_remove_object
+        self._handlers["object.rename"] = self._object_rename
+        self._handlers["object.parent"] = self._object_parent
+        self._handlers["object.unparent"] = self._object_unparent
         self._handlers["render.still"] = self._render_still
         self._handlers["render.animation"] = self._render_animation
         self._handlers["export.gltf"] = self._export_gltf
@@ -361,6 +392,21 @@ class CommandHandler:
         "material.assign": MaterialAssignParams,
         "material.set_color": MaterialSetColorParams,
         "material.set_texture": MaterialSetTextureParams,
+        "camera.create": CameraCreateParams,
+        "camera.update": CameraUpdateParams,
+        "light.create": LightCreateParams,
+        "light.update": LightUpdateParams,
+        "timeline.set": TimelineSetParams,
+        "keyframe.insert": KeyframeInsertParams,
+        "keyframe.list": KeyframeListParams,
+        "keyframe.remove": KeyframeRemoveParams,
+        "collection.create": CollectionCreateParams,
+        "collection.rename": CollectionRenameParams,
+        "collection.add_object": CollectionObjectParams,
+        "collection.remove_object": CollectionObjectParams,
+        "object.rename": ObjectRenameParams,
+        "object.parent": ObjectParentParams,
+        "object.unparent": ObjectUnparentParams,
         "render.still": RenderStillParams,
         "render.animation": RenderAnimationParams,
         "export.gltf": ExportFileParams,
@@ -429,19 +475,45 @@ class CommandHandler:
 
     def _scene_list_objects(self, params: dict) -> dict:
         type_filter = params.get("type")
-        objects = []
-        for obj in bpy.context.scene.objects:
+        name_filter = params.get("name")
+        collection_name = params.get("collection")
+        visible_filter = params.get("visible")
+        limit = params.get("limit")
+        offset = params.get("offset") or 0
+
+        collection_objects = None
+        if collection_name:
+            coll = bpy.data.collections.get(collection_name)
+            if coll is None:
+                raise ValueError(f"Collection '{collection_name}' not found")
+            collection_objects = {obj.name for obj in coll.objects}
+
+        matching = []
+        for obj in sorted(bpy.context.scene.objects, key=lambda o: o.name):
             if type_filter and obj.type != type_filter.upper():
                 continue
-            objects.append(
-                {
-                    "name": obj.name,
-                    "type": obj.type,
-                    "location": list(obj.location),
-                    "visible": obj.visible_get(),
-                }
-            )
-        return {"objects": objects}
+            if name_filter and name_filter.lower() not in obj.name.lower():
+                continue
+            if collection_objects is not None and obj.name not in collection_objects:
+                continue
+            if visible_filter is not None and bool(obj.visible_get()) != visible_filter:
+                continue
+            matching.append(obj)
+
+        total = len(matching)
+        page = matching[offset:]
+        if limit is not None:
+            page = page[:limit]
+        objects = [
+            {
+                "name": obj.name,
+                "type": obj.type,
+                "location": list(obj.location),
+                "visible": obj.visible_get(),
+            }
+            for obj in page
+        ]
+        return {"objects": objects, "total": total, "count": len(objects), "offset": offset}
 
     def _object_get_transform(self, params: dict) -> dict:
         name = params["name"]
@@ -638,6 +710,487 @@ class CommandHandler:
             tree.links.new(tex_node.outputs["Color"], base_color)
         tex_node.image = image
         return {"name": mat.name, "texture": filepath}
+
+    # -- Camera & light tools --
+
+    def _look_at_rotation(self, location, target):
+        """Euler angles (radians) that point -Z at `target` from `location`."""
+        import mathutils
+
+        direction = mathutils.Vector(target) - mathutils.Vector(location)
+        if direction.length == 0:
+            raise ValueError("'look_at' target must differ from the object location")
+        return direction.to_track_quat("-Z", "Y").to_euler()
+
+    def _apply_placement(self, obj, params: dict) -> None:
+        """Apply location/orientation parameters shared by camera and light objects."""
+        location = params.get("location")
+        if location is not None:
+            obj.location = location
+        rotation = params.get("rotation")
+        look_at = params.get("look_at")
+        if rotation is not None and look_at is not None:
+            raise ValueError("Provide either 'rotation' or 'look_at', not both")
+        if look_at is not None:
+            obj.rotation_euler = self._look_at_rotation(obj.location, look_at)
+        elif rotation is not None:
+            obj.rotation_euler = [math.radians(r) for r in rotation]
+
+    @staticmethod
+    def _get_object_of_type(name: str, expected_type: str):
+        obj = bpy.data.objects.get(name)
+        if not obj:
+            raise ValueError(f"Object '{name}' not found")
+        if obj.type != expected_type:
+            raise ValueError(f"Object '{name}' is of type {obj.type}, not {expected_type}")
+        return obj
+
+    def _camera_create(self, params: dict) -> dict:
+        name = params.get("name") or "Camera"
+        cam_data = bpy.data.cameras.new(name)
+        obj = bpy.data.objects.new(name, cam_data)
+        bpy.context.scene.collection.objects.link(obj)
+        self._apply_camera_settings(cam_data, obj, params)
+        return {
+            "name": obj.name,
+            "type": obj.type,
+            "location": list(obj.location),
+            "projection": cam_data.type,
+            "lens": cam_data.lens,
+            "ortho_scale": cam_data.ortho_scale,
+            "clip_start": cam_data.clip_start,
+            "clip_end": cam_data.clip_end,
+            "active": bpy.context.scene.camera is obj,
+        }
+
+    def _camera_update(self, params: dict) -> dict:
+        obj = self._get_object_of_type(params["name"], "CAMERA")
+        cam_data = obj.data
+        if cam_data is None:
+            raise ValueError(f"Object '{params['name']}' has no camera data")
+        self._apply_camera_settings(cam_data, obj, params)
+        return {
+            "name": obj.name,
+            "type": obj.type,
+            "location": list(obj.location),
+            "projection": cam_data.type,
+            "lens": cam_data.lens,
+            "ortho_scale": cam_data.ortho_scale,
+            "clip_start": cam_data.clip_start,
+            "clip_end": cam_data.clip_end,
+            "active": bpy.context.scene.camera is obj,
+        }
+
+    def _apply_camera_settings(self, cam_data, obj, params: dict) -> None:
+        projection = params.get("projection")
+        if projection is not None:
+            proj = projection.strip().upper()
+            if proj not in {"PERSP", "ORTHO"}:
+                raise ValueError(f"Unsupported camera projection '{projection}': use 'PERSP' or 'ORTHO'")
+            cam_data.type = proj
+        lens = params.get("lens")
+        if lens is not None:
+            if cam_data.type != "PERSP":
+                raise ValueError("'lens' applies to PERSP cameras; use 'ortho_scale' for ORTHO")
+            cam_data.lens = lens
+        ortho_scale = params.get("ortho_scale")
+        if ortho_scale is not None:
+            if cam_data.type != "ORTHO":
+                raise ValueError("'ortho_scale' applies to ORTHO cameras; use 'lens' for PERSP")
+            cam_data.ortho_scale = ortho_scale
+        clip_start = params.get("clip_start")
+        clip_end = params.get("clip_end")
+        if clip_start is not None:
+            cam_data.clip_start = clip_start
+        if clip_end is not None:
+            cam_data.clip_end = clip_end
+        if clip_start is not None and clip_end is not None and clip_start >= clip_end:
+            raise ValueError("'clip_start' must be smaller than 'clip_end'")
+        self._apply_placement(obj, params)
+        if params.get("set_active"):
+            bpy.context.scene.camera = obj
+
+    LIGHT_TYPES = ("POINT", "SUN", "SPOT", "AREA")
+
+    def _light_create(self, params: dict) -> dict:
+        light_type = params.get("type", "POINT").strip().upper()
+        if light_type not in self.LIGHT_TYPES:
+            raise ValueError(f"Unsupported light type '{params.get('type')}': use {', '.join(self.LIGHT_TYPES)}")
+        name = params.get("name") or f"{light_type.capitalize()}Light"
+        light_data = bpy.data.lights.new(name, type=light_type)
+        obj = bpy.data.objects.new(name, light_data)
+        bpy.context.scene.collection.objects.link(obj)
+        self._apply_light_settings(light_data, obj, params)
+        return self._light_result(light_data, obj)
+
+    def _light_update(self, params: dict) -> dict:
+        obj = self._get_object_of_type(params["name"], "LIGHT")
+        light_data = obj.data
+        if light_data is None:
+            raise ValueError(f"Object '{params['name']}' has no light data")
+        new_type = params.get("type")
+        if new_type is not None:
+            light_type = new_type.strip().upper()
+            if light_type not in self.LIGHT_TYPES:
+                raise ValueError(f"Unsupported light type '{new_type}': use {', '.join(self.LIGHT_TYPES)}")
+            light_data.type = light_type
+        self._apply_light_settings(light_data, obj, params)
+        return self._light_result(light_data, obj)
+
+    @staticmethod
+    def _light_result(light_data, obj) -> dict:
+        return {
+            "name": obj.name,
+            "type": obj.type,
+            "light_type": light_data.type,
+            "location": list(obj.location),
+            "energy": light_data.energy,
+            "color": list(light_data.color),
+        }
+
+    def _apply_light_settings(self, light_data, obj, params: dict) -> None:
+        light_type = light_data.type
+        energy = params.get("energy")
+        if energy is not None:
+            light_data.energy = energy
+        color = params.get("color")
+        if color is not None:
+            if any(component < 0 or component > 1 for component in color):
+                raise ValueError("Light 'color' components must be between 0 and 1")
+            light_data.color = color[:3]
+        size = params.get("size")
+        if size is not None:
+            if light_type == "SUN":
+                raise ValueError("'size' does not apply to SUN lights; use 'angle'")
+            if light_type in {"POINT", "SPOT"}:
+                light_data.shadow_soft_size = size
+            else:  # AREA
+                light_data.size = size
+        size_y = params.get("size_y")
+        if size_y is not None:
+            if light_type != "AREA":
+                raise ValueError(f"'size_y' applies to AREA lights, not {light_type}")
+            light_data.shape = "RECTANGLE"
+            light_data.size_y = size_y
+        angle = params.get("angle")
+        if angle is not None:
+            if light_type != "SUN":
+                raise ValueError(f"'angle' applies to SUN lights, not {light_type}")
+            light_data.angle = math.radians(angle)
+        spot_angle = params.get("spot_angle")
+        if spot_angle is not None:
+            if light_type != "SPOT":
+                raise ValueError(f"'spot_angle' applies to SPOT lights, not {light_type}")
+            light_data.spot_size = math.radians(spot_angle)
+        spot_blend = params.get("spot_blend")
+        if spot_blend is not None:
+            if light_type != "SPOT":
+                raise ValueError(f"'spot_blend' applies to SPOT lights, not {light_type}")
+            if not 0 <= spot_blend <= 1:
+                raise ValueError("'spot_blend' must be between 0 and 1")
+            light_data.spot_blend = spot_blend
+        self._apply_placement(obj, params)
+
+    # -- Timeline & keyframe tools --
+
+    KEYFRAME_DATA_PATHS = {
+        "location": "location",
+        "rotation": "rotation_euler",
+        "scale": "scale",
+    }
+    KEYFRAME_INTERPOLATIONS = {"BEZIER", "LINEAR", "CONSTANT"}
+
+    def _timeline_get(self, params: dict) -> dict:
+        scene = bpy.context.scene
+        return {
+            "frame_current": scene.frame_current,
+            "frame_start": scene.frame_start,
+            "frame_end": scene.frame_end,
+        }
+
+    def _timeline_set(self, params: dict) -> dict:
+        scene = bpy.context.scene
+        frame_start = params.get("frame_start")
+        frame_end = params.get("frame_end")
+        if frame_start is not None:
+            scene.frame_start = frame_start
+        if frame_end is not None:
+            scene.frame_end = frame_end
+        if scene.frame_start > scene.frame_end:
+            raise ValueError(f"'frame_start' ({scene.frame_start}) must not exceed 'frame_end' ({scene.frame_end})")
+        frame_current = params.get("frame_current")
+        if frame_current is not None:
+            scene.frame_set(frame_current)
+        return {
+            "frame_current": scene.frame_current,
+            "frame_start": scene.frame_start,
+            "frame_end": scene.frame_end,
+        }
+
+    @staticmethod
+    def _keyframe_data_path(property_name: str) -> str:
+        data_path = CommandHandler.KEYFRAME_DATA_PATHS.get(property_name)
+        if data_path is None:
+            raise ValueError(
+                f"Unsupported animatable property '{property_name}': "
+                f"use {', '.join(sorted(CommandHandler.KEYFRAME_DATA_PATHS))}"
+            )
+        return data_path
+
+    @staticmethod
+    def _keyframe_interpolation(value: str) -> str:
+        interp = value.strip().upper()
+        if interp not in CommandHandler.KEYFRAME_INTERPOLATIONS:
+            raise ValueError(
+                f"Unsupported interpolation '{value}': use {', '.join(sorted(CommandHandler.KEYFRAME_INTERPOLATIONS))}"
+            )
+        return interp
+
+    @staticmethod
+    def _action_fcurves(obj):
+        """fcurve collection for an object's action, across Blender versions.
+
+        Blender 4.4+ stores fcurves in slotted actions (layers > strips > channelbag);
+        older releases expose them directly on the action.
+        """
+        anim = getattr(obj, "animation_data", None)
+        action = getattr(anim, "action", None) if anim is not None else None
+        if action is None:
+            return None
+        fcurves = getattr(action, "fcurves", None)
+        if fcurves is not None:
+            try:
+                iter(fcurves)
+                return fcurves
+            except TypeError:
+                pass
+        slot = getattr(anim, "action_slot", None)
+        for layer in getattr(action, "layers", []) or []:
+            for strip in getattr(layer, "strips", []) or []:
+                getter = getattr(strip, "channelbag", None)
+                if callable(getter) and slot is not None:
+                    bag = getter(slot)
+                    if bag is not None:
+                        return getattr(bag, "fcurves", None)
+        return None
+
+    def _fcurves_for_path(self, obj, data_path: str) -> list:
+        fcurves = self._action_fcurves(obj)
+        if fcurves is None:
+            return []
+        return [fc for fc in fcurves if getattr(fc, "data_path", None) == data_path]
+
+    @staticmethod
+    def _count_keys(fcurves: list) -> int:
+        return sum(len(fc.keyframe_points) for fc in fcurves)
+
+    def _keyframe_insert(self, params: dict) -> dict:
+        name = params["name"]
+        obj = bpy.data.objects.get(name)
+        if not obj:
+            raise ValueError(f"Object '{name}' not found")
+        property_name = params["property"]
+        data_path = self._keyframe_data_path(property_name)
+        frame = params["frame"]
+
+        value = params.get("value")
+        if value is not None:
+            if property_name == "rotation":
+                # Rotation values are degrees, matching blender_object_rotate.
+                setattr(obj, data_path, [math.radians(v) for v in value])
+            else:
+                setattr(obj, data_path, value)
+
+        anim = obj.animation_data_create()
+        before = self._count_keys(self._fcurves_for_path(obj, data_path))
+        if not obj.keyframe_insert(data_path=data_path, frame=frame):
+            raise ValueError(f"Keyframe insertion failed for '{property_name}' on '{obj.name}' at frame {frame}")
+        fcurves = self._fcurves_for_path(obj, data_path)
+        after = self._count_keys(fcurves)
+
+        interpolation = params.get("interpolation")
+        if interpolation is not None:
+            interp = self._keyframe_interpolation(interpolation)
+            for fc in fcurves:
+                for key in fc.keyframe_points:
+                    if abs(key.co[0] - frame) < 0.5:
+                        key.interpolation = interp
+
+        action = getattr(anim, "action", None)
+        return {
+            "name": obj.name,
+            "property": property_name,
+            "frame": frame,
+            "action": getattr(action, "name", None),
+            "keyframe_count": after,
+            "result": "overwritten" if after == before else "inserted",
+        }
+
+    def _keyframe_list(self, params: dict) -> dict:
+        name = params["name"]
+        obj = bpy.data.objects.get(name)
+        if not obj:
+            raise ValueError(f"Object '{name}' not found")
+        property_name = params.get("property")
+        anim = getattr(obj, "animation_data", None)
+        if anim is None or getattr(anim, "action", None) is None:
+            raise ValueError(f"Object '{name}' has no animation data")
+        fcurves = self._fcurves_for_path(obj, self._keyframe_data_path(property_name or ""))
+        keys = []
+        for fc in fcurves:
+            for key in fc.keyframe_points:
+                keys.append({"channel": getattr(fc, "array_index", 0), "frame": key.co[0], "value": key.co[1]})
+        keys.sort(key=lambda k: (k["channel"], k["frame"]))
+        return {"name": obj.name, "property": property_name, "keys": keys, "keyframe_count": len(keys)}
+
+    def _keyframe_remove(self, params: dict) -> dict:
+        name = params["name"]
+        obj = bpy.data.objects.get(name)
+        if not obj:
+            raise ValueError(f"Object '{name}' not found")
+        property_name = params["property"]
+        data_path = self._keyframe_data_path(property_name)
+        frame = params["frame"]
+        anim = getattr(obj, "animation_data", None)
+        if anim is None or getattr(anim, "action", None) is None:
+            raise ValueError(f"Object '{name}' has no animation data")
+        before = self._count_keys(self._fcurves_for_path(obj, data_path))
+        if not obj.keyframe_delete(data_path=data_path, frame=frame):
+            raise ValueError(f"No keyframe for '{property_name}' on '{obj.name}' at frame {frame}")
+        after = self._count_keys(self._fcurves_for_path(obj, data_path))
+        return {
+            "name": obj.name,
+            "property": property_name,
+            "frame": frame,
+            "removed": before - after,
+            "keyframe_count": after,
+        }
+
+    # -- Scene organization tools --
+
+    def _collection_create(self, params: dict) -> dict:
+        name = params["name"].strip()
+        if not name:
+            raise ValueError("Collection name must not be empty")
+        if bpy.data.collections.get(name):
+            raise ValueError(f"Collection '{name}' already exists")
+        coll = bpy.data.collections.new(name)
+        parent_name = params.get("parent")
+        if parent_name:
+            parent_coll = bpy.data.collections.get(parent_name)
+            if not parent_coll:
+                raise ValueError(f"Parent collection '{parent_name}' not found")
+            parent_coll.children.link(coll)
+            parent_label = parent_coll.name
+        else:
+            bpy.context.scene.collection.children.link(coll)
+            parent_label = bpy.context.scene.collection.name
+        return {"name": coll.name, "parent": parent_label}
+
+    def _collection_list(self, params: dict) -> dict:
+        return {
+            "collections": [{"name": coll.name, "object_count": len(coll.objects)} for coll in bpy.data.collections]
+        }
+
+    def _collection_rename(self, params: dict) -> dict:
+        coll = bpy.data.collections.get(params["name"])
+        if not coll:
+            raise ValueError(f"Collection '{params['name']}' not found")
+        new_name = params["new_name"].strip()
+        if not new_name:
+            raise ValueError("Collection name must not be empty")
+        coll.name = new_name
+        # Blender appends a .001 suffix when the name is taken; report the canonical name.
+        return {"name": coll.name, "requested": new_name}
+
+    def _get_collection_and_object(self, params: dict):
+        coll = bpy.data.collections.get(params["collection"])
+        if not coll:
+            raise ValueError(f"Collection '{params['collection']}' not found")
+        obj = bpy.data.objects.get(params["object"])
+        if not obj:
+            raise ValueError(f"Object '{params['object']}' not found")
+        return coll, obj
+
+    def _collection_add_object(self, params: dict) -> dict:
+        coll, obj = self._get_collection_and_object(params)
+        members = list(getattr(obj, "users_collection", []))
+        if coll in members:
+            return {"object": obj.name, "collection": coll.name, "moved": False}
+        for member in members:
+            member.objects.unlink(obj)
+        coll.objects.link(obj)
+        return {
+            "object": obj.name,
+            "collection": coll.name,
+            "moved": True,
+            "previous_collections": [member.name for member in members],
+        }
+
+    def _collection_remove_object(self, params: dict) -> dict:
+        coll, obj = self._get_collection_and_object(params)
+        if coll.objects.get(obj.name) is None:
+            raise ValueError(f"Object '{obj.name}' is not in collection '{coll.name}'")
+        coll.objects.unlink(obj)
+        orphaned = not list(getattr(obj, "users_collection", []))
+        if orphaned:
+            bpy.context.scene.collection.objects.link(obj)
+        return {
+            "object": obj.name,
+            "collection": coll.name,
+            "relinked_to_scene": orphaned,
+        }
+
+    def _object_rename(self, params: dict) -> dict:
+        obj = bpy.data.objects.get(params["name"])
+        if not obj:
+            raise ValueError(f"Object '{params['name']}' not found")
+        new_name = params["new_name"].strip()
+        if not new_name:
+            raise ValueError("Object name must not be empty")
+        obj.name = new_name
+        # Blender appends a .001 suffix when the name is taken; report the canonical name.
+        return {"name": obj.name, "requested": new_name}
+
+    def _object_parent(self, params: dict) -> dict:
+        obj = bpy.data.objects.get(params["name"])
+        if not obj:
+            raise ValueError(f"Object '{params['name']}' not found")
+        parent_obj = bpy.data.objects.get(params["parent"])
+        if not parent_obj:
+            raise ValueError(f"Object '{params['parent']}' not found")
+        if parent_obj is obj:
+            raise ValueError(f"Object '{obj.name}' cannot be parented to itself")
+        ancestor = parent_obj
+        seen: set[int] = set()
+        while ancestor is not None and id(ancestor) not in seen:
+            seen.add(id(ancestor))
+            if ancestor is obj:
+                raise ValueError(f"Parenting '{obj.name}' under '{parent_obj.name}' would create a cycle")
+            ancestor = ancestor.parent
+
+        keep_transform = bool(params.get("keep_transform"))
+        if keep_transform:
+            obj.matrix_parent_inverse = parent_obj.matrix_world.inverted()
+        obj.parent = parent_obj
+        return {
+            "name": obj.name,
+            "parent": parent_obj.name,
+            "keep_transform": keep_transform,
+        }
+
+    def _object_unparent(self, params: dict) -> dict:
+        obj = bpy.data.objects.get(params["name"])
+        if not obj:
+            raise ValueError(f"Object '{params['name']}' not found")
+        if obj.parent is None:
+            raise ValueError(f"Object '{obj.name}' has no parent")
+        keep_transform = bool(params.get("keep_transform"))
+        if keep_transform:
+            # Bake the current world transform before clearing the parent.
+            obj.matrix_world = obj.matrix_world
+        obj.parent = None
+        return {"name": obj.name, "unparented": True, "keep_transform": keep_transform}
 
     # -- Render tools --
 
@@ -1234,6 +1787,20 @@ class BlenderMCPServer:
         "material.assign",
         "material.set_color",
         "material.set_texture",
+        "camera.create",
+        "camera.update",
+        "light.create",
+        "light.update",
+        "timeline.set",
+        "keyframe.insert",
+        "keyframe.remove",
+        "collection.create",
+        "collection.rename",
+        "collection.add_object",
+        "collection.remove_object",
+        "object.rename",
+        "object.parent",
+        "object.unparent",
     }
 
     # Commands answered on the socket thread. They only touch the thread-safe JobManager,
