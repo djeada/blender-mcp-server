@@ -51,6 +51,7 @@ jobs:
           path: coverage.xml
 
   integration:
+    name: Blender ${{ matrix.version }} on Linux
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     strategy:
@@ -72,6 +73,7 @@ jobs:
         with:
           python-version: "3.12"
       - name: Install pinned Blender and test dependencies
+        shell: bash
         env:
           SERIES: ${{ matrix.series }}
           VERSION: ${{ matrix.version }}
@@ -79,8 +81,17 @@ jobs:
         run: |
           mkdir -p blender-logs
           archive="blender-$VERSION-linux-x64.tar.xz"
-          curl --fail --location --retry 3 "https://download.blender.org/release/Blender$SERIES/$archive" -o "$RUNNER_TEMP/$archive"
-          echo "$CHECKSUM  $RUNNER_TEMP/$archive" | sha256sum --check
+          downloaded=no
+          for host in https://mirror.blender.org/release https://download.blender.org/release https://mirrors.ocf.berkeley.edu/blender/release; do
+            url="$host/Blender$SERIES/$archive"
+            echo "Downloading $url" | tee -a blender-logs/download.log
+            if curl --silent --show-error --fail --location --retry 2 --max-time 150 "$url" -o "$RUNNER_TEMP/$archive" 2>&1 | tee -a blender-logs/download.log &&
+              echo "$CHECKSUM  $RUNNER_TEMP/$archive" | sha256sum --check 2>&1 | tee -a blender-logs/download.log; then
+              downloaded=yes
+              break
+            fi
+          done
+          test "$downloaded" = yes
           tar -xJf "$RUNNER_TEMP/$archive" -C "$RUNNER_TEMP"
           binary="$RUNNER_TEMP/blender-$VERSION-linux-x64/blender"
           "$binary" --version | tee blender-logs/version.txt
