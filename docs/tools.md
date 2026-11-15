@@ -126,7 +126,7 @@ folders are created.
 }
 ```
 
-Allowlist and parameter-shape checks run before any step starts. State-dependent checks run in order. Each result has a zero-based `index` and a `status` of `succeeded`, `failed`, or `skipped`. Earlier changes persist after a failure. Each mutation gets the same undo behavior as its standalone tool, where Blender's context supports undo. A timeout after execution begins can leave completed edits in the scene. The batch stops starting new steps at its command deadline.
+Allowlist and parameter-shape checks run before any step starts. State-dependent checks run in order. Each result has a zero-based `index` and a `status` of `succeeded`, `failed`, or `skipped`. Earlier changes persist after a failure. Each successful mutation records an undo checkpoint after the change, just like its standalone tool, when Blender's context supports undo. A timeout after execution begins can leave completed edits in the scene. The batch stops starting new steps at its command deadline.
 
 The batch supports ordinary scene, object, modifier, material, camera, light, timeline, keyframe, and collection operations. Use standalone tools for project files, textures, renders, exports, Python, jobs, and history. The entire input is capped at 64 KiB. Results larger than 16 KiB per step are marked with `result_omitted: "size_limit"`.
 

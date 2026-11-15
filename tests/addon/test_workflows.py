@@ -94,3 +94,21 @@ def test_invalid_modifier_property_does_not_add_modifier(handler, mock_bpy):
             "object.add_modifier", {"name": "Cube", "modifier_type": "BEVEL", "properties": {"segments": 100}}
         )
     obj.modifiers.new.assert_not_called()
+
+
+def test_batch_undo_checkpoints_record_each_completed_mutation(handler, mock_bpy):
+    cube = mock_bpy.data.objects.get("Cube")
+    checkpoints = []
+    mock_bpy.ops.ed.undo_push.poll.return_value = True
+    mock_bpy.ops.ed.undo_push.side_effect = lambda **_: checkpoints.append(list(cube.location))
+
+    handler.dispatch(
+        "scene.execute_batch",
+        {
+            "commands": [
+                {"command": "object.translate", "params": {"name": "Cube", "location": [1, 0, 0]}},
+                {"command": "object.translate", "params": {"name": "Cube", "location": [2, 0, 0]}},
+            ]
+        },
+    )
+    assert checkpoints == [[1, 0, 0], [2, 0, 0]]

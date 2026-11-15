@@ -54,8 +54,9 @@ The implementation is split by responsibility:
 
 Each runtime owns its mutable settings, job table, and last-execution status.
 Feature handlers do not import the UI, transport, or add-on entrypoint. The
-transport authorizes and validates a request before pushing an undo entry, and
-enforces its size limit on each newline-delimited request. The queue has a capacity and separate queue and execution deadlines. Scene loads change the generation and fail pending work. See [Policy and recovery](policy.md) for the wire error contract.
+transport authorizes and validates each request before dispatch. Successful
+mutations record an undo checkpoint when Blender supports it. The transport
+enforces a size limit on each newline-delimited request. The queue has a capacity and separate queue and execution deadlines. Scene loads change the generation and fail pending work. See [Policy and recovery](policy.md) for the wire error contract.
 
 ### 3. Optional Examples (`examples/`)
 

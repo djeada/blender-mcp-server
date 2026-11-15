@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 from functools import partial
 from typing import TYPE_CHECKING, Any
@@ -30,6 +31,8 @@ from .settings import RuntimeSettings
 
 if TYPE_CHECKING:
     from collections.abc import Callable
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -161,9 +164,14 @@ class CommandHandler:
 
     @staticmethod
     def execute_prepared(name: str, specification: Command, values: dict) -> Any:
+        result = specification.handler(values)
         if specification.mutates:
             undo_push = bpy.ops.ed.undo_push
             poll = getattr(undo_push, "poll", None)
-            if not callable(poll) or poll():
-                undo_push(message=f"MCP: {name}")
-        return specification.handler(values)
+            try:
+                if not callable(poll) or poll():
+                    # Blender undo restores the previous checkpoint; record the new state.
+                    undo_push(message=f"MCP: {name}")
+            except RuntimeError:
+                logger.debug("Blender undo checkpoint unavailable for %s", name)
+        return result
