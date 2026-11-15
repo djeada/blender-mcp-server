@@ -27,6 +27,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   renders: absolute path returned, missing folders created, extensions appended only when absent).
 
 ### Fixed
+- Rejected mutation requests no longer add undo entries, and the bridge also rejects oversized
+  requests when their terminating newline has already arrived.
+- Parenting and unparenting with `keep_transform=true` restore a copy of the world matrix after
+  changing the parent, so moved children retain their world transform.
 - `blender_render_still` / `blender_render_animation` failed with their default output path in an unsaved
   Blender file (`cannot save: 'render.png'`). `//` paths now resolve next to the `.blend` file, or to
   `<temp dir>/blender-mcp/` while the file is unsaved, on both transports.
@@ -41,6 +45,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - Script files are read as UTF-8 by the add-on regardless of the platform's default encoding.
 
 ### Changed
+- Replaced the add-on entrypoint and monolithic command handler with feature modules, an explicit
+  runtime, and a single command registry for validation, undo, and worker-thread dispatch.
+- Moved MCP tool definitions into feature modules while preserving all 44 tool names and schemas;
+  organized add-on and server tests by feature.
 - Moved runnable scenes and workflow recipes into `examples/demos/` and `examples/library/`.
   Saved script paths and approved roots must use the new locations.
 - Tree generation, object scattering, and emissive material creation are example scripts executed

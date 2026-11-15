@@ -1,0 +1,106 @@
+"""Tests for Blender contract behavior."""
+
+from unittest.mock import MagicMock
+
+import pytest
+
+
+class TestServerAddonContract:
+    """Every MCP tool must send parameters the add-on's validator accepts."""
+
+    CALLS = [
+        ("scene_list_objects", {"type": "MESH"}),
+        ("object_get_transform", {"name": "Cube"}),
+        ("object_get_hierarchy", {"name": "Cube"}),
+        ("object_create", {"mesh_type": "sphere", "name": "S", "location": [1, 2, 3], "size": 1.0}),
+        ("object_delete", {"name": "Cube"}),
+        ("object_translate", {"name": "Cube", "offset": [1, 0, 0]}),
+        ("object_rotate", {"name": "Cube", "rotation": [0, 0, 90]}),
+        ("object_scale", {"name": "Cube", "scale": [2, 2, 2]}),
+        ("object_duplicate", {"name": "Cube", "new_name": "Copy"}),
+        ("object_rename", {"name": "Cube", "new_name": "Renamed"}),
+        ("object_parent", {"name": "Cube", "parent": "Parent", "keep_transform": True}),
+        ("object_unparent", {"name": "Cube", "keep_transform": True}),
+        ("camera_create", {"name": "Camera", "location": [3, -4, 5], "look_at": [0, 0, 0], "lens": 50}),
+        ("camera_update", {"name": "Camera", "projection": "ORTHO", "ortho_scale": 4}),
+        ("light_create", {"name": "Key", "light_type": "AREA", "energy": 100, "size": 2}),
+        ("light_update", {"name": "Key", "color": [1, 0.5, 0.25]}),
+        ("timeline_set", {"frame_current": 1, "frame_start": 1, "frame_end": 120}),
+        ("keyframe_add", {"name": "Cube", "property": "location", "frame": 1, "value": [0, 0, 0]}),
+        ("keyframe_list", {"name": "Cube", "property": "location"}),
+        ("keyframe_remove", {"name": "Cube", "property": "location", "frame": 1}),
+        ("collection_create", {"name": "Props", "parent": "Scene"}),
+        ("collection_rename", {"name": "Props", "new_name": "Assets"}),
+        ("collection_add_object", {"collection": "Props", "object": "Cube"}),
+        ("collection_remove_object", {"collection": "Props", "object": "Cube"}),
+        ("material_create", {"name": "M", "color": [1, 0, 0]}),
+        ("material_assign", {"object": "Cube", "material": "M"}),
+        ("material_set_color", {"name": "M", "color": [1, 0, 0]}),
+        ("material_set_texture", {"name": "M", "filepath": "/tmp/t.png"}),
+        ("render_still", {"output_path": "/tmp/r.png", "resolution_x": 64, "resolution_y": 64, "engine": "CYCLES"}),
+        ("render_animation", {"output_path": "/tmp/r_", "frame_start": 1, "frame_end": 2}),
+        ("export_gltf", {"filepath": "/tmp/x.glb"}),
+        ("export_obj", {"filepath": "/tmp/x.obj"}),
+        ("export_fbx", {"filepath": "/tmp/x.fbx"}),
+        ("python_exec", {"code": "pass", "args": {"a": 1}, "timeout_seconds": 5}),
+        ("python_exec_async", {"code": "pass", "timeout_seconds": 5}),
+        ("job_status", {"job_id": "job-1"}),
+        ("job_cancel", {"job_id": "job-1"}),
+    ]
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(("tool_name", "kwargs"), CALLS)
+    async def test_tool_params_pass_addon_validation(self, tool_name, kwargs, runtime):
+        from unittest.mock import AsyncMock
+
+        from blender_mcp_server import server
+
+        ctx = MagicMock()
+        ctx.request_context.lifespan_context.send_command = AsyncMock(return_value={})
+        await getattr(server, tool_name)(ctx, **kwargs)
+        command, params = ctx.request_context.lifespan_context.send_command.await_args.args
+
+        validator = runtime.handler.commands[command].validator
+        assert validator is not None, f"{command} has no add-on validator"
+        validated = validator.model_validate(params).model_dump(exclude_none=True)
+        for key in params:
+            assert key in validated, f"{tool_name} sends '{key}', which the add-on drops"
+
+    def test_every_bridge_command_is_handled(self, runtime):
+        import inspect
+        import re
+
+        from blender_mcp_server import server
+
+        commands = set()
+        for tool in server.mcp._tool_manager._tools.values():
+            source = inspect.getsource(tool.fn)
+            commands.update(re.findall(r'bridge\(\s*ctx,\s*"([a-z_.]+)"', source))
+            commands.update(re.findall(r'send_command\("([a-z_.]+)"', source))
+        assert commands == set(runtime.handler.commands)
+
+
+class TestVersionConsistency:
+    def test_addon_version_matches_package(self, addon_module):
+        import re
+
+        with open("pyproject.toml") as f:
+            pyproject = f.read()
+        version = re.search(r'^version = "([^"]+)"', pyproject, re.M).group(1)
+        assert ".".join(map(str, addon_module.bl_info["version"])) == version
+        with open("addon/blender_manifest.toml") as f:
+            manifest = f.read()
+        assert f'version = "{version}"' in manifest
+
+
+def test_port_environment_variable_overrides_preference(handler, mock_bpy, monkeypatch, runtime):
+    prefs = MagicMock()
+    prefs.safe_mode = False
+    prefs.port = 9876
+    prefs.allow_inline_code = True
+    prefs.approved_script_roots = ""
+    prefs.allowed_commands = ""
+    mock_bpy.context.preferences.addons["addon"] = MagicMock(preferences=prefs)
+    monkeypatch.setenv("BLENDER_MCP_PORT", "9911")
+    runtime.settings.sync_preferences()
+    assert runtime.settings.port == 9911

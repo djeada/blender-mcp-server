@@ -1,0 +1,113 @@
+"""Command metadata, validation, and dispatch; implementations live in feature modules."""
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+from functools import partial
+from typing import TYPE_CHECKING, Any
+
+from . import animation, camera, collections, lighting, materials, models, objects, rendering, scene
+from .execution import ScriptExecutor
+from .jobs import JobManager
+from .paths import PathPolicy
+from .settings import RuntimeSettings
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
+
+
+@dataclass(frozen=True)
+class Command:
+    handler: Callable[[dict], Any]
+    validator: type[models.BridgeParams] | None = None
+    mutates: bool = False
+    worker_thread: bool = False
+
+
+class CommandHandler:
+    """Compose feature commands with one runtime's policy, executor, and jobs."""
+
+    def __init__(self, settings: RuntimeSettings | None = None):
+        self.settings = settings or RuntimeSettings()
+        self.policy = PathPolicy(self.settings)
+        self.executor = ScriptExecutor(self.settings, self.policy)
+        self.jobs = JobManager(self.executor)
+        self.commands: dict[str, Command] = {
+            "scene.get_info": Command(scene.get_info),
+            "scene.list_objects": Command(scene.list_objects, models.SceneListObjectsParams),
+            "object.get_transform": Command(objects.get_transform, models.ObjectGetTransformParams),
+            "object.get_hierarchy": Command(objects.get_hierarchy, models.ObjectGetHierarchyParams),
+            "material.list": Command(materials.list_materials),
+            "object.create_mesh": Command(objects.create_mesh, models.ObjectCreateMeshParams, mutates=True),
+            "object.delete": Command(objects.delete, models.ObjectDeleteParams, mutates=True),
+            "object.translate": Command(objects.translate, models.ObjectTranslateParams, mutates=True),
+            "object.rotate": Command(objects.rotate, models.ObjectRotateParams, mutates=True),
+            "object.scale": Command(objects.scale, models.ObjectScaleParams, mutates=True),
+            "object.duplicate": Command(objects.duplicate, models.ObjectDuplicateParams, mutates=True),
+            "material.create": Command(materials.create, models.MaterialCreateParams, mutates=True),
+            "material.assign": Command(materials.assign, models.MaterialAssignParams, mutates=True),
+            "material.set_color": Command(materials.set_color, models.MaterialSetColorParams, mutates=True),
+            "material.set_texture": Command(
+                partial(materials.set_texture, policy=self.policy), models.MaterialSetTextureParams, mutates=True
+            ),
+            "camera.create": Command(camera.create, models.CameraCreateParams, mutates=True),
+            "camera.update": Command(camera.update, models.CameraUpdateParams, mutates=True),
+            "light.create": Command(lighting.create, models.LightCreateParams, mutates=True),
+            "light.update": Command(lighting.update, models.LightUpdateParams, mutates=True),
+            "timeline.get": Command(animation.timeline_get),
+            "timeline.set": Command(animation.timeline_set, models.TimelineSetParams, mutates=True),
+            "keyframe.insert": Command(animation.keyframe_insert, models.KeyframeInsertParams, mutates=True),
+            "keyframe.list": Command(animation.keyframe_list, models.KeyframeListParams),
+            "keyframe.remove": Command(animation.keyframe_remove, models.KeyframeRemoveParams, mutates=True),
+            "collection.create": Command(collections.create, models.CollectionCreateParams, mutates=True),
+            "collection.list": Command(collections.list_collections),
+            "collection.rename": Command(collections.rename, models.CollectionRenameParams, mutates=True),
+            "collection.add_object": Command(collections.add_object, models.CollectionObjectParams, mutates=True),
+            "collection.remove_object": Command(collections.remove_object, models.CollectionObjectParams, mutates=True),
+            "object.rename": Command(objects.rename, models.ObjectRenameParams, mutates=True),
+            "object.parent": Command(objects.parent, models.ObjectParentParams, mutates=True),
+            "object.unparent": Command(objects.unparent, models.ObjectUnparentParams, mutates=True),
+            "render.still": Command(partial(rendering.render_still, policy=self.policy), models.RenderStillParams),
+            "render.animation": Command(
+                partial(rendering.render_animation, policy=self.policy), models.RenderAnimationParams
+            ),
+            "export.gltf": Command(partial(rendering.export_gltf, policy=self.policy), models.ExportFileParams),
+            "export.obj": Command(partial(rendering.export_obj, policy=self.policy), models.ExportFileParams),
+            "export.fbx": Command(partial(rendering.export_fbx, policy=self.policy), models.ExportFileParams),
+            "history.undo": Command(objects.history_undo),
+            "history.redo": Command(objects.history_redo),
+            "python.execute": Command(self.executor.execute, models.PythonExecuteParams),
+            "python.execute_async": Command(self.jobs.execute_async, models.PythonExecuteParams),
+            "job.status": Command(
+                lambda params: self.jobs.get_status(params["job_id"]), models.JobIdParams, worker_thread=True
+            ),
+            "job.cancel": Command(
+                lambda params: self.jobs.cancel(params["job_id"]), models.JobIdParams, worker_thread=True
+            ),
+            "job.list": Command(lambda params: self.jobs.list_jobs(), worker_thread=True),
+        }
+
+    @property
+    def mutation_commands(self) -> frozenset[str]:
+        return frozenset(name for name, command in self.commands.items() if command.mutates)
+
+    def is_worker_command(self, name: str) -> bool:
+        command = self.commands.get(name)
+        return command is not None and command.worker_thread
+
+    def prepare(self, name: str, params: dict, sync_settings: bool = True) -> tuple[Command, dict]:
+        """Authorize and validate before callers perform side effects such as undo pushes."""
+        if sync_settings:
+            self.settings.sync_preferences()
+        if self.settings.tool_whitelist is not None and name not in self.settings.tool_whitelist:
+            raise PermissionError(f"Command '{name}' is not in the tool whitelist")
+        command = self.commands.get(name)
+        if command is None:
+            raise ValueError(f"Unknown command: {name}")
+        if command.validator is not None:
+            params = command.validator.model_validate(params).model_dump(exclude_none=True)
+        return command, params
+
+    def handle(self, command: str, params: dict, sync_settings: bool = True) -> Any:
+        specification, values = self.prepare(command, params, sync_settings)
+        return specification.handler(values)

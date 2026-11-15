@@ -18,8 +18,9 @@ addon = importlib.util.module_from_spec(spec)
 sys.modules["blender_mcp_bridge"] = addon
 spec.loader.exec_module(addon)
 
-addon.PORT = int(os.environ["BLENDER_MCP_PORT"])
-server = addon.BlenderMCPServer()
+runtime = addon.runtime.runtime
+runtime.settings.port = int(os.environ["BLENDER_MCP_PORT"])
+server = runtime.create_server()
 server.start()
 print("BRIDGE_READY", flush=True)
 
@@ -27,7 +28,7 @@ deadline = time.monotonic() + float(os.environ.get("HARNESS_LIFETIME", "300"))
 while time.monotonic() < deadline:
     server._drain_request_queue()
     # Stand-in for bpy.app.timers: run queued async jobs on this (main) thread.
-    queued = [job_id for job_id, job in list(addon._job_manager._jobs.items()) if job["status"] == "queued"]
+    queued = [job_id for job_id, job in list(runtime.handler.jobs._jobs.items()) if job["status"] == "queued"]
     for job_id in queued:
-        addon._job_manager._execute_job(job_id)
+        runtime.handler.jobs._execute_job(job_id)
     time.sleep(0.005)

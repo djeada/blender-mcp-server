@@ -116,6 +116,46 @@ def test_scene_and_object_tools(call):
     assert moved["location"] == [2.0, 2.0, 3.0]
 
 
+def test_typed_camera_light_animation_and_collection_tools(call):
+    camera = call("camera_create", name="ITCamera", location=[3, -4, 5], look_at=[0, 0, 0], lens=35)
+    assert camera["lens"] == 35
+    assert call("camera_update", name="ITCamera", projection="ORTHO", ortho_scale=4)["projection"] == "ORTHO"
+    assert call("light_create", name="ITLight", light_type="AREA", energy=100, size=2)["light_type"] == "AREA"
+    assert call("light_update", name="ITLight", energy=200)["energy"] == 200
+    assert call("timeline_set", frame_current=1, frame_start=1, frame_end=120)["frame_end"] == 120
+    call("object_create", name="ITAnimated")
+    for frame in (1, 10):
+        call("keyframe_add", name="ITAnimated", property="location", frame=frame, value=[frame, 0, 0])
+    assert call("keyframe_list", name="ITAnimated", property="location")["keyframe_count"] == 6
+    assert call("keyframe_remove", name="ITAnimated", property="location", frame=10)["keyframe_count"] == 3
+    call("collection_create", name="ITProps")
+    assert call("collection_add_object", collection="ITProps", object="ITAnimated")["moved"] is True
+    assert call("scene_list_objects", collection="ITProps")["total"] == 1
+    assert call("collection_remove_object", collection="ITProps", object="ITAnimated")["relinked_to_scene"] is True
+
+
+def test_parenting_and_unparenting_keep_world_transform(call):
+    call("object_create", name="ITParent", location=[5, 0, 0])
+    call("object_create", name="ITChild", location=[1, 2, 3])
+
+    def world_transform():
+        result = call(
+            "python_exec",
+            code="bpy.context.view_layer.update()\n__result__ = [v for row in bpy.data.objects['ITChild'].matrix_world for v in row]",
+        )
+        assert result["error"] is None
+        return result["result"]
+
+    original = world_transform()
+    call("object_parent", name="ITChild", parent="ITParent", keep_transform=True)
+    assert world_transform() == pytest.approx(original)
+    call("object_translate", name="ITParent", offset=[5, 0, 0])
+    moved = world_transform()
+    assert moved != pytest.approx(original)
+    call("object_unparent", name="ITChild", keep_transform=True)
+    assert world_transform() == pytest.approx(moved)
+
+
 def test_material_tools(call, bridge):
     call("object_create", mesh_type="plane", name="ITPlane")
     call("material_create", name="ITMat")

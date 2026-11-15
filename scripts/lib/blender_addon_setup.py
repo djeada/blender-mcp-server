@@ -46,7 +46,7 @@ def verify() -> None:
         # Blender strips bl_info from extension modules, so identify the add-on by its register().
         if name.split(".")[-1] == ADDON_ID and hasattr(module, "register"):
             version = ".".join(map(str, getattr(module, "bl_info", {}).get("version", ()))) or "extension"
-            current = hasattr(module, "_load_or_create_token")
+            current = getattr(module, "BRIDGE_API_VERSION", 0) >= 1 or hasattr(module, "_load_or_create_token")
             print(f"MCP_ADDON_{'OK' if current else 'OUTDATED'} {name} {version}")
             return
     print("MCP_ADDON_MISSING")
