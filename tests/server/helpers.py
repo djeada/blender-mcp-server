@@ -23,6 +23,7 @@ def _echo_stream(response_fields: dict, stale_first: dict | None = None):
 
     mock_reader = AsyncMock()
     mock_reader.readline = readline
+    mock_reader.at_eof = MagicMock(return_value=False)
     return mock_reader, mock_writer
 
 

@@ -26,8 +26,7 @@ classifiers = [
     "Topic :: Software Development :: Libraries",
 ]
 dependencies = [
-    # FastMCP (mcp.server.fastmcp) first shipped in mcp 1.2.0
-    "mcp>=1.2.0,<2",
+    "mcp>=1.20.0,<2",
 ]
 
 [project.urls]
@@ -45,7 +44,9 @@ dev = [
 ]
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/blender_mcp_server"]
+only-include = ["src/blender_mcp_server", "addon"]
+sources = {"src" = "", "addon" = "blender_mcp_server/_addon"}
+dev-mode-dirs = [".", "src"]
 
 [tool.hatch.build.targets.sdist]
 include = [

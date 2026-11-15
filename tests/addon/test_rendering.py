@@ -12,6 +12,13 @@ class _FakeRender:
     resolution_x = 1920
     resolution_y = 1080
     filepath = ""
+    resolution_percentage = 100
+    use_compositing = True
+    use_file_extension = True
+    file_extension = ".png"
+
+    def frame_path(self):
+        return self.filepath
 
     def __init__(self, engines):
         self._engines = engines
@@ -34,7 +41,7 @@ class TestOutputPaths:
         result = handler.handle("export.gltf", {"filepath": str(target)})
         assert result["filepath"] == f"{target}.glb"
         assert target.parent.is_dir()
-        mock_bpy.ops.export_scene.gltf.assert_called_once_with(filepath=f"{target}.glb")
+        mock_bpy.ops.export_scene.gltf.assert_called_once_with(filepath=f"{target}.glb", export_format="GLB")
 
     def test_export_extension_check_ignores_case(self, handler, tmp_path):
         result = handler.handle("export.obj", {"filepath": str(tmp_path / "a.OBJ")})
@@ -91,8 +98,8 @@ class TestRenderEngineNames:
         result = handler.handle("render.still", {"output_path": str(tmp_path / "r.png"), "engine": requested})
         assert result["engine"] == expected
 
-    def test_unknown_engine_lists_the_available_ones(self, handler, mock_bpy, tmp_path):
+    def test_unknown_engine_reports_version_error(self, handler, mock_bpy, tmp_path):
         mock_bpy.context.scene.render = _FakeRender(("BLENDER_EEVEE", "CYCLES"))
-        with pytest.raises(ValueError, match="Unknown render engine 'luxrender'.*CYCLES"):
+        with pytest.raises(ValueError, match="Unknown render engine on this Blender version"):
             handler.handle("render.animation", {"output_path": str(tmp_path / "r_"), "engine": "luxrender"})
         mock_bpy.ops.render.render.assert_not_called()

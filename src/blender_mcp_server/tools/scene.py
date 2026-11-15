@@ -1,8 +1,11 @@
 """MCP tools for scene."""
 
-from mcp.server.fastmcp import Context
+from typing import Any
 
-from blender_mcp_server.app import bridge, mcp
+from mcp.server.fastmcp import Context
+from typing_extensions import NotRequired, TypedDict
+
+from blender_mcp_server.app import bridge, bridge_result, mcp
 
 
 @mcp.tool(
@@ -89,3 +92,16 @@ async def collection_add_object(ctx: Context, collection: str, object: str) -> s
 )
 async def collection_remove_object(ctx: Context, collection: str, object: str) -> str:
     return await bridge(ctx, "collection.remove_object", collection=collection, object=object)
+
+
+class BatchStep(TypedDict):
+    command: str
+    params: NotRequired[dict[str, Any]]
+
+
+@mcp.tool(
+    name="blender_scene_execute_batch",
+    description="Run up to 32 ordered scene commands and report each step. Successful changes persist on failure.",
+)
+async def scene_execute_batch(ctx: Context, commands: list[BatchStep], stop_on_error: bool = True) -> dict:
+    return {"result": await bridge_result(ctx, "scene.execute_batch", commands=commands, stop_on_error=stop_on_error)}

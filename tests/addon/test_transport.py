@@ -1,6 +1,9 @@
 """Tests for Blender transport behavior."""
 
 import threading
+import time
+from concurrent.futures import ThreadPoolExecutor
+from dataclasses import replace
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -32,6 +35,7 @@ class TestServerExecution:
 
     def test_submit_request_runs_through_queue(self, runtime):
         server = runtime.create_server()
+        server._running = True
         request = {"id": "abc", "command": "scene.get_info", "params": {}}
         expected = {"id": "abc", "success": True, "result": {"ok": True}}
         response_holder = {}
@@ -41,6 +45,7 @@ class TestServerExecution:
                 target=lambda: response_holder.setdefault("response", server._submit_request(request))
             )
             worker.start()
+            _wait_until(lambda: server._request_queue)
             server._drain_request_queue()
             worker.join(timeout=1)
 
@@ -180,11 +185,13 @@ class TestBridgeRobustness:
 
     def test_drain_always_answers_waiting_client(self, runtime):
         server = runtime.create_server()
-        event = threading.Event()
-        server._request_queue.put({"request": {"id": "9"}, "event": event, "response": None})
-        with patch.object(server, "_process_request", side_effect=KeyboardInterrupt()):
-            server._drain_request_queue()
-        assert event.is_set()
+        server._running = True
+        with ThreadPoolExecutor() as workers:
+            waiting = workers.submit(server._submit_request, {"id": "9", "command": "scene.get_info"})
+            _wait_until(lambda: server._request_queue)
+            with patch.object(server, "_process_request", side_effect=KeyboardInterrupt()):
+                server._drain_request_queue()
+            assert waiting.result(timeout=1)["error_details"]["code"] == "command_failed"
 
     def test_job_commands_bypass_main_thread_queue(self, runtime):
         """job.status/cancel must work while an async job occupies the main thread."""
@@ -192,7 +199,7 @@ class TestBridgeRobustness:
         job_id = server._handler.handle("python.execute_async", {"code": "pass"})["job_id"]
         response = server._submit_request({"id": "1", "command": "job.cancel", "params": {"job_id": job_id}})
         assert response["success"] is True
-        assert server._request_queue.empty()
+        assert not server._request_queue
 
     def test_finished_jobs_are_pruned_and_released(self, handler, addon_module, runtime):
         manager = runtime.handler.jobs
@@ -213,3 +220,69 @@ class TestBridgeRobustness:
         assert runtime.healthy()
         runtime.settings.port = server._port + 1
         assert not runtime.healthy()
+
+
+def _wait_until(predicate):
+    deadline = time.monotonic() + 1
+    while not predicate():
+        assert time.monotonic() < deadline
+        time.sleep(0.001)
+
+
+def test_stalled_queue_is_bounded_and_late_requests_are_not_run(runtime):
+    runtime.settings.policy = replace(runtime.settings.policy, queue_capacity=1, queue_timeout=0.15)
+    server = runtime.create_server()
+    server._running = True
+    with ThreadPoolExecutor() as workers:
+        waiting = workers.submit(server._submit_request, {"id": "1", "command": "object.delete"})
+        _wait_until(lambda: server._request_queue)
+        busy = server._submit_request({"id": "2", "command": "scene.get_info"})
+        assert busy["error_details"]["code"] == "busy"
+        expired = waiting.result(timeout=1)
+    assert expired["error_details"]["code"] == "queue_timeout"
+    assert expired["error_details"]["details"] == {"started": False}
+    with patch.object(server, "_process_request") as process:
+        server._drain_request_queue()
+    process.assert_not_called()
+
+
+def test_reload_cancels_queued_request_and_recovers_timer(runtime, mock_bpy):
+    server = runtime.create_server()
+    server._running = True
+    generation = server._generation
+    with ThreadPoolExecutor() as workers:
+        waiting = workers.submit(server._submit_request, {"id": "1", "command": "scene.get_info"})
+        _wait_until(lambda: server._request_queue)
+        server.begin_scene_load()
+        assert waiting.result(timeout=1)["error_details"]["code"] == "session_changed"
+    server.end_scene_load()
+    mock_bpy.app.timers.register.assert_called_once()
+    assert server._status()["generation"] != generation
+    mock_bpy.app.timers.is_registered.return_value = True
+    server.end_scene_load()
+    mock_bpy.app.timers.register.assert_called_once()
+
+
+def test_native_operation_can_finish_after_response_deadline(runtime):
+    runtime.settings.policy = replace(runtime.settings.policy, command_timeout=0.02)
+    server = runtime.create_server()
+    server._running = True
+    entered = threading.Event()
+    finish = threading.Event()
+
+    def slow(_):
+        entered.set()
+        assert finish.wait(timeout=1)
+        return {"success": True}
+
+    with ThreadPoolExecutor() as workers, patch.object(server, "_process_request", side_effect=slow):
+        waiting = workers.submit(server._submit_request, {"id": "1", "command": "object.delete"})
+        _wait_until(lambda: server._request_queue)
+        timer = workers.submit(server._drain_request_queue)
+        assert entered.wait(timeout=1)
+        expired = waiting.result(timeout=1)
+        assert expired["error_details"]["code"] == "execution_timeout"
+        assert expired["error_details"]["details"]["outcome_uncertain"]
+        finish.set()
+        timer.result(timeout=1)
+    assert server._active is None

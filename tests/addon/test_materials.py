@@ -22,7 +22,7 @@ class TestMaterialTexture:
     def test_failed_image_load_adds_no_node(self, handler, mock_bpy):
         material = self._material(mock_bpy)
         mock_bpy.data.images.load.side_effect = RuntimeError("Cannot read '/missing.png'")
-        with pytest.raises(RuntimeError, match="Cannot read"):
+        with pytest.raises(FileNotFoundError, match="Cannot read"):
             handler.handle("material.set_texture", {"name": "M", "filepath": "/missing.png"})
         material.node_tree.nodes.new.assert_not_called()
 

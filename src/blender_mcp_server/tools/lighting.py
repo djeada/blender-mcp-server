@@ -11,7 +11,7 @@ from blender_mcp_server.app import bridge, mcp
         "Create a light. type is POINT, SUN, SPOT, or AREA (default POINT). Optionally set name, location, "
         "orientation via rotation (degrees) or look_at [x, y, z] target (not both), color [r, g, b] (0-1), "
         "energy, size (POINT/SPOT radius, AREA size), size_y (AREA rectangle only), angle in degrees (SUN "
-        "only), spot_angle in degrees (SPOT only), and spot_blend 0-1 (SPOT only). Unsupported parameters "
+        "only), spot_angle in degrees (SPOT only), and spot_blend 0-1 (SPOT only). UnsupportedError parameters "
         "for the chosen type produce explicit errors."
     ),
 )
@@ -54,7 +54,7 @@ async def light_create(
         "Update an existing light by name. Optionally change type (POINT, SUN, SPOT, AREA), location, "
         "orientation via rotation (degrees) or look_at [x, y, z] target (not both), color [r, g, b] (0-1), "
         "energy, size (POINT/SPOT radius, AREA size), size_y (AREA rectangle only), angle in degrees (SUN "
-        "only), spot_angle in degrees (SPOT only), and spot_blend 0-1 (SPOT only). Unsupported parameters "
+        "only), spot_angle in degrees (SPOT only), and spot_blend 0-1 (SPOT only). UnsupportedError parameters "
         "for the current type produce explicit errors."
     ),
 )

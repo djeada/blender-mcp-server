@@ -89,7 +89,7 @@ class TestJobLifecycle:
         status = handler.handle("job.status", {"job_id": job_id})
         assert status["status"] == "failed"
         assert "RuntimeError" in status["error"]
-        assert "async boom" in status["error"]
+        assert "async boom" not in status["error"]
 
     def test_job_status_missing_id_raises(self, handler):
         with pytest.raises(ValueError, match="job_id"):

@@ -2,6 +2,8 @@
 
 import bpy
 
+from .protocol import MissingResourceError
+
 
 def create(params: dict) -> dict:
     name = params["name"].strip()
@@ -14,7 +16,7 @@ def create(params: dict) -> dict:
     if parent_name:
         parent_coll = bpy.data.collections.get(parent_name)
         if not parent_coll:
-            raise ValueError(f"Parent collection '{parent_name}' not found")
+            raise MissingResourceError(f"Parent collection '{parent_name}' not found")
         parent_coll.children.link(coll)
         parent_label = parent_coll.name
     else:
@@ -30,7 +32,7 @@ def list_collections(params: dict) -> dict:
 def rename(params: dict) -> dict:
     coll = bpy.data.collections.get(params["name"])
     if not coll:
-        raise ValueError(f"Collection '{params['name']}' not found")
+        raise MissingResourceError(f"Collection '{params['name']}' not found")
     new_name = params["new_name"].strip()
     if not new_name:
         raise ValueError("Collection name must not be empty")
@@ -42,10 +44,10 @@ def rename(params: dict) -> dict:
 def get_collection_and_object(params: dict):
     coll = bpy.data.collections.get(params["collection"])
     if not coll:
-        raise ValueError(f"Collection '{params['collection']}' not found")
+        raise MissingResourceError(f"Collection '{params['collection']}' not found")
     obj = bpy.data.objects.get(params["object"])
     if not obj:
-        raise ValueError(f"Object '{params['object']}' not found")
+        raise MissingResourceError(f"Object '{params['object']}' not found")
     return coll, obj
 
 

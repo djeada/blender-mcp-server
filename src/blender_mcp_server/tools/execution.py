@@ -34,7 +34,7 @@ async def python_exec(
     factory_startup: bool | None = None,
 ) -> str:
     if transport == "headless":
-        result = await headless_executor().execute(
+        result = await (await headless_executor(ctx, "python.execute")).execute(
             code=code,
             script_path=script_path,
             args=args,
@@ -78,7 +78,7 @@ async def python_exec_async(
     if transport == "headless":
         validate_source(code, script_path)
         job_id = await HEADLESS_JOB_MANAGER.create_job(
-            headless_executor(),
+            await headless_executor(ctx, "python.execute_async"),
             code=code,
             script_path=script_path,
             args=args,
@@ -107,6 +107,9 @@ async def python_exec_async(
 )
 async def job_status(ctx: Context, job_id: str) -> str:
     if job_id.startswith("headless-job-"):
+        config = get_connection(ctx).policy
+        config.require_transport("headless")
+        config.require_command("job.status")
         return json.dumps(HEADLESS_JOB_MANAGER.get_status(job_id), indent=2)
     return await bridge(ctx, "job.status", job_id=job_id)
 
@@ -120,6 +123,9 @@ async def job_status(ctx: Context, job_id: str) -> str:
 )
 async def job_cancel(ctx: Context, job_id: str) -> str:
     if job_id.startswith("headless-job-"):
+        config = get_connection(ctx).policy
+        config.require_transport("headless")
+        config.require_command("job.cancel")
         return json.dumps(await HEADLESS_JOB_MANAGER.cancel(job_id), indent=2)
     return await bridge(ctx, "job.cancel", job_id=job_id)
 
@@ -129,12 +135,16 @@ async def job_cancel(ctx: Context, job_id: str) -> str:
     description="List known async Blender jobs with their IDs, statuses, and creation timestamps.",
 )
 async def job_list(ctx: Context) -> str:
-    headless_jobs = HEADLESS_JOB_MANAGER.list_jobs()["jobs"]
-    try:
-        bridge_result = await get_connection(ctx).send_command("job.list")
-        bridge_jobs = bridge_result.get("jobs", [])
-    except Exception as exc:
-        logger.info("Bridge job list unavailable: %s", exc)
-        bridge_jobs = []
-    result = {"jobs": bridge_jobs + headless_jobs}
-    return json.dumps(result, indent=2)
+    connection = get_connection(ctx)
+    connection.policy.require_command("job.list")
+    headless = "headless" in connection.policy.transports
+    jobs = HEADLESS_JOB_MANAGER.list_jobs()["jobs"] if headless else []
+    if "bridge" in connection.policy.transports:
+        try:
+            bridge_result = await connection.send_command("job.list")
+            jobs = bridge_result.get("jobs", []) + jobs
+        except Exception as exc:
+            if not headless:
+                raise
+            logger.info("Bridge job list unavailable: %s", exc)
+    return json.dumps({"jobs": jobs}, indent=2)

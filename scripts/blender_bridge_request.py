@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import asyncio
 import json
 import os
 import socket
@@ -20,7 +21,7 @@ def load_token() -> str:
         return token
     path = Path(os.environ.get("BLENDER_MCP_TOKEN_FILE") or Path.home() / ".blender-mcp" / "token")
     try:
-        return path.read_text(encoding="utf-8").strip()
+        return path.read_text(encoding="utf-8-sig").strip()
     except FileNotFoundError as exc:
         raise ConnectionError(f"Bridge auth token not found at {path}; is the Blender add-on enabled?") from exc
 
@@ -43,6 +44,25 @@ def parse_args() -> argparse.Namespace:
 
 
 def send_request(host: str, port: int, command: str, params: dict[str, Any], timeout: float) -> dict[str, Any]:
+    if os.environ.get("BLENDER_MCP_POLICY_FILE"):
+        try:
+            from blender_mcp_server.connection import BlenderConnection
+            from blender_mcp_server.shared import protocol
+        except ImportError as exc:
+            raise ConnectionError("Use the project venv Python to check a bridge with a shared policy") from exc
+
+        async def managed_request():
+            conn = BlenderConnection(host=host, port=port, timeout=timeout)
+            try:
+                return {"success": True, "result": await conn.send_command(command, params)}
+            except (protocol.BridgeError, PermissionError) as exc:
+                error = protocol.command_error(exc, command, None)
+                return protocol.failure(error)
+            finally:
+                await conn.disconnect()
+
+        return asyncio.run(managed_request())
+
     request = {
         "id": str(uuid.uuid4()),
         "command": command,

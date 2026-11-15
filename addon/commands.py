@@ -6,10 +6,26 @@ from dataclasses import dataclass
 from functools import partial
 from typing import TYPE_CHECKING, Any
 
-from . import animation, camera, collections, lighting, materials, models, objects, rendering, scene
+import bpy
+
+from . import (
+    animation,
+    batch,
+    camera,
+    collections,
+    lighting,
+    materials,
+    models,
+    modifiers,
+    objects,
+    project,
+    rendering,
+    scene,
+)
 from .execution import ScriptExecutor
 from .jobs import JobManager
 from .paths import PathPolicy
+from .protocol import InvalidArgumentsError
 from .settings import RuntimeSettings
 
 if TYPE_CHECKING:
@@ -34,6 +50,15 @@ class CommandHandler:
         self.jobs = JobManager(self.executor)
         self.commands: dict[str, Command] = {
             "scene.get_info": Command(scene.get_info),
+            "scene.execute_batch": Command(partial(batch.execute, handler=self), models.BatchParams),
+            "project.get_info": Command(project.get_info),
+            "project.save": Command(partial(project.save, policy=self.policy), models.ProjectSaveParams),
+            "project.open": Command(partial(project.open_project, policy=self.policy), models.ProjectOpenParams),
+            "project.revert": Command(partial(project.revert, policy=self.policy), models.ProjectRevertParams),
+            "object.list_modifiers": Command(modifiers.list_modifiers, models.ModifierListParams),
+            "object.add_modifier": Command(modifiers.add, models.ModifierAddParams, mutates=True),
+            "object.update_modifier": Command(modifiers.update, models.ModifierUpdateParams, mutates=True),
+            "object.remove_modifier": Command(modifiers.remove, models.ModifierRemoveParams, mutates=True),
             "scene.list_objects": Command(scene.list_objects, models.SceneListObjectsParams),
             "object.get_transform": Command(objects.get_transform, models.ObjectGetTransformParams),
             "object.get_hierarchy": Command(objects.get_hierarchy, models.ObjectGetHierarchyParams),
@@ -95,19 +120,50 @@ class CommandHandler:
         command = self.commands.get(name)
         return command is not None and command.worker_thread
 
-    def prepare(self, name: str, params: dict, sync_settings: bool = True) -> tuple[Command, dict]:
+    def prepare(self, name: str, params: dict | None, sync_settings: bool = True) -> tuple[Command, dict]:
         """Authorize and validate before callers perform side effects such as undo pushes."""
         if sync_settings:
             self.settings.sync_preferences()
-        if self.settings.tool_whitelist is not None and name not in self.settings.tool_whitelist:
-            raise PermissionError(f"Command '{name}' is not in the tool whitelist")
+        self._authorize(name)
+        if params is None:
+            params = {}
+        if not isinstance(params, dict):
+            raise InvalidArgumentsError("Command parameters must be an object")
         command = self.commands.get(name)
         if command is None:
-            raise ValueError(f"Unknown command: {name}")
+            raise InvalidArgumentsError("Unknown command")
         if command.validator is not None:
             params = command.validator.model_validate(params).model_dump(exclude_none=True)
         return command, params
 
     def handle(self, command: str, params: dict, sync_settings: bool = True) -> Any:
         specification, values = self.prepare(command, params, sync_settings)
+        return specification.handler(values)
+
+    def _authorize(self, name: str) -> None:
+        self.settings.policy.require_command(name)
+        if self.settings.tool_whitelist is not None and name not in self.settings.tool_whitelist:
+            raise PermissionError(f"Command '{name}' is not in the tool whitelist")
+
+    def available_commands(self) -> list[str]:
+        available = []
+        for name in self.commands:
+            try:
+                self._authorize(name)
+            except PermissionError:
+                continue
+            available.append(name)
+        return available
+
+    def dispatch(self, name: str, params: dict, *, sync_settings: bool = True) -> Any:
+        specification, values = self.prepare(name, params, sync_settings)
+        return self.execute_prepared(name, specification, values)
+
+    @staticmethod
+    def execute_prepared(name: str, specification: Command, values: dict) -> Any:
+        if specification.mutates:
+            undo_push = bpy.ops.ed.undo_push
+            poll = getattr(undo_push, "poll", None)
+            if not callable(poll) or poll():
+                undo_push(message=f"MCP: {name}")
         return specification.handler(values)

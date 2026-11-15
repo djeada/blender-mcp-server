@@ -56,6 +56,8 @@ class BridgeParams:
             raise ValueError(f"Parameter '{name}' must be a string")
         if expected == "bool" and not isinstance(value, bool):
             raise ValueError(f"Parameter '{name}' must be a boolean")
+        if expected == "list" and not isinstance(value, list):
+            raise ValueError(f"Parameter '{name}' must be a list")
         if expected == "dict" and not isinstance(value, dict):
             raise ValueError(f"Parameter '{name}' must be an object")
         if expected == "int" and (not isinstance(value, int) or isinstance(value, bool)):
@@ -88,7 +90,10 @@ class BridgeParams:
 
 
 def _is_finite_number(value: Any) -> bool:
-    return isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value)
+    try:
+        return isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value)
+    except OverflowError:
+        return False
 
 
 def field(
@@ -372,4 +377,48 @@ class ObjectUnparentParams(BridgeParams):
     fields = {
         "name": field("str", required=True),
         "keep_transform": field("bool", False),
+    }
+
+
+class ProjectSaveParams(BridgeParams):
+    fields = {"filepath": field("str", allow_none=True), "overwrite": field("bool", False)}
+
+
+class ProjectOpenParams(BridgeParams):
+    fields = {"filepath": field("str", required=True), "discard_changes": field("bool", False)}
+
+
+class ProjectRevertParams(BridgeParams):
+    fields = {"confirm": field("bool", required=True)}
+
+
+class BatchParams(BridgeParams):
+    fields = {"commands": field("list", required=True), "stop_on_error": field("bool", True)}
+
+
+class ModifierListParams(BridgeParams):
+    fields = {"name": field("str", required=True)}
+
+
+class ModifierAddParams(BridgeParams):
+    fields = {
+        "name": field("str", required=True),
+        "modifier_type": field("str", required=True),
+        "modifier_name": field("str", allow_none=True),
+        "properties": field("dict", default_factory=dict),
+    }
+
+
+class ModifierUpdateParams(BridgeParams):
+    fields = {
+        "name": field("str", required=True),
+        "modifier_name": field("str", required=True),
+        "properties": field("dict", required=True),
+    }
+
+
+class ModifierRemoveParams(BridgeParams):
+    fields = {
+        "name": field("str", required=True),
+        "modifier_name": field("str", required=True),
     }

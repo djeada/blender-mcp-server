@@ -6,6 +6,9 @@ from typing import TYPE_CHECKING
 
 import bpy
 
+from .policy import resolve_path
+from .protocol import MissingResourceError, UnsupportedError
+
 if TYPE_CHECKING:
     from .paths import PathPolicy
 
@@ -42,10 +45,10 @@ def assign(params: dict) -> dict:
     mat_name = params["material"]
     obj = bpy.data.objects.get(obj_name)
     if not obj:
-        raise ValueError(f"Object '{obj_name}' not found")
+        raise MissingResourceError("Object not found")
     mat = bpy.data.materials.get(mat_name)
     if not mat:
-        raise ValueError(f"Material '{mat_name}' not found")
+        raise MissingResourceError("Material not found")
     materials = getattr(obj.data, "materials", None)
     if materials is None:
         raise ValueError(f"Object '{obj_name}' is of type {obj.type}, which cannot have materials")
@@ -61,12 +64,12 @@ def set_color(params: dict) -> dict:
     color = params["color"]  # [r, g, b] or [r, g, b, a]
     mat = bpy.data.materials.get(mat_name)
     if not mat:
-        raise ValueError(f"Material '{mat_name}' not found")
+        raise MissingResourceError("Material not found")
     if not mat.use_nodes:
         mat.use_nodes = True
     bsdf = mat.node_tree.nodes.get("Principled BSDF")
     if not bsdf:
-        raise ValueError(f"Material '{mat_name}' has no Principled BSDF node")
+        raise UnsupportedError("Material has no Principled BSDF node")
     rgba = list(color) + [1.0] * (4 - len(color))
     bsdf.inputs["Base Color"].default_value = rgba[:4]
     return {"name": mat.name, "color": rgba[:4]}
@@ -74,19 +77,21 @@ def set_color(params: dict) -> dict:
 
 def set_texture(params: dict, *, policy: PathPolicy) -> dict:
     mat_name = params["name"]
-    filepath = params["filepath"]
-    policy.validate_filepath(filepath)
+    filepath = policy.validate_filepath(resolve_path(params["filepath"], str(bpy.data.filepath)))
     mat = bpy.data.materials.get(mat_name)
     if not mat:
-        raise ValueError(f"Material '{mat_name}' not found")
+        raise MissingResourceError("Material not found")
     if not mat.use_nodes:
         mat.use_nodes = True
     tree = mat.node_tree
     bsdf = tree.nodes.get("Principled BSDF")
     if not bsdf:
-        raise ValueError(f"Material '{mat_name}' has no Principled BSDF node")
+        raise UnsupportedError("Material has no Principled BSDF node")
     # Load first: a missing or unreadable file must not leave a dangling node behind.
-    image = bpy.data.images.load(filepath, check_existing=True)
+    try:
+        image = bpy.data.images.load(filepath, check_existing=True)
+    except RuntimeError as exc:
+        raise FileNotFoundError("Cannot read texture file") from exc
     base_color = bsdf.inputs["Base Color"]
     tex_node = next(
         (link.from_node for link in base_color.links if link.from_node.bl_idname == "ShaderNodeTexImage"),

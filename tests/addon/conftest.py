@@ -14,7 +14,9 @@ def _create_mock_bpy():
     for name in ("AddonPreferences", "Panel", "Operator"):
         setattr(bpy.types, name, type(name, (), {}))
     handlers_module = types.ModuleType("bpy.app.handlers")
+    handlers_module.load_pre = []
     handlers_module.load_post = []
+    handlers_module.load_post_fail = []
     handlers_module.persistent = lambda fn: fn
     bpy.app.handlers = handlers_module
 
@@ -25,6 +27,7 @@ def _create_mock_bpy():
     scene.frame_start = 1
     scene.frame_end = 250
     scene.render.engine = "BLENDER_EEVEE"
+    scene.render.resolution_percentage = 100
     scene.render.resolution_x = 1920
     scene.render.resolution_y = 1080
     scene.frame_set = MagicMock()
@@ -111,6 +114,9 @@ def addon_module(mock_bpy, monkeypatch):
     addon = importlib.util.module_from_spec(spec)
     monkeypatch.setitem(sys.modules, "addon", addon)
     spec.loader.exec_module(addon)
+    import importlib
+
+    importlib.import_module("addon.ui")
     yield addon
     for name in tuple(sys.modules):
         if name.startswith("addon."):

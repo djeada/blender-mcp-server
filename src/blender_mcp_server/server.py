@@ -1,6 +1,6 @@
 """Assemble the feature tools and expose the stdio server entrypoint."""
 
-from blender_mcp_server.app import mcp
+from blender_mcp_server.app import blender_status, mcp
 from blender_mcp_server.tools.animation import (
     keyframe_add,
     keyframe_list,
@@ -38,18 +38,23 @@ from blender_mcp_server.tools.materials import (
 from blender_mcp_server.tools.objects import (
     history_redo,
     history_undo,
+    object_add_modifier,
     object_create,
     object_delete,
     object_duplicate,
     object_get_hierarchy,
     object_get_transform,
+    object_list_modifiers,
     object_parent,
+    object_remove_modifier,
     object_rename,
     object_rotate,
     object_scale,
     object_translate,
     object_unparent,
+    object_update_modifier,
 )
+from blender_mcp_server.tools.project import project_get_info, project_open, project_revert, project_save
 from blender_mcp_server.tools.rendering import (
     render_animation,
     render_still,
@@ -60,6 +65,7 @@ from blender_mcp_server.tools.scene import (
     collection_list,
     collection_remove_object,
     collection_rename,
+    scene_execute_batch,
     scene_get_info,
     scene_list_objects,
 )
@@ -67,7 +73,17 @@ from blender_mcp_server.tools.scene import (
 __all__ = [
     "main",
     "mcp",
+    "blender_status",
     "scene_get_info",
+    "scene_execute_batch",
+    "project_get_info",
+    "project_save",
+    "project_open",
+    "project_revert",
+    "object_list_modifiers",
+    "object_add_modifier",
+    "object_update_modifier",
+    "object_remove_modifier",
     "scene_list_objects",
     "collection_create",
     "collection_list",

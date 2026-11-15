@@ -12,16 +12,20 @@ import shutil
 import socket
 import struct
 import subprocess
+import sys
 import time
 import zlib
 from pathlib import Path
 from unittest.mock import MagicMock
 
 import pytest
+from mcp import ClientSession, StdioServerParameters
+from mcp.client.stdio import stdio_client
 
 from blender_mcp_server import server
 from blender_mcp_server.connection import BlenderConnection
 from blender_mcp_server.headless import HeadlessBlenderExecutor
+from blender_mcp_server.shared import protocol
 
 BLENDER = os.environ.get("BLENDER_BIN", "blender")
 EXAMPLE_LIBRARY = Path(__file__).resolve().parents[2] / "examples" / "library"
@@ -56,24 +60,26 @@ def bridge(tmp_path_factory):
     # TMPDIR keeps the add-on's fallback output folder for unsaved files inside the test directory.
     env.update({"BLENDER_MCP_PORT": str(port), "BLENDER_MCP_TOKEN_FILE": str(tmp / "token"), "TMPDIR": str(tmp)})
     harness = Path(__file__).with_name("blender_bridge_harness.py")
-    proc = subprocess.Popen(
-        [BLENDER, "-b", "--factory-startup", "--python", str(harness)],
-        env=env,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.STDOUT,
-        text=True,
-    )
-    assert proc.stdout is not None
-    deadline = time.monotonic() + 120
-    while time.monotonic() < deadline:
-        line = proc.stdout.readline()
-        if "BRIDGE_READY" in line:
-            break
-        if not line and proc.poll() is not None:
-            pytest.fail("Blender exited before the bridge started")
-    yield {"port": port, "token_file": tmp / "token", "tmp": tmp}
-    proc.kill()
-    proc.wait()
+    log_dir = Path(os.environ.get("BLENDER_MCP_TEST_LOG_DIR", tmp))
+    log_dir.mkdir(parents=True, exist_ok=True)
+    log = log_dir / "bridge.log"
+    with log.open("w", encoding="utf-8") as output:
+        proc = subprocess.Popen(
+            [BLENDER, "-b", "--factory-startup", "-t", "4", "--python-exit-code", "1", "--python", str(harness)],
+            env=env,
+            stdout=output,
+            stderr=subprocess.STDOUT,
+        )
+        try:
+            deadline = time.monotonic() + 45
+            while "BRIDGE_READY" not in log.read_text(encoding="utf-8", errors="replace"):
+                if proc.poll() is not None or time.monotonic() >= deadline:
+                    pytest.fail(log.read_text(encoding="utf-8", errors="replace"))
+                time.sleep(0.05)
+            yield {"port": port, "token_file": tmp / "token", "tmp": tmp}
+        finally:
+            proc.kill()
+            proc.wait(timeout=10)
 
 
 @pytest.fixture
@@ -87,7 +93,8 @@ def call(bridge, monkeypatch):
     loop = asyncio.new_event_loop()
 
     def run(tool, **kwargs):
-        return json.loads(loop.run_until_complete(getattr(server, tool)(ctx, **kwargs)))
+        result = loop.run_until_complete(getattr(server, tool)(ctx, **kwargs))
+        return json.loads(result) if isinstance(result, str) else result.get("result", result)
 
     yield run
     loop.run_until_complete(conn.disconnect())
@@ -248,7 +255,8 @@ def test_running_async_job_can_be_cancelled(call):
 
 def test_unauthenticated_request_rejected(bridge):
     responses = _raw(bridge["port"], b'{"id": "1", "command": "scene.get_info"}\n')
-    assert responses == [{"id": None, "success": False, "error": "Unauthorized: missing or invalid token"}]
+    assert responses[0]["id"] is None
+    assert responses[0]["error_details"]["code"] == "permission_denied"
 
 
 def test_http_smuggled_command_not_executed(bridge):
@@ -260,8 +268,8 @@ def test_http_smuggled_command_not_executed(bridge):
     assert "Invalid JSON" in responses[0]["error"]
 
 
-def test_headless_execution_and_system_exit():
-    executor = HeadlessBlenderExecutor(BLENDER)
+def test_headless_execution_and_system_exit(headless_policy):
+    executor = HeadlessBlenderExecutor(BLENDER, headless_policy)
     ok = asyncio.run(executor.execute(code="__result__ = bpy.app.version_string", timeout_seconds=120))
     assert ok["error"] is None and ok["result"]
     exited = asyncio.run(executor.execute(code="import sys; sys.exit(0)", timeout_seconds=120))
@@ -310,7 +318,7 @@ __result__ = {
     assert inspected["result"] == {"linked": True, "materials": [0, 1], "strength": 8}
 
 
-def test_tree_example_is_seeded_in_headless_transport():
+def test_tree_example_is_seeded_in_headless_transport(headless_policy):
     code = "\n".join(
         [
             _recipe_source("create_tree.py"),
@@ -325,7 +333,7 @@ def test_tree_example_is_seeded_in_headless_transport():
         ]
     )
     result = asyncio.run(
-        HeadlessBlenderExecutor(BLENDER).execute(
+        HeadlessBlenderExecutor(BLENDER, headless_policy).execute(
             code=code,
             args={"name": "SeededTree", "seed": 7, "source": "SeededTree", "count": 3},
             timeout_seconds=120,
@@ -333,3 +341,150 @@ def test_tree_example_is_seeded_in_headless_transport():
     )
     assert result["error"] is None
     assert result["result"]["emission_strength"] == 5.0
+
+
+def test_ordered_batch_and_three_modifier_types(call):
+    steps = [
+        {"command": "object.create_mesh", "params": {"name": "BatchCube"}},
+        {"command": "object.translate", "params": {"name": "BatchCube", "offset": [2, 0, 0]}},
+        {"command": "material.create", "params": {"name": "BatchMaterial", "color": [0.25, 0.5, 0.75]}},
+        {"command": "material.assign", "params": {"object": "BatchCube", "material": "BatchMaterial"}},
+        {"command": "object.get_transform", "params": {"name": "Nonexistent"}},
+        {"command": "object.delete", "params": {"name": "BatchCube"}},
+    ]
+    batch = call("scene_execute_batch", commands=steps)
+    assert [step["status"] for step in batch["steps"]] == ["succeeded"] * 4 + ["failed", "skipped"]
+    assert call("object_get_transform", name="BatchCube")["location"][0] == 2
+    for name, mesh, kind, settings in (
+        ("BatchCube", None, "BEVEL", {"segments": 3}),
+        ("BatchPlane", "plane", "SOLIDIFY", {"thickness": 0.2}),
+        ("BatchSphere", "sphere", "MIRROR", {"use_axis": [True, False, True]}),
+    ):
+        if mesh:
+            call("object_create", mesh_type=mesh, name=name)
+        fixed = call("object_add_modifier", name=name, modifier_type="SUBSURF", modifier_name="Base")
+        assert fixed["modifier"]["type"] == "SUBSURF"
+        call("object_add_modifier", name=name, modifier_type=kind, modifier_name="Detail")
+        updated = call("object_update_modifier", name=name, modifier_name="Detail", properties=settings)
+        with pytest.raises(protocol.BridgeError) as invalid:
+            call("object_update_modifier", name=name, modifier_name="Detail", properties={"forbidden": 0})
+        assert invalid.value.code == "invalid_arguments"
+        stack = call("object_list_modifiers", name=name)["modifiers"]
+        assert [modifier["name"] for modifier in stack] == ["Base", "Detail"]
+        assert stack[-1] == updated["modifier"]
+        call("object_remove_modifier", name=name, modifier_name="Detail")
+        assert call("object_list_modifiers", name=name)["modifiers"] == stack[:1]
+
+
+def test_project_persistence_and_recovery_across_multiple_loads(call, bridge):
+    path = bridge["tmp"] / "project.blend"
+    before = call("blender_status")
+    assert before["bridge"]["main_thread_progress"]
+    assert "project.save" in before["bridge"]["commands"]
+    assert "blender_project_save" in before["mcp_tools"]
+    call("object_create", name="PersistedCube", location=[3, 0, 0])
+    saved = call("project_save", filepath=str(path))
+    assert saved["saved"] and saved["filepath"] == str(path)
+    for _ in range(2):
+        call("object_translate", name="PersistedCube", offset=[2, 0, 0])
+        opened = call("project_open", filepath="//project.blend", discard_changes=True)
+        assert opened["filepath"] == saved["filepath"]
+        assert call("object_get_transform", name="PersistedCube")["location"][0] == 3
+        status = call("blender_status")
+        assert status["bridge"]["generation"] != before["bridge"]["generation"]
+        before = status
+    call("project_revert", confirm=True)
+    assert call("scene_get_info")["name"] == "Scene"
+
+
+@pytest.mark.asyncio
+async def test_mcp_stdio_preserves_legacy_success_and_exposes_structured_errors(bridge):
+    async with (
+        stdio_client(
+            StdioServerParameters(
+                command=sys.executable,
+                args=["-m", "blender_mcp_server"],
+                env={
+                    **os.environ,
+                    "BLENDER_MCP_PORT": str(bridge["port"]),
+                    "BLENDER_MCP_TOKEN_FILE": str(bridge["token_file"]),
+                    "BLENDER_MCP_TOKEN": "",
+                },
+            )
+        ) as (read, write),
+        ClientSession(read, write) as session,
+    ):
+        await session.initialize()
+        scene = await session.call_tool("blender_scene_get_info")
+        assert not scene.isError and json.loads(scene.content[0].text)["name"] == "Scene"
+        missing = await session.call_tool("blender_object_get_transform", {"name": "Missing"})
+        assert missing.isError and missing.structuredContent["error"]["code"] == "not_found"
+        assert missing.structuredContent["error"]["request_id"]
+        invalid = await session.call_tool("blender_object_translate", {"name": "Cube", "offset": ["private", 0, 0]})
+        assert invalid.isError and invalid.structuredContent["error"]["code"] == "invalid_arguments"
+        assert "private" not in invalid.content[0].text
+
+
+def test_headless_save_preserves_its_source(call, bridge, headless_policy):
+    from dataclasses import replace
+
+    directory = bridge["tmp"]
+    source = directory / "source.blend"
+    output = directory / "copy.blend"
+    call("project_save", filepath=str(source))
+    executor = HeadlessBlenderExecutor(BLENDER, replace(headless_policy, output_roots=(str(directory),)))
+    original = source.read_bytes()
+    with pytest.raises(protocol.BridgeError) as denied:
+        asyncio.run(
+            executor.execute_command(
+                "project.save", {"filepath": str(source), "overwrite": True}, blend_file=str(source)
+            )
+        )
+    assert denied.value.code == "permission_denied"
+    copied = asyncio.run(executor.execute_command("project.save", {"filepath": "//copy.blend"}, blend_file=str(source)))
+    assert copied["filepath"] == str(output) and output.is_file()
+    assert source.read_bytes() == original
+
+
+@pytest.mark.asyncio
+async def test_managed_client_refuses_an_unmanaged_live_bridge(bridge, monkeypatch):
+    from dataclasses import replace
+
+    from blender_mcp_server.shared import policy
+
+    monkeypatch.delenv("BLENDER_MCP_TOKEN")
+    monkeypatch.setenv("BLENDER_MCP_TOKEN_FILE", str(bridge["token_file"]))
+    managed = replace(policy.Policy(), output_roots=(str(bridge["tmp"]),))
+    connection = BlenderConnection(port=bridge["port"], configured_policy=managed)
+    try:
+        with pytest.raises(protocol.BridgeError) as denied:
+            await connection.send_command("object.create_mesh", {"name": "ShouldNotExist"})
+        assert denied.value.code == "policy_mismatch"
+    finally:
+        await connection.disconnect()
+
+
+def test_restricted_headless_export_checks_companion_paths(call, bridge, headless_policy):
+    from dataclasses import replace
+
+    directory = bridge["tmp"]
+    artifacts = directory / "approved"
+    artifacts.mkdir()
+    outside = directory / "external.mtl"
+    outside.write_text("preserve existing contents")
+    companion = artifacts / "export.mtl"
+    companion.symlink_to(outside)
+    source = artifacts / "export-source.blend"
+    material = call("material_create", name="ExportMaterial")["name"]
+    cube = call("object_create", name="ExportCube")["name"]
+    call("material_assign", object=cube, material=material)
+    call("project_save", filepath=str(source))
+    executor = HeadlessBlenderExecutor(BLENDER, replace(headless_policy, output_roots=(str(artifacts),)))
+    with pytest.raises(protocol.BridgeError) as denied:
+        asyncio.run(executor.execute_command("export.obj", {"filepath": "//export.obj"}, blend_file=str(source)))
+    assert denied.value.code == "permission_denied"
+    assert not (artifacts / "export.obj").exists()
+    assert outside.read_text() == "preserve existing contents"
+    companion.unlink()
+    result = asyncio.run(executor.execute_command("export.obj", {"filepath": "//export.obj"}, blend_file=str(source)))
+    assert Path(result["filepath"]).is_file() and companion.is_file()

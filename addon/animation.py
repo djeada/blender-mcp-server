@@ -4,6 +4,8 @@ import math
 
 import bpy
 
+from .protocol import MissingResourceError
+
 KEYFRAME_DATA_PATHS = {
     "location": "location",
     "rotation": "rotation_euler",
@@ -102,7 +104,7 @@ def keyframe_insert(params: dict) -> dict:
     name = params["name"]
     obj = bpy.data.objects.get(name)
     if not obj:
-        raise ValueError(f"Object '{name}' not found")
+        raise MissingResourceError(f"Object '{name}' not found")
     property_name = params["property"]
     data_path = keyframe_data_path(property_name)
     frame = params["frame"]
@@ -145,7 +147,7 @@ def keyframe_list(params: dict) -> dict:
     name = params["name"]
     obj = bpy.data.objects.get(name)
     if not obj:
-        raise ValueError(f"Object '{name}' not found")
+        raise MissingResourceError(f"Object '{name}' not found")
     property_name = params.get("property")
     anim = getattr(obj, "animation_data", None)
     if anim is None or getattr(anim, "action", None) is None:
@@ -163,7 +165,7 @@ def keyframe_remove(params: dict) -> dict:
     name = params["name"]
     obj = bpy.data.objects.get(name)
     if not obj:
-        raise ValueError(f"Object '{name}' not found")
+        raise MissingResourceError(f"Object '{name}' not found")
     property_name = params["property"]
     data_path = keyframe_data_path(property_name)
     frame = params["frame"]

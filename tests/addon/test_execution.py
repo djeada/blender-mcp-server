@@ -57,7 +57,7 @@ class TestPythonExecute:
         )
         assert result["error"] is not None
         assert "ValueError" in result["error"]
-        assert "boom" in result["error"]
+        assert "boom" not in result["error"]
         assert result["result"] is None
 
     def test_args_passed_to_namespace(self, handler):
@@ -293,7 +293,7 @@ class TestOutputBounding:
         handler.handle("python.execute", {"code": "raise RuntimeError('oops')"})
         last = runtime.handler.executor.last_execution
         assert last["status"] == "error"
-        assert "oops" in last["error_summary"]
+        assert "RuntimeError" in last["error_summary"]
 
     def test_last_execution_updated_by_job(self, handler, runtime):
         result = handler.handle(

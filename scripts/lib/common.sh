@@ -129,6 +129,12 @@ mcp_server_env() {
     echo "BLENDER_MCP_HOST=${BRIDGE_HOST}"
     echo "BLENDER_MCP_PORT=${BRIDGE_PORT}"
     echo "BLENDER_MCP_TOKEN_FILE=${TOKEN_FILE}"
+    local key
+    for key in BLENDER_MCP_POLICY_FILE BLENDER_MCP_HEADLESS BLENDER_MCP_HEADLESS_TIMEOUT BLENDER_MCP_TIMEOUT; do
+        if [ -n "${!key:-}" ]; then
+            echo "${key}=${!key}"
+        fi
+    done
     if blender="$(find_blender)"; then
         echo "BLENDER_BIN=${blender}"
     fi
