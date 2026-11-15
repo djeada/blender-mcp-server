@@ -99,13 +99,22 @@ rendering, exports, script execution, and jobs. Put scene generators, asset reci
 These scripts use the existing Python execution tools and should not require new
 bridge commands, validators, or MCP registrations.
 
-1. Add the bridge command handler in `addon/__init__.py` under `CommandHandler`.
-2. Register the MCP tool in `src/blender_mcp_server/server.py` using `@mcp.tool(...)`.
-3. Add a validator in `addon/models.py` and register it in `CommandHandler._VALIDATORS`.
-4. Add tests in `tests/test_server.py` (tool registration) and `tests/test_addon.py`
-   (handler logic), and add the tool to `TestServerAddonContract.CALLS` so the server's
-   parameter names are checked against the add-on's validator.
+1. Add a handler function to the appropriate feature module in `addon/`, such as
+   `camera.py`, `animation.py`, or `objects.py`.
+2. Add its parameter validator in `addon/models.py`, then register one `Command`
+   in `addon/commands.py`. This record owns the handler, validator, undo flag, and
+   worker-thread eligibility. Only job queries/cancellation may run off the main thread.
+3. Add the MCP function with `@mcp.tool(...)` to the corresponding module in
+   `src/blender_mcp_server/tools/`, then export it from `server.py`.
+4. Add tests under `tests/addon/` and `tests/server/`. Extend
+   `TestServerAddonContract.CALLS` in `tests/addon/test_contract.py` so the tool's
+   parameters are checked against the add-on validator.
 5. Document the tool in `README.md` under the appropriate namespace.
+
+Keep runtime state in `BridgeRuntime` and its settings, executor, and job manager.
+Feature handlers should not import the entrypoint, transport, or UI. Tests load a
+fresh add-on package with mocked Blender modules for each case; avoid sharing
+mutable mocks or settings between tests.
 
 ## Reporting Issues
 

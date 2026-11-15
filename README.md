@@ -2,7 +2,7 @@
 
 Control Blender from any AI assistant using the [Model Context Protocol (MCP)](https://modelcontextprotocol.io).
 
-27 tools across 8 namespaces — create objects, assign materials, render images, export scenes, execute Python scripts, manage async jobs, and more.
+44 tools across 13 namespaces — create objects, cameras and lights, animate, organize scenes, render images, export, execute Python scripts, and manage async jobs.
 
 ![Demo render — scene built entirely through MCP tools](docs/images/demo_render.png)
 

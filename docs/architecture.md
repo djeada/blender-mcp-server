@@ -22,9 +22,12 @@ The Blender MCP Server enables AI assistants (Claude Desktop, etc.) to control B
 - Drops the connection after a timeout, cancellation, or malformed response so a late reply can never be read by the next request
 - Includes structured logging
 
-`server.py` owns tool schemas and dispatch. `connection.py` handles authenticated
-TCP requests and response framing. `headless.py` manages background Blender
-processes and jobs; `headless_scripts.py` contains the built-in render/export scripts.
+`server.py` assembles and re-exports the tools defined in `tools/` by feature.
+`app.py` owns the MCP instance, connection lifespan, and transport helpers.
+`connection.py` handles authenticated TCP requests and response framing.
+`headless.py` manages background Blender processes and jobs; `headless_scripts.py`
+contains the built-in render/export scripts. Importing the package alone does not
+register tools or start the server.
 
 ### 2. Blender Add-on (`addon/__init__.py`)
 
@@ -35,9 +38,24 @@ processes and jobs; `headless_scripts.py` contains the built-in render/export sc
 - Returns structured JSON results
 - On disable / Blender exit: gracefully shuts down the socket server
 
-`models.py` validates bridge parameters without third-party dependencies.
-`geometry.py` builds primitive vertex/face data without importing `bpy`; the
-add-on links those meshes into the scene using Blender's data API.
+The add-on entrypoint contains metadata and exports `register`/`unregister`.
+The implementation is split by responsibility:
+
+| Module | Responsibility |
+|---|---|
+| `runtime.py` | Compose settings, dispatch, script execution, jobs, and server lifecycle |
+| `settings.py`, `paths.py`, `auth.py` | Preferences, file-access policy, and token authentication |
+| `commands.py` | One command registry defining handlers, validators, undo behavior, and worker-thread eligibility |
+| `scene.py`, `objects.py`, `materials.py`, `camera.py`, `lighting.py`, `animation.py`, `collections.py`, `rendering.py` | Blender operations grouped by feature |
+| `execution.py`, `jobs.py` | Shared script-source checks, execution, output capture, cancellation, and job status |
+| `transport.py` | TCP framing and the main-thread request queue |
+| `ui.py` | Blender preferences, panel, operators, and registration |
+| `models.py`, `geometry.py` | Dependency-free parameter validation and primitive vertex/face data |
+
+Each runtime owns its mutable settings, job table, and last-execution status.
+Feature handlers do not import the UI, transport, or add-on entrypoint. The
+transport authorizes and validates a request before pushing an undo entry, and
+enforces its size limit on each newline-delimited request.
 
 ### 3. Optional Examples (`examples/`)
 
@@ -89,6 +107,11 @@ thread through a `bpy.app.timers` queue.
 | `blender.scene.*` | Scene info, object listing |
 | `blender.object.*` | Create, transform, delete objects |
 | `blender.material.*` | Create, assign, modify materials |
+| `blender.camera.*` | Create and configure cameras |
+| `blender.light.*` | Create and configure lights |
+| `blender.timeline.*` | Query and change the timeline |
+| `blender.keyframe.*` | Insert, inspect, and remove transform keyframes |
+| `blender.collection.*` | Create, rename, and organize collections |
 | `blender.render.*` | Render stills and animations |
 | `blender.export.*` | Export to glTF, OBJ, FBX |
 | `blender.history.*` | Undo/redo operations |

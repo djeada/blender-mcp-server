@@ -102,7 +102,8 @@ ignore = [
 ]
 
 [tool.ruff.lint.per-file-ignores]
-"addon/__init__.py" = ["E402", "N801", "N818"]
+"addon/__init__.py" = ["E402"]
+"addon/ui.py" = ["N801"]
 "scripts/*.py" = ["E402"]
 "examples/library/*.py" = ["F821"]
 "examples/demos/*.py" = ["E402", "F821"]
