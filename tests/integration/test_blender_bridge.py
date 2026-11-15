@@ -51,7 +51,8 @@ def bridge(tmp_path_factory):
     port = _free_port()
     env = dict(os.environ)
     env.pop("BLENDER_MCP_TOKEN", None)
-    env.update({"BLENDER_MCP_PORT": str(port), "BLENDER_MCP_TOKEN_FILE": str(tmp / "token")})
+    # TMPDIR keeps the add-on's fallback output folder for unsaved files inside the test directory.
+    env.update({"BLENDER_MCP_PORT": str(port), "BLENDER_MCP_TOKEN_FILE": str(tmp / "token"), "TMPDIR": str(tmp)})
     harness = Path(__file__).with_name("blender_bridge_harness.py")
     proc = subprocess.Popen(
         [BLENDER, "-b", "--factory-startup", "--python", str(harness)],
@@ -121,6 +122,59 @@ def test_material_tools(call, bridge):
     texture = bridge["tmp"] / "tex.png"
     _tiny_png(texture)
     assert call("material_set_texture", name="ITMat", filepath=str(texture))["texture"] == str(texture)
+
+
+def test_failed_texture_load_leaves_material_untouched(call):
+    call("material_create", name="ITTexMat")
+    with pytest.raises(RuntimeError, match="Cannot read"):
+        call("material_set_texture", name="ITTexMat", filepath="/nonexistent/texture.png")
+    nodes = call(
+        "python_exec", code="__result__ = [n.bl_idname for n in bpy.data.materials['ITTexMat'].node_tree.nodes]"
+    )
+    assert "ShaderNodeTexImage" not in nodes["result"]
+
+
+def test_objects_without_mesh_data(call):
+    call("python_exec", code="bpy.context.scene.collection.objects.link(bpy.data.objects.new('ITEmpty', None))")
+    assert call("object_duplicate", name="ITEmpty", new_name="ITEmpty2")["name"] == "ITEmpty2"
+    call("material_create", name="ITEmptyMat")
+    with pytest.raises(RuntimeError, match="type EMPTY, which cannot have materials"):
+        call("material_assign", object="ITEmpty", material="ITEmptyMat")
+
+
+def test_export_creates_folders_and_reports_absolute_path(call, bridge):
+    target = bridge["tmp"] / "exports" / "nested" / "scene"
+    result = call("export_obj", filepath=str(target))
+    assert result["filepath"] == f"{target}.obj"
+    assert Path(result["filepath"]).is_file()
+
+
+def test_blend_relative_export_from_unsaved_file(call, bridge):
+    result = call("export_obj", filepath="//it_unsaved.obj")
+    assert result["filepath"] == str(bridge["tmp"] / "blender-mcp" / "it_unsaved.obj")
+    assert Path(result["filepath"]).is_file()
+
+
+_USE_FAST_CYCLES = """
+scene = bpy.context.scene
+try:
+    scene.render.engine = "CYCLES"
+    scene.cycles.samples = 1
+    scene.cycles.use_denoising = False
+    __result__ = True
+except (TypeError, AttributeError):
+    __result__ = False
+"""
+
+
+def test_render_with_default_path_from_unsaved_file(call, bridge):
+    """Cycles renders on the CPU, so this also runs where background Blender has no GPU or display."""
+    if not call("python_exec", code=_USE_FAST_CYCLES)["result"]:
+        pytest.skip("Cycles is not available in this Blender build")
+    result = call("render_still", resolution_x=16, resolution_y=16, engine="cycles")
+    assert result["engine"] == "CYCLES"
+    assert result["output_path"] == str(bridge["tmp"] / "blender-mcp" / "render.png")
+    assert Path(result["output_path"]).is_file()
 
 
 def test_large_response(call):

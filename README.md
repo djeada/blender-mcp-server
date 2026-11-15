@@ -274,11 +274,15 @@ The AI calls MCP tools like `blender_scene_list_objects` and `blender_object_cre
 
 | Tool | Description |
 |---|---|
-| `blender_render_still` | Render still image — output path, resolution, engine |
+| `blender_render_still` | Render still image — output path, resolution, engine (`EEVEE`, `CYCLES`, `WORKBENCH`) |
 | `blender_render_animation` | Render animation — frame range, output path, engine |
 | `blender_export_gltf` | Export as glTF/GLB |
 | `blender_export_obj` | Export as OBJ |
 | `blender_export_fbx` | Export as FBX |
+
+Render and export tools return the absolute path they wrote. A path starting with `//` is relative to the
+`.blend` file; while the file is unsaved it goes to `blender-mcp/` in the system temp directory. Missing
+folders are created.
 
 ### History
 

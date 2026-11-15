@@ -159,11 +159,17 @@ class HeadlessBlenderExecutor:
                 cmd.append(blend_file)
             cmd.extend(["--python", str(wrapper_path)])
 
-            proc = await asyncio.create_subprocess_exec(
-                *cmd,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
-            )
+            try:
+                proc = await asyncio.create_subprocess_exec(
+                    *cmd,
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.PIPE,
+                )
+            except FileNotFoundError as exc:
+                raise FileNotFoundError(
+                    f"Blender executable '{self.blender_binary}' not found. "
+                    "Install Blender or set BLENDER_BIN to its full path."
+                ) from exc
             if process_holder is not None:
                 process_holder["process"] = proc
 

@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed
+- `blender_render_still` / `blender_render_animation` failed with their default output path in an unsaved
+  Blender file (`cannot save: 'render.png'`). `//` paths now resolve next to the `.blend` file, or to
+  `<temp dir>/blender-mcp/` while the file is unsaved, on both transports.
+- Render engine names work across Blender versions: `EEVEE`, `BLENDER_EEVEE` and `BLENDER_EEVEE_NEXT` all
+  select EEVEE (its identifier differs between Blender 4.2–4.5 and other releases), `WORKBENCH` is accepted,
+  and an unknown engine is reported with the available ones before anything renders.
+- Exports accept `//` paths, create missing folders, and no longer turn `model.OBJ` into `model.OBJ.obj`.
+- `blender_object_duplicate` failed on Empties (`'NoneType' object has no attribute 'copy'`).
+- `blender_material_assign` on a camera, light or Empty now explains that the object cannot have materials.
+- A failed `blender_material_set_texture` no longer leaves a stray Image Texture node in the material, and
+  setting a texture again reuses the linked node instead of stacking a new one each time.
+- Script files are read as UTF-8 by the add-on regardless of the platform's default encoding.
+
+### Changed
+- Render and export tools return the absolute path that was written.
+- Clearer errors when Blender is not running (`Cannot reach Blender at host:port …`) and when the headless
+  transport cannot find the Blender executable (points at `BLENDER_BIN`).
+
 ## [0.2.0] — 2026-09-23
 
 ### Added

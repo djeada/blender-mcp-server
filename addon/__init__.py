@@ -21,6 +21,7 @@ import queue
 import secrets
 import socket
 import sys
+import tempfile
 import threading
 import time
 import traceback
@@ -91,6 +92,16 @@ MAX_OUTPUT_SIZE = 50000  # Cap stdout/stderr returned to client
 LOG_CODE_PREVIEW_LEN = 120  # Max chars of code shown in log messages
 MAX_FINISHED_JOBS = 100  # Finished async jobs kept for status queries
 
+# EEVEE's identifier is BLENDER_EEVEE_NEXT in Blender 4.2-4.5 and BLENDER_EEVEE everywhere else,
+# so each spelling falls back to the one the running Blender knows.
+RENDER_ENGINE_ALIASES: dict[str, tuple[str, ...]] = {
+    "EEVEE": ("BLENDER_EEVEE", "BLENDER_EEVEE_NEXT"),
+    "EEVEE_NEXT": ("BLENDER_EEVEE_NEXT", "BLENDER_EEVEE"),
+    "BLENDER_EEVEE": ("BLENDER_EEVEE_NEXT",),
+    "BLENDER_EEVEE_NEXT": ("BLENDER_EEVEE",),
+    "WORKBENCH": ("BLENDER_WORKBENCH",),
+}
+
 
 def _token_file_path() -> str:
     """Location of the shared auth token, overridable via BLENDER_MCP_TOKEN_FILE."""
@@ -143,6 +154,36 @@ def _default_root() -> str:
             "Save the file or set 'Approved Script Roots' in the add-on preferences."
         )
     return os.path.dirname(os.path.realpath(str(bpy.data.filepath)))
+
+
+def _resolve_output_path(filepath: str) -> str:
+    """Absolute location for a render/export target.
+
+    ``//`` means "next to the .blend file". An unsaved file has no such folder and Blender then
+    fails to write at all, so those paths go to a ``blender-mcp`` folder in the temp directory.
+    """
+    if filepath.startswith("//") and not bpy.data.filepath:
+        resolved = os.path.join(tempfile.gettempdir(), "blender-mcp", filepath[2:].lstrip("/\\"))
+    else:
+        resolved = bpy.path.abspath(filepath)
+    absolute = os.path.abspath(resolved)
+    # A trailing separator means "write into this folder" for renders; abspath() would drop it.
+    if filepath.endswith(("/", os.sep)) and not absolute.endswith(os.sep):
+        absolute += os.sep
+    return absolute
+
+
+def _set_render_engine(scene, engine: str) -> None:
+    """Select a render engine by name, accepting any EEVEE/Workbench spelling for this Blender version."""
+    requested = engine.strip().upper().replace(" ", "_")
+    first_error: TypeError | None = None
+    for candidate in (requested, *RENDER_ENGINE_ALIASES.get(requested, ())):
+        try:
+            scene.render.engine = candidate
+            return
+        except TypeError as exc:  # bpy rejects unknown enum values with TypeError
+            first_error = first_error or exc
+    raise ValueError(f"Unknown render engine '{engine}': {first_error}")
 
 
 def _truncate(text: str, limit: int) -> str:
@@ -536,6 +577,18 @@ class CommandHandler:
             f"File access denied: '{filepath}' is outside allowed directories. Allowed: {allowed_paths}"
         )
 
+    def _prepare_output_path(self, filepath: str, extensions: tuple[str, ...] = ()) -> str:
+        """Resolve a render/export target, enforce Safe Mode on it, and make sure its folder exists.
+
+        ``extensions`` lists the suffixes the exporter accepts; the first is appended when none is present.
+        """
+        abs_path = _resolve_output_path(filepath)
+        if extensions and not abs_path.lower().endswith(extensions):
+            abs_path += extensions[0]
+        self._validate_filepath(abs_path)
+        os.makedirs(os.path.dirname(abs_path), exist_ok=True)
+        return abs_path
+
     def _scene_get_info(self, params: dict) -> dict:
         scene = bpy.context.scene
         return {
@@ -677,7 +730,8 @@ class CommandHandler:
         if not obj:
             raise ValueError(f"Object '{name}' not found")
         new_obj = obj.copy()
-        new_obj.data = obj.data.copy()
+        if obj.data is not None:  # Empties carry no data block
+            new_obj.data = obj.data.copy()
         new_name = params.get("new_name")
         if new_name:
             new_obj.name = new_name
@@ -712,10 +766,13 @@ class CommandHandler:
         mat = bpy.data.materials.get(mat_name)
         if not mat:
             raise ValueError(f"Material '{mat_name}' not found")
-        if obj.data.materials:
-            obj.data.materials[0] = mat
+        materials = getattr(obj.data, "materials", None)
+        if materials is None:
+            raise ValueError(f"Object '{obj_name}' is of type {obj.type}, which cannot have materials")
+        if materials:
+            materials[0] = mat
         else:
-            obj.data.materials.append(mat)
+            materials.append(mat)
         return {"object": obj.name, "material": mat.name}
 
     def _material_set_color(self, params: dict) -> dict:
@@ -746,31 +803,37 @@ class CommandHandler:
         bsdf = tree.nodes.get("Principled BSDF")
         if not bsdf:
             raise ValueError(f"Material '{mat_name}' has no Principled BSDF node")
-        tex_node = tree.nodes.new("ShaderNodeTexImage")
-        tex_node.image = bpy.data.images.load(filepath)
-        tree.links.new(tex_node.outputs["Color"], bsdf.inputs["Base Color"])
+        # Load first: a missing or unreadable file must not leave a dangling node behind.
+        image = bpy.data.images.load(filepath, check_existing=True)
+        base_color = bsdf.inputs["Base Color"]
+        tex_node = next(
+            (link.from_node for link in base_color.links if link.from_node.bl_idname == "ShaderNodeTexImage"),
+            None,
+        )
+        if tex_node is None:
+            tex_node = tree.nodes.new("ShaderNodeTexImage")
+            tree.links.new(tex_node.outputs["Color"], base_color)
+        tex_node.image = image
         return {"name": mat.name, "texture": filepath}
 
     # -- Render tools --
 
     def _render_still(self, params: dict) -> dict:
         scene = bpy.context.scene
-        output_path = params.get("output_path", "//render.png")
-        self._validate_filepath(output_path)
+        abs_path = self._prepare_output_path(params.get("output_path", "//render.png"))
         resolution_x = params.get("resolution_x")
         resolution_y = params.get("resolution_y")
         engine = params.get("engine")
 
         if engine:
-            scene.render.engine = engine.upper()
+            _set_render_engine(scene, engine)
         if resolution_x:
             scene.render.resolution_x = resolution_x
         if resolution_y:
             scene.render.resolution_y = resolution_y
 
-        scene.render.filepath = output_path
+        scene.render.filepath = abs_path
         bpy.ops.render.render(write_still=True)
-        abs_path = bpy.path.abspath(output_path)
         return {
             "output_path": abs_path,
             "engine": scene.render.engine,
@@ -779,22 +842,20 @@ class CommandHandler:
 
     def _render_animation(self, params: dict) -> dict:
         scene = bpy.context.scene
-        output_path = params.get("output_path", "//render_")
-        self._validate_filepath(output_path)
+        abs_path = self._prepare_output_path(params.get("output_path", "//render_"))
         frame_start = params.get("frame_start")
         frame_end = params.get("frame_end")
         engine = params.get("engine")
 
         if engine:
-            scene.render.engine = engine.upper()
+            _set_render_engine(scene, engine)
         if frame_start is not None:
             scene.frame_start = frame_start
         if frame_end is not None:
             scene.frame_end = frame_end
 
-        scene.render.filepath = output_path
+        scene.render.filepath = abs_path
         bpy.ops.render.render(animation=True)
-        abs_path = bpy.path.abspath(output_path)
         return {
             "output_path": abs_path,
             "frame_range": [scene.frame_start, scene.frame_end],
@@ -804,26 +865,17 @@ class CommandHandler:
     # -- Export tools --
 
     def _export_gltf(self, params: dict) -> dict:
-        filepath = params["filepath"]
-        self._validate_filepath(filepath)
-        if not filepath.endswith((".glb", ".gltf")):
-            filepath += ".glb"
+        filepath = self._prepare_output_path(params["filepath"], extensions=(".glb", ".gltf"))
         bpy.ops.export_scene.gltf(filepath=filepath)
         return {"filepath": filepath, "format": "glTF"}
 
     def _export_obj(self, params: dict) -> dict:
-        filepath = params["filepath"]
-        self._validate_filepath(filepath)
-        if not filepath.endswith(".obj"):
-            filepath += ".obj"
+        filepath = self._prepare_output_path(params["filepath"], extensions=(".obj",))
         bpy.ops.wm.obj_export(filepath=filepath)
         return {"filepath": filepath, "format": "OBJ"}
 
     def _export_fbx(self, params: dict) -> dict:
-        filepath = params["filepath"]
-        self._validate_filepath(filepath)
-        if not filepath.endswith(".fbx"):
-            filepath += ".fbx"
+        filepath = self._prepare_output_path(params["filepath"], extensions=(".fbx",))
         bpy.ops.export_scene.fbx(filepath=filepath)
         return {"filepath": filepath, "format": "FBX"}
 
@@ -973,7 +1025,7 @@ class CommandHandler:
             source_label = f"inline ({_truncate(code, LOG_CODE_PREVIEW_LEN)})"
         else:
             validated = self._validate_script_path(str(script_path))
-            with open(validated) as f:
+            with open(validated, encoding="utf-8") as f:
                 code = f.read()
             source_label = f"file ({script_path})"
 
@@ -1011,7 +1063,7 @@ class CommandHandler:
             source_label = f"inline ({_truncate(code, LOG_CODE_PREVIEW_LEN)})"
         else:
             validated = self._validate_script_path(str(script_path))
-            with open(validated) as f:
+            with open(validated, encoding="utf-8") as f:
                 code = f.read()
             source_label = f"file ({script_path})"
 

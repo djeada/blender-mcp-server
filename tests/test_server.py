@@ -2,12 +2,16 @@
 
 import asyncio
 import json
+import sys
+import tempfile
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
 from blender_mcp_server.headless import HeadlessBlenderExecutor, HeadlessJobManager
 from blender_mcp_server.server import (
+    _HEADLESS_RENDER_ANIMATION,
+    _HEADLESS_RENDER_STILL,
     HEADLESS_JOB_MANAGER,
     STREAM_LIMIT,
     BlenderConnection,
@@ -175,6 +179,16 @@ class TestBlenderConnection:
         conn = BlenderConnection(host="127.0.0.1", port=19999)
         with pytest.raises(OSError):
             await conn.connect()
+
+    @pytest.mark.asyncio
+    async def test_unreachable_blender_gives_actionable_error(self, monkeypatch):
+        monkeypatch.delenv("BLENDER_MCP_PORT", raising=False)
+        conn = BlenderConnection(host="127.0.0.1", port=19999)
+        with (
+            patch("asyncio.open_connection", new=AsyncMock(side_effect=ConnectionRefusedError("refused"))),
+            pytest.raises(ConnectionError, match=r"Cannot reach Blender at 127\.0\.0\.1:19999 \(refused\).*add-on"),
+        ):
+            await conn.send_command("scene.get_info")
 
     @pytest.mark.asyncio
     async def test_auto_reconnect_on_first_call(self):
@@ -497,7 +511,71 @@ class TestToolParameters:
         assert HEADLESS_JOB_MANAGER._jobs == {}
 
 
+class _FakeRender:
+    resolution_x = 1920
+    resolution_y = 1080
+    filepath = ""
+
+    def __init__(self, engines):
+        self._engines = engines
+        self._engine = engines[0]
+
+    @property
+    def engine(self):
+        return self._engine
+
+    @engine.setter
+    def engine(self, value):
+        if value not in self._engines:
+            raise TypeError(f'enum "{value}" not found in {self._engines}')
+        self._engine = value
+
+
+class TestHeadlessRenderScripts:
+    """Run the scripts sent to ``blender -b`` against a stand-in bpy module."""
+
+    def _run(self, monkeypatch, tmp_path, script, args, *, blend_file="", engines=("BLENDER_EEVEE_NEXT", "CYCLES")):
+        bpy = MagicMock()
+        bpy.data.filepath = blend_file
+        bpy.path.abspath = lambda path: path
+        bpy.context.scene.render = _FakeRender(engines)
+        monkeypatch.setitem(sys.modules, "bpy", bpy)
+        monkeypatch.setattr(tempfile, "gettempdir", lambda: str(tmp_path))
+        namespace = {"args": args, "__result__": None}
+        exec(compile(script, "<headless-render>", "exec"), namespace)
+        return bpy, namespace["__result__"]
+
+    def test_still_resolves_default_path_and_engine_alias(self, monkeypatch, tmp_path):
+        args = {"output_path": "//render.png", "resolution_x": 64, "resolution_y": None, "engine": "eevee"}
+        bpy, result = self._run(monkeypatch, tmp_path, _HEADLESS_RENDER_STILL, args)
+        assert result == {
+            "output_path": str(tmp_path / "blender-mcp" / "render.png"),
+            "engine": "BLENDER_EEVEE_NEXT",
+            "resolution": [64, 1080],
+        }
+        assert (tmp_path / "blender-mcp").is_dir()
+        bpy.ops.render.render.assert_called_once_with(write_still=True)
+
+    def test_animation_creates_output_folder(self, monkeypatch, tmp_path):
+        args = {"output_path": str(tmp_path / "frames" / "f_"), "frame_start": 1, "frame_end": 3, "engine": None}
+        bpy, result = self._run(monkeypatch, tmp_path, _HEADLESS_RENDER_ANIMATION, args)
+        assert result["output_path"] == str(tmp_path / "frames" / "f_")
+        assert result["frame_range"] == [1, 3]
+        assert (tmp_path / "frames").is_dir()
+        bpy.ops.render.render.assert_called_once_with(animation=True)
+
+    def test_unknown_engine_is_reported_before_rendering(self, monkeypatch, tmp_path):
+        args = {"output_path": str(tmp_path / "r.png"), "engine": "luxrender"}
+        with pytest.raises(ValueError, match="Unknown render engine 'luxrender'.*CYCLES"):
+            self._run(monkeypatch, tmp_path, _HEADLESS_RENDER_STILL, args)
+
+
 class TestHeadlessJobFailures:
+    @pytest.mark.asyncio
+    async def test_missing_blender_binary_names_the_fix(self):
+        with pytest.raises(FileNotFoundError, match="'/nonexistent/blender' not found.*BLENDER_BIN"):
+            await HeadlessBlenderExecutor("/nonexistent/blender").execute(code="pass")
+
     @pytest.mark.asyncio
     async def test_executor_exception_marks_job_failed(self):
         manager = HeadlessJobManager()
