@@ -1,8 +1,8 @@
 """Demo 1 without an AI: a small still life, rendered with Cycles.
 
 Run it any of these ways (see scripts/run_demo.sh):
-  blender --python docs/demos/scripts/01_still_life.py                  # watch it in the GUI
-  blender -b --factory-startup --python docs/demos/scripts/01_still_life.py -- --output out.png
+  blender --python examples/demos/01_still_life.py                  # watch it in the GUI
+  blender -b --factory-startup --python examples/demos/01_still_life.py -- --output out.png
   paste into Blender's Scripting tab and press Run
   send it to a running Blender through the MCP bridge (run_demo.sh --bridge)
 """

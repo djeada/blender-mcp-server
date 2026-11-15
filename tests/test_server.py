@@ -8,20 +8,14 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from blender_mcp_server.connection import STREAM_LIMIT, BlenderConnection, load_auth_token
 from blender_mcp_server.headless import HeadlessBlenderExecutor, HeadlessJobManager
+from blender_mcp_server.headless_scripts import EXPORT_FBX, EXPORT_GLTF, EXPORT_OBJ, RENDER_ANIMATION, RENDER_STILL
 from blender_mcp_server.server import (
-    _HEADLESS_EXPORT_FBX,
-    _HEADLESS_EXPORT_GLTF,
-    _HEADLESS_EXPORT_OBJ,
-    _HEADLESS_RENDER_ANIMATION,
-    _HEADLESS_RENDER_STILL,
     HEADLESS_JOB_MANAGER,
-    STREAM_LIMIT,
-    BlenderConnection,
     job_cancel,
     job_list,
     job_status,
-    load_auth_token,
     main,
     mcp,
     python_exec,
@@ -129,6 +123,12 @@ class TestToolRegistration:
 
     def test_total_tool_count(self):
         assert len(self._get_tool_names()) == 27
+
+    @pytest.mark.parametrize(
+        "name", ["blender_object_create_tree", "blender_object_scatter", "blender_material_create_emissive"]
+    )
+    def test_example_recipes_are_not_core_tools(self, name):
+        assert name not in self._get_tool_names()
 
     def test_all_tools_have_descriptions(self):
         for tool in mcp._tool_manager._tools.values():
@@ -550,7 +550,7 @@ class TestHeadlessRenderScripts:
 
     def test_still_resolves_default_path_and_engine_alias(self, monkeypatch, tmp_path):
         args = {"output_path": "//render.png", "resolution_x": 64, "resolution_y": None, "engine": "eevee"}
-        bpy, result = self._run(monkeypatch, tmp_path, _HEADLESS_RENDER_STILL, args)
+        bpy, result = self._run(monkeypatch, tmp_path, RENDER_STILL, args)
         assert result == {
             "output_path": str(tmp_path / "blender-mcp" / "render.png"),
             "engine": "BLENDER_EEVEE_NEXT",
@@ -561,7 +561,7 @@ class TestHeadlessRenderScripts:
 
     def test_animation_creates_output_folder(self, monkeypatch, tmp_path):
         args = {"output_path": str(tmp_path / "frames" / "f_"), "frame_start": 1, "frame_end": 3, "engine": None}
-        bpy, result = self._run(monkeypatch, tmp_path, _HEADLESS_RENDER_ANIMATION, args)
+        bpy, result = self._run(monkeypatch, tmp_path, RENDER_ANIMATION, args)
         assert result["output_path"] == str(tmp_path / "frames" / "f_")
         assert result["frame_range"] == [1, 3]
         assert (tmp_path / "frames").is_dir()
@@ -570,7 +570,7 @@ class TestHeadlessRenderScripts:
     def test_unknown_engine_is_reported_before_rendering(self, monkeypatch, tmp_path):
         args = {"output_path": str(tmp_path / "r.png"), "engine": "luxrender"}
         with pytest.raises(ValueError, match="Unknown render engine 'luxrender'.*CYCLES"):
-            self._run(monkeypatch, tmp_path, _HEADLESS_RENDER_STILL, args)
+            self._run(monkeypatch, tmp_path, RENDER_STILL, args)
 
 
 class TestHeadlessExportScripts:
@@ -588,28 +588,26 @@ class TestHeadlessExportScripts:
 
     def test_gltf_appends_extension_and_creates_folder(self, monkeypatch, tmp_path):
         args = {"filepath": str(tmp_path / "new" / "dir" / "model")}
-        bpy, result = self._run(monkeypatch, tmp_path, _HEADLESS_EXPORT_GLTF, args)
+        bpy, result = self._run(monkeypatch, tmp_path, EXPORT_GLTF, args)
         assert result["filepath"] == f"{tmp_path}/new/dir/model.glb"
         assert (tmp_path / "new" / "dir").is_dir()
         bpy.ops.export_scene.gltf.assert_called_once_with(filepath=result["filepath"])
 
     def test_obj_extension_check_ignores_case(self, monkeypatch, tmp_path):
         args = {"filepath": str(tmp_path / "a.OBJ")}
-        bpy, result = self._run(monkeypatch, tmp_path, _HEADLESS_EXPORT_OBJ, args)
+        bpy, result = self._run(monkeypatch, tmp_path, EXPORT_OBJ, args)
         assert result["filepath"] == str(tmp_path / "a.OBJ")
         bpy.ops.wm.obj_export.assert_called_once_with(filepath=result["filepath"])
 
     def test_fbx_blend_relative_path_from_unsaved_file(self, monkeypatch, tmp_path):
         args = {"filepath": "//scene.fbx"}
-        bpy, result = self._run(monkeypatch, tmp_path, _HEADLESS_EXPORT_FBX, args)
+        bpy, result = self._run(monkeypatch, tmp_path, EXPORT_FBX, args)
         assert result["filepath"] == str(tmp_path / "blender-mcp" / "scene.fbx")
         bpy.ops.export_scene.fbx.assert_called_once_with(filepath=result["filepath"])
 
     def test_fbx_blend_relative_path_from_saved_file(self, monkeypatch, tmp_path):
         args = {"filepath": "//out/model"}
-        bpy, result = self._run(
-            monkeypatch, tmp_path, _HEADLESS_EXPORT_FBX, args, blend_file=str(tmp_path / "scene.blend")
-        )
+        bpy, result = self._run(monkeypatch, tmp_path, EXPORT_FBX, args, blend_file=str(tmp_path / "scene.blend"))
         assert result["filepath"] == str(tmp_path / "out" / "model.fbx")
 
 

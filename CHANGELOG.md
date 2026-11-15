@@ -27,6 +27,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - Script files are read as UTF-8 by the add-on regardless of the platform's default encoding.
 
 ### Changed
+- Moved runnable scenes and workflow recipes into `examples/demos/` and `examples/library/`.
+  Saved script paths and approved roots must use the new locations.
+- Tree generation, object scattering, and emissive material creation are example scripts executed
+  through `blender_python_exec`; their dedicated MCP tools and bridge commands were removed.
+- Split TCP transport, headless script templates, and primitive geometry into focused core modules.
 - Render and export tools return the absolute path that was written.
 - Clearer errors when Blender is not running (`Cannot reach Blender at host:port …`) and when the headless
   transport cannot find the Blender executable (points at `BLENDER_BIN`).

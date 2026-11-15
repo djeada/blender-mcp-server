@@ -1,7 +1,7 @@
 """Open Blender GUI with the stable procedural dam-break scene built.
 
 Run:
-    blender --factory-startup --python scripts/demos/open_dam_break_gui.py
+    blender --factory-startup --python examples/demos/open_dam_break_gui.py
 """
 
 from __future__ import annotations

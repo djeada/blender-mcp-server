@@ -1,8 +1,8 @@
 """Demo 2 without an AI: a seeded 9x9 city block with streets, rendered with EEVEE.
 
 Run it any of these ways (see scripts/run_demo.sh):
-  blender --python docs/demos/scripts/02_procedural_city.py
-  blender -b --factory-startup --python docs/demos/scripts/02_procedural_city.py -- --output out.png
+  blender --python examples/demos/02_procedural_city.py
+  blender -b --factory-startup --python examples/demos/02_procedural_city.py -- --output out.png
   paste into Blender's Scripting tab and press Run
   send it to a running Blender through the MCP bridge (run_demo.sh --bridge)
 """

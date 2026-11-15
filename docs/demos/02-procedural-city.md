@@ -23,7 +23,7 @@ across the block from a corner at a slightly elevated angle. Render with EEVEE a
 
 ## Run it yourself, no AI
 
-[`scripts/02_procedural_city.py`](scripts/02_procedural_city.py) builds the same kind of scene deterministically. It is plain
+[`examples/demos/02_procedural_city.py`](../../examples/demos/02_procedural_city.py) builds the same kind of scene deterministically. It is plain
 Blender Python, so you can also paste it into Blender's **Scripting** tab and press **Run**.
 
 ```bash

@@ -9,6 +9,9 @@ structured `args`.
 | Script | Description |
 |---|---|
 | `create_mesh.py` | Create a primitive mesh object through the data API without `bpy.ops` |
+| `create_tree.py` | Create a seeded low-poly tree with bark and leaf material slots |
+| `scatter_objects.py` | Scatter linked copies across a disk with seeded position, rotation, and scale |
+| `create_emissive_material.py` | Create a Principled material with emission color and strength |
 | `fluid_domain.py` | Create a Mantaflow fluid domain with configurable resolution and cache |
 | `fluid_inflow.py` | Create or configure an inflow/flow source for fluid simulation |
 | `effector.py` | Set up collision/effector objects for fluid or rigid body sims |
@@ -26,7 +29,7 @@ structured `args`.
 {
   "command": "python.execute",
   "params": {
-    "script_path": "/path/to/scripts/library/rigid_body.py",
+    "script_path": "/path/to/examples/library/rigid_body.py",
     "args": {
       "objects": ["Building_01", "Debris_01"],
       "rb_type": "ACTIVE",

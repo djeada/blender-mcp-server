@@ -22,7 +22,7 @@ Keep the scene open in Blender and briefly tell me what you built.
 
 ## Run it yourself, no AI
 
-[`scripts/01_still_life.py`](scripts/01_still_life.py) builds the same kind of scene deterministically. It is plain
+[`examples/demos/01_still_life.py`](../../examples/demos/01_still_life.py) builds the same kind of scene deterministically. It is plain
 Blender Python, so you can also paste it into Blender's **Scripting** tab and press **Run**.
 
 ```bash

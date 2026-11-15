@@ -22,6 +22,10 @@ The Blender MCP Server enables AI assistants (Claude Desktop, etc.) to control B
 - Drops the connection after a timeout, cancellation, or malformed response so a late reply can never be read by the next request
 - Includes structured logging
 
+`server.py` owns tool schemas and dispatch. `connection.py` handles authenticated
+TCP requests and response framing. `headless.py` manages background Blender
+processes and jobs; `headless_scripts.py` contains the built-in render/export scripts.
+
 ### 2. Blender Add-on (`addon/__init__.py`)
 
 - Standard Blender add-on (register/unregister lifecycle)
@@ -30,6 +34,17 @@ The Blender MCP Server enables AI assistants (Claude Desktop, etc.) to control B
 - Executes commands in Blender's Python context (`bpy`)
 - Returns structured JSON results
 - On disable / Blender exit: gracefully shuts down the socket server
+
+`models.py` validates bridge parameters without third-party dependencies.
+`geometry.py` builds primitive vertex/face data without importing `bpy`; the
+add-on links those meshes into the scene using Blender's data API.
+
+### 3. Optional Examples (`examples/`)
+
+Asset generation, scattering, material recipes, and complete demo scenes live
+in `examples/library/` and `examples/demos/`. They run through `python.execute`
+or directly in Blender, as documented by each script. Core packages never import
+examples. Add new scene-specific behavior here using the existing execution API.
 
 ## Communication Protocol
 

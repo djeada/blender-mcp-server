@@ -21,14 +21,14 @@ Then paste a prompt from any demo page. Renders are written to `/tmp/blender-mcp
 
 ## Without an AI
 
-Each demo has a matching Blender Python script in [`scripts/`](scripts/) that builds the same kind of
+Each demo has a matching Blender Python script in [`examples/demos/`](../../examples/demos/) that builds the same kind of
 scene deterministically:
 
 | Script | What it makes |
 |---|---|
-| [`01_still_life.py`](scripts/01_still_life.py) | Sphere, cube and torus on a ground plane, rendered with Cycles |
-| [`02_procedural_city.py`](scripts/02_procedural_city.py) | Seeded 9x9 city block with streets, rendered with EEVEE (`--seed N`) |
-| [`03_bouncing_ball.py`](scripts/03_bouncing_ball.py) | Keyframed squash-and-stretch bounce, saved to a .blend, frames rendered (`--frames ...`) |
+| [`01_still_life.py`](../../examples/demos/01_still_life.py) | Sphere, cube and torus on a ground plane, rendered with Cycles |
+| [`02_procedural_city.py`](../../examples/demos/02_procedural_city.py) | Seeded 9x9 city block with streets, rendered with EEVEE (`--seed N`) |
+| [`03_bouncing_ball.py`](../../examples/demos/03_bouncing_ball.py) | Keyframed squash-and-stretch bounce, saved to a .blend, frames rendered (`--frames ...`) |
 
 ```bash
 scripts/run_demo.sh 2                    # open Blender, build and render (Blender stays open)

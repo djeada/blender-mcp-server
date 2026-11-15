@@ -12,13 +12,13 @@ It supports two modes:
 Usage::
 
     # Start Blender with the MCP add-on enabled, then:
-    python3 scripts/demos/run_dam_break.py
+    python3 examples/demos/run_dam_break.py
 
     # With custom library path:
-    python3 scripts/demos/run_dam_break.py --library /path/to/scripts/library
+    python3 examples/demos/run_dam_break.py --library /path/to/examples/library
 
     # Dry-run — print commands without sending:
-    python3 scripts/demos/run_dam_break.py --dry-run
+    python3 examples/demos/run_dam_break.py --dry-run
 """
 
 from __future__ import annotations
@@ -30,7 +30,7 @@ import time
 from pathlib import Path
 from typing import Any
 
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "scripts"))
 
 from blender_bridge_request import send_request
 
@@ -465,7 +465,7 @@ def main() -> int:
     parser = argparse.ArgumentParser(description="Build a dam-break demo scene through the Blender MCP bridge.")
     parser.add_argument("--host", default=BRIDGE_HOST)
     parser.add_argument("--port", type=int, default=BRIDGE_PORT)
-    parser.add_argument("--library", default=default_library, help="Path to scripts/library/ directory")
+    parser.add_argument("--library", default=default_library, help="Path to examples/library/ directory")
     parser.add_argument("--dry-run", action="store_true", help="Print commands without sending")
     parser.add_argument("--bake", action="store_true", help="Trigger fluid bake after scene setup")
     parser.add_argument("--render", action="store_true", help="Render a preview still after setup")

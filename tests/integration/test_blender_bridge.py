@@ -20,9 +20,11 @@ from unittest.mock import MagicMock
 import pytest
 
 from blender_mcp_server import server
+from blender_mcp_server.connection import BlenderConnection
 from blender_mcp_server.headless import HeadlessBlenderExecutor
 
 BLENDER = os.environ.get("BLENDER_BIN", "blender")
+EXAMPLE_LIBRARY = Path(__file__).resolve().parents[2] / "examples" / "library"
 
 pytestmark = pytest.mark.skipif(
     os.environ.get("BLENDER_MCP_INTEGRATION") != "1" or shutil.which(BLENDER) is None,
@@ -78,7 +80,7 @@ def bridge(tmp_path_factory):
 def call(bridge, monkeypatch):
     monkeypatch.delenv("BLENDER_MCP_TOKEN", raising=False)
     monkeypatch.setenv("BLENDER_MCP_TOKEN_FILE", str(bridge["token_file"]))
-    conn = server.BlenderConnection(port=bridge["port"])
+    conn = BlenderConnection(port=bridge["port"])
     ctx = MagicMock()
     ctx.request_context.lifespan_context = conn
 
@@ -224,3 +226,70 @@ def test_headless_execution_and_system_exit():
     assert ok["error"] is None and ok["result"]
     exited = asyncio.run(executor.execute(code="import sys; sys.exit(0)", timeout_seconds=120))
     assert "SystemExit" in exited["error"]
+
+
+def _recipe_source(filename):
+    return (EXAMPLE_LIBRARY / filename).read_text(encoding="utf-8")
+
+
+def test_tree_scatter_and_emission_examples_via_bridge(call):
+    """Asset recipes use Python execution and need no dedicated bridge commands."""
+    tree = call("python_exec", code=_recipe_source("create_tree.py"), args={"name": "ITOak", "height": 2.5, "seed": 7})
+    assert tree["error"] is None
+    assert tree["result"]["materials"] == ["TreeBark", "TreeLeaves"]
+    assert tree["result"]["vertices"] > 100
+    copies = call(
+        "python_exec",
+        code=_recipe_source("scatter_objects.py"),
+        args={"source": "ITOak", "count": 3, "radius": 2.0, "seed": 7},
+    )
+    assert copies["error"] is None
+    assert copies["result"]["count"] == 3
+    emission = call(
+        "python_exec",
+        code=_recipe_source("create_emissive_material.py"),
+        args={"name": "ITGlow", "emission_color": [0, 1, 1], "emission_strength": 8},
+    )
+    assert emission["error"] is None
+    assert emission["result"]["emission_color"] == [0, 1, 1, 1]
+    assert call("material_assign", object="ITOak", material="ITGlow")["material"] == "ITGlow"
+    inspected = call(
+        "python_exec",
+        code="""
+source = bpy.data.objects['ITOak']
+copies = [bpy.data.objects[name] for name in args['names']]
+__result__ = {
+    'linked': all(obj.data is source.data for obj in copies),
+    'materials': sorted({face.material_index for face in source.data.polygons}),
+    'strength': bpy.data.materials['ITGlow'].node_tree.nodes['Principled BSDF'].inputs['Emission Strength'].default_value,
+}
+""",
+        args={"names": copies["result"]["names"]},
+    )
+    assert inspected["error"] is None
+    assert inspected["result"] == {"linked": True, "materials": [0, 1], "strength": 8}
+
+
+def test_tree_example_is_seeded_in_headless_transport():
+    code = "\n".join(
+        [
+            _recipe_source("create_tree.py"),
+            "first = bpy.data.objects[__result__['name']]",
+            "second = create_tree(args)",
+            "third = create_tree({**args, 'seed': args['seed'] + 1})",
+            "vertices = lambda obj: [tuple(v.co) for v in obj.data.vertices]",
+            "assert vertices(first) == vertices(bpy.data.objects[second['name']])",
+            "assert vertices(first) != vertices(bpy.data.objects[third['name']])",
+            _recipe_source("scatter_objects.py"),
+            _recipe_source("create_emissive_material.py"),
+        ]
+    )
+    result = asyncio.run(
+        HeadlessBlenderExecutor(BLENDER).execute(
+            code=code,
+            args={"name": "SeededTree", "seed": 7, "source": "SeededTree", "count": 3},
+            timeout_seconds=120,
+        )
+    )
+    assert result["error"] is None
+    assert result["result"]["emission_strength"] == 5.0

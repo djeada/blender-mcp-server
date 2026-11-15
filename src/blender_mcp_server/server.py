@@ -1,149 +1,21 @@
 """Blender MCP Server — External MCP server that bridges Claude Desktop to Blender."""
 
-import asyncio
-import contextlib
 import json
 import logging
 import os
-import uuid
 from contextlib import asynccontextmanager
-from pathlib import Path
 from typing import Any, Literal
 
 from mcp.server.fastmcp import Context, FastMCP
 
+from blender_mcp_server.connection import BlenderConnection
 from blender_mcp_server.headless import HeadlessBlenderExecutor, HeadlessJobManager, validate_source
+from blender_mcp_server.headless_scripts import EXPORT_FBX, EXPORT_GLTF, EXPORT_OBJ, RENDER_ANIMATION, RENDER_STILL
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_BLENDER_HOST = "127.0.0.1"
-DEFAULT_BLENDER_PORT = 9876
-# Bridge responses can carry large results plus up to 2 x 50 KB of captured output.
-STREAM_LIMIT = 32 * 1024 * 1024
 HEADLESS_JOB_MANAGER = HeadlessJobManager()
-
 Transport = Literal["bridge", "headless"]
-
-
-def _env_float(name: str) -> float | None:
-    raw = os.environ.get(name)
-    return float(raw) if raw else None
-
-
-def default_token_file() -> Path:
-    return Path(os.environ.get("BLENDER_MCP_TOKEN_FILE") or Path.home() / ".blender-mcp" / "token")
-
-
-def load_auth_token() -> str:
-    """Return the shared secret the Blender add-on expects on every request."""
-    token = os.environ.get("BLENDER_MCP_TOKEN")
-    if token:
-        return token
-    path = default_token_file()
-    try:
-        token = path.read_text(encoding="utf-8").strip()
-    except FileNotFoundError:
-        token = ""
-    if not token:
-        raise ConnectionError(
-            f"Blender MCP auth token not found at {path}. Enable the Blender add-on (it creates the token) "
-            "or set BLENDER_MCP_TOKEN / BLENDER_MCP_TOKEN_FILE."
-        )
-    return token
-
-
-class BlenderConnection:
-    """Async TCP client that communicates with the Blender add-on."""
-
-    def __init__(
-        self,
-        host: str | None = None,
-        port: int | None = None,
-        timeout: float | None = None,
-    ):
-        self.host = host or os.environ.get("BLENDER_MCP_HOST", DEFAULT_BLENDER_HOST)
-        self.port = port or int(os.environ.get("BLENDER_MCP_PORT", DEFAULT_BLENDER_PORT))
-        # Optional per-request timeout; renders can legitimately take hours, so none by default.
-        self.timeout = timeout if timeout is not None else _env_float("BLENDER_MCP_TIMEOUT")
-        self._reader: asyncio.StreamReader | None = None
-        self._writer: asyncio.StreamWriter | None = None
-        self._lock = asyncio.Lock()
-
-    async def connect(self):
-        self._reader, self._writer = await asyncio.open_connection(self.host, self.port, limit=STREAM_LIMIT)
-        logger.info(f"Connected to Blender at {self.host}:{self.port}")
-
-    async def disconnect(self):
-        if self._writer:
-            writer = self._writer
-            self._writer = None
-            self._reader = None
-            writer.close()
-            with contextlib.suppress(Exception):
-                await writer.wait_closed()
-
-    def _reset(self):
-        """Drop the connection so a late or partial response can never be read by the next request."""
-        if self._writer:
-            self._writer.close()
-        self._writer = None
-        self._reader = None
-
-    async def send_command(self, command: str, params: dict | None = None) -> Any:
-        """Send a command to Blender and return the result."""
-        async with self._lock:
-            if not self._writer:
-                try:
-                    await self.connect()
-                except OSError as e:
-                    raise ConnectionError(
-                        f"Cannot reach Blender at {self.host}:{self.port} ({e}). Start Blender and enable the "
-                        "Blender MCP Bridge add-on (View3D > Sidebar > MCP > Start Server)."
-                    ) from e
-            assert self._reader is not None
-            assert self._writer is not None
-
-            request_id = str(uuid.uuid4())
-            request = {
-                "id": request_id,
-                "command": command,
-                "params": params or {},
-                "token": load_auth_token(),
-            }
-            try:
-                self._writer.write(json.dumps(request).encode() + b"\n")
-                await self._writer.drain()
-                response = await asyncio.wait_for(self._read_response(request_id), timeout=self.timeout)
-            except asyncio.TimeoutError as e:
-                # Must precede OSError: on 3.11+ asyncio.TimeoutError is the builtin TimeoutError (an OSError).
-                self._reset()
-                raise TimeoutError(f"Blender did not answer '{command}' within {self.timeout}s") from e
-            except (ConnectionError, OSError, ValueError) as e:
-                # ValueError covers stream limit overruns and undecodable lines.
-                self._reset()
-                raise ConnectionError(f"Lost connection to Blender: {e}") from e
-            except BaseException:
-                # Cancelled mid-request: the response is still in flight, so the stream is unusable.
-                self._reset()
-                raise
-
-            if not response.get("success"):
-                raise RuntimeError(response.get("error", "Unknown error from Blender"))
-            return response.get("result")
-
-    async def _read_response(self, request_id: str) -> dict:
-        assert self._reader is not None
-        while True:
-            line = await self._reader.readline()
-            if not line:
-                raise ConnectionError("Blender connection closed")
-            response: dict = json.loads(line)
-            if response.get("id") == request_id:
-                return response
-            if response.get("id") is None and not response.get("success"):
-                # Connection-level rejection (bad auth, malformed request)
-                raise ConnectionError(response.get("error", "Request rejected by Blender"))
-            logger.warning("Discarding stale Blender response id=%s", response.get("id"))
 
 
 @asynccontextmanager
@@ -154,8 +26,10 @@ async def blender_lifespan(server: FastMCP):
         await conn.connect()
     except OSError:
         logger.warning("Could not connect to Blender on startup. Will retry on first tool call.")
-    yield conn
-    await conn.disconnect()
+    try:
+        yield conn
+    finally:
+        await conn.disconnect()
 
 
 mcp = FastMCP(
@@ -329,91 +203,6 @@ async def material_set_texture(ctx: Context, name: str, filepath: str) -> str:
 
 # -- Render tools --
 
-# Mirrors _resolve_output_path / _set_render_engine in the add-on, which headless Blender does not load.
-_HEADLESS_PATH_PRELUDE = """
-import os
-import tempfile
-
-import bpy
-
-
-def output_path(path, extensions=()):
-    if path.startswith("//") and not bpy.data.filepath:
-        resolved = os.path.join(tempfile.gettempdir(), "blender-mcp", path[2:].lstrip("/" + os.sep))
-    else:
-        resolved = bpy.path.abspath(path)
-    absolute = os.path.abspath(resolved)
-    if path.endswith(("/", os.sep)) and not absolute.endswith(os.sep):
-        absolute += os.sep
-    if extensions and not absolute.lower().endswith(extensions):
-        absolute += extensions[0]
-    os.makedirs(os.path.dirname(absolute), exist_ok=True)
-    return absolute
-"""
-
-_HEADLESS_RENDER_PRELUDE = (
-    _HEADLESS_PATH_PRELUDE
-    + """
-ENGINE_ALIASES = {
-    "EEVEE": ("BLENDER_EEVEE", "BLENDER_EEVEE_NEXT"),
-    "EEVEE_NEXT": ("BLENDER_EEVEE_NEXT", "BLENDER_EEVEE"),
-    "BLENDER_EEVEE": ("BLENDER_EEVEE_NEXT",),
-    "BLENDER_EEVEE_NEXT": ("BLENDER_EEVEE",),
-    "WORKBENCH": ("BLENDER_WORKBENCH",),
-}
-
-
-def set_engine(scene, engine):
-    requested = engine.strip().upper().replace(" ", "_")
-    first_error = None
-    for candidate in (requested, *ENGINE_ALIASES.get(requested, ())):
-        try:
-            scene.render.engine = candidate
-            return
-        except TypeError as exc:
-            first_error = first_error or exc
-    raise ValueError(f"Unknown render engine {engine!r}: {first_error}")
-
-
-scene = bpy.context.scene
-scene.render.filepath = output_path(args["output_path"])
-if args.get("engine"):
-    set_engine(scene, args["engine"])
-"""
-)
-
-_HEADLESS_RENDER_STILL = (
-    _HEADLESS_RENDER_PRELUDE
-    + """
-if args.get("resolution_x") is not None:
-    scene.render.resolution_x = args["resolution_x"]
-if args.get("resolution_y") is not None:
-    scene.render.resolution_y = args["resolution_y"]
-bpy.ops.render.render(write_still=True)
-__result__ = {
-    "output_path": scene.render.filepath,
-    "engine": scene.render.engine,
-    "resolution": [scene.render.resolution_x, scene.render.resolution_y],
-}
-"""
-)
-
-_HEADLESS_RENDER_ANIMATION = (
-    _HEADLESS_RENDER_PRELUDE
-    + """
-if args.get("frame_start") is not None:
-    scene.frame_start = args["frame_start"]
-if args.get("frame_end") is not None:
-    scene.frame_end = args["frame_end"]
-bpy.ops.render.render(animation=True)
-__result__ = {
-    "output_path": scene.render.filepath,
-    "engine": scene.render.engine,
-    "frame_range": [scene.frame_start, scene.frame_end],
-}
-"""
-)
-
 
 @mcp.tool(
     name="blender_render_still",
@@ -437,7 +226,7 @@ async def render_still(
 ) -> str:
     if transport == "headless":
         result = await _headless_executor().execute(
-            code=_HEADLESS_RENDER_STILL,
+            code=RENDER_STILL,
             args={
                 "output_path": output_path,
                 "resolution_x": resolution_x,
@@ -479,7 +268,7 @@ async def render_animation(
 ) -> str:
     if transport == "headless":
         result = await _headless_executor().execute(
-            code=_HEADLESS_RENDER_ANIMATION,
+            code=RENDER_ANIMATION,
             args={
                 "output_path": output_path,
                 "frame_start": frame_start,
@@ -501,24 +290,6 @@ async def render_animation(
 
 
 # -- Export tools --
-
-_HEADLESS_EXPORT_PRELUDE = _HEADLESS_PATH_PRELUDE
-
-
-def _headless_export_script(operator: str, extensions: tuple[str, ...]) -> str:
-    """Build a headless export script whose result carries the absolute path written."""
-    return (
-        _HEADLESS_EXPORT_PRELUDE
-        + f"""
-__result__ = {{"filepath": output_path(args["filepath"], {extensions!r})}}
-{operator}(filepath=__result__["filepath"])
-"""
-    )
-
-
-_HEADLESS_EXPORT_GLTF = _headless_export_script("bpy.ops.export_scene.gltf", (".glb", ".gltf"))
-_HEADLESS_EXPORT_OBJ = _headless_export_script("bpy.ops.wm.obj_export", (".obj",))
-_HEADLESS_EXPORT_FBX = _headless_export_script("bpy.ops.export_scene.fbx", (".fbx",))
 
 
 async def _headless_export(script: str, filepath: str, blend_file: str | None, factory_startup: bool | None) -> str:
@@ -547,7 +318,7 @@ async def export_gltf(
     factory_startup: bool | None = None,
 ) -> str:
     if transport == "headless":
-        return await _headless_export(_HEADLESS_EXPORT_GLTF, filepath, blend_file, factory_startup)
+        return await _headless_export(EXPORT_GLTF, filepath, blend_file, factory_startup)
     return await _bridge(ctx, "export.gltf", filepath=filepath)
 
 
@@ -567,7 +338,7 @@ async def export_obj(
     factory_startup: bool | None = None,
 ) -> str:
     if transport == "headless":
-        return await _headless_export(_HEADLESS_EXPORT_OBJ, filepath, blend_file, factory_startup)
+        return await _headless_export(EXPORT_OBJ, filepath, blend_file, factory_startup)
     return await _bridge(ctx, "export.obj", filepath=filepath)
 
 
@@ -587,7 +358,7 @@ async def export_fbx(
     factory_startup: bool | None = None,
 ) -> str:
     if transport == "headless":
-        return await _headless_export(_HEADLESS_EXPORT_FBX, filepath, blend_file, factory_startup)
+        return await _headless_export(EXPORT_FBX, filepath, blend_file, factory_startup)
     return await _bridge(ctx, "export.fbx", filepath=filepath)
 
 

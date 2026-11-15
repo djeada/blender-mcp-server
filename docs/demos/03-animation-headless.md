@@ -26,7 +26,7 @@ render frames 12, 24 and 40 with EEVEE at 640x360 to /tmp/blender-mcp-demos/03-f
 
 ## Run it yourself, no AI
 
-[`scripts/03_bouncing_ball.py`](scripts/03_bouncing_ball.py) builds the same kind of scene deterministically. It is plain
+[`examples/demos/03_bouncing_ball.py`](../../examples/demos/03_bouncing_ball.py) builds the same kind of scene deterministically. It is plain
 Blender Python, so you can also paste it into Blender's **Scripting** tab and press **Run**.
 
 ```bash

@@ -29,15 +29,15 @@ The project has two main components:
 | MCP server | `src/blender_mcp_server/` | Standalone Python process (stdio) |
 | Blender add-on | `addon/` | Blender's embedded Python (`bpy`) |
 
-Scripts in `scripts/library/` and `scripts/demos/` run inside Blender via
+Scripts in `examples/library/` and `examples/demos/` run inside Blender via
 `python.execute` and may reference `bpy`, `args`, or `mathutils` at module
 level — this is expected.
 
 ### 3. Lint and Format
 
 ```bash
-ruff check src/ addon/ tests/ scripts/ --exclude scripts/.venv
-ruff format src/ addon/ tests/ scripts/ --exclude scripts/.venv
+ruff check src/ addon/ tests/ scripts/ examples/
+ruff format --check src/ addon/ tests/ scripts/ examples/
 mypy src/ addon/
 ```
 
@@ -82,15 +82,22 @@ git push origin your-feature-name
 blender-mcp-server/
 ├── addon/                        # Blender add-on (TCP server + handlers)
 ├── src/blender_mcp_server/       # MCP server (stdio + tool definitions)
-├── scripts/
-│   ├── library/                  # Reusable Blender scripts
-│   └── demos/                    # End-to-end demo scenes
+├── scripts/                     # Installation, launch, packaging, and bridge helpers
+├── examples/
+│   ├── library/                  # Optional Blender workflow and generation recipes
+│   └── demos/                    # Runnable scenes, animation, and physics demos
 ├── tests/                        # Unit tests (no Blender install required)
 ├── docs/                         # Architecture & design documentation
 └── pyproject.toml                # Build, lint, test, and type-check config
 ```
 
 ## Adding a New MCP Tool
+
+Keep core tools general-purpose: scene inspection, primitive operations, materials,
+rendering, exports, script execution, and jobs. Put scene generators, asset recipes
+(such as trees), scattering, and specialized physics workflows in `examples/`.
+These scripts use the existing Python execution tools and should not require new
+bridge commands, validators, or MCP registrations.
 
 1. Add the bridge command handler in `addon/__init__.py` under `CommandHandler`.
 2. Register the MCP tool in `src/blender_mcp_server/server.py` using `@mcp.tool(...)`.

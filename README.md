@@ -2,7 +2,7 @@
 
 Control Blender from any AI assistant using the [Model Context Protocol (MCP)](https://modelcontextprotocol.io).
 
-27 tools across 7 namespaces — create objects, assign materials, render images, export scenes, execute Python scripts, manage async jobs, and more.
+27 tools across 8 namespaces — create objects, assign materials, render images, export scenes, execute Python scripts, manage async jobs, and more.
 
 ![Demo render — scene built entirely through MCP tools](docs/images/demo_render.png)
 
@@ -301,13 +301,17 @@ folders are created.
 | `blender_job_cancel` | Cancel a running or queued async job. |
 | `blender_job_list` | List known async jobs with IDs, status, and creation time. |
 
-## Script Library
+## Examples and Script Recipes
 
-Pre-built scripts in `scripts/library/` for use with `blender_python_exec` via `script_path`:
+Scene generation and workflow recipes live in [`examples/`](examples/README.md).
+Run the scripts in `examples/library/` with `blender_python_exec` via `script_path`:
 
 | Script | Description |
 |---|---|
 | `create_mesh.py` | Create primitive meshes through the data API (no `bpy.ops`) |
+| `create_tree.py` | Build a seeded low-poly tree with bark and leaf materials |
+| `scatter_objects.py` | Scatter linked copies across a disk with seeded transforms |
+| `create_emissive_material.py` | Create a Principled material with emission color and strength |
 | `fluid_domain.py` | Create a Mantaflow fluid domain |
 | `fluid_inflow.py` | Create an inflow source |
 | `effector.py` | Set objects as collision effectors |
@@ -319,7 +323,7 @@ Pre-built scripts in `scripts/library/` for use with `blender_python_exec` via `
 | `apply_transforms.py` | Apply transforms to objects |
 | `save_blend.py` | Save the `.blend` file |
 
-See [`scripts/library/README.md`](scripts/library/README.md) for full argument docs and a dam-break walkthrough.
+See [`examples/library/README.md`](examples/library/README.md) for full argument docs and a dam-break walkthrough.
 
 > **Tips for physics workflows:**
 > - Prefer `create_mesh.py` (data API) over `bpy.ops.mesh.primitive_*_add` in live sessions — the operator path can destabilize view-layer updates around fluid setup.
@@ -415,7 +419,7 @@ BLENDER_MCP_PORT=9876 blender -b --factory-startup --python tests/integration/bl
 {
   "tool": "blender_python_exec",
   "args": {
-    "script_path": "scripts/library/effector.py",
+    "script_path": "examples/library/effector.py",
     "args": {
       "objects": ["Ground", "Building_01", "Building_02"],
       "effector_type": "COLLISION"
@@ -459,9 +463,10 @@ blender-mcp-server/
 │   ├── setup.sh / start.sh / stop.sh  # One-command install and launch (macOS & Linux)
 │   ├── run_demo.sh               # Run a demo scene script yourself (no AI)
 │   ├── record_demos.sh           # Re-record docs/demos with a real AI client
-│   ├── library/                  # Reusable Blender scripts for common tasks
-│   ├── demos/                    # Bridge-driven dam-break demo scenes
 │   └── blender_bridge_request.py # Direct bridge test helpers
+├── examples/
+│   ├── library/                  # Optional Blender workflow and generation recipes
+│   └── demos/                    # Runnable scenes, animation, and physics demos
 ├── tests/                        # Unit tests (mocked bpy) + integration tests (real Blender)
 ├── docs/                         # Architecture & design docs, recorded demos
 ├── pyproject.toml
