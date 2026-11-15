@@ -34,6 +34,12 @@ from blender_mcp_server.server import (
 from blender_mcp_server.server import (
     object_create as object_create_tool,
 )
+from blender_mcp_server.server import (
+    object_create_tree as object_create_tree_tool,
+)
+from blender_mcp_server.server import (
+    object_scatter as object_scatter_tool,
+)
 
 
 def _echo_stream(response_fields: dict, stale_first: dict | None = None):
@@ -83,6 +89,8 @@ class TestToolRegistration:
             "blender_object_rotate",
             "blender_object_scale",
             "blender_object_duplicate",
+            "blender_object_create_tree",
+            "blender_object_scatter",
         ]:
             assert tool in names
 
@@ -91,6 +99,7 @@ class TestToolRegistration:
         for tool in [
             "blender_material_list",
             "blender_material_create",
+            "blender_material_create_emissive",
             "blender_material_assign",
             "blender_material_set_color",
             "blender_material_set_texture",
@@ -128,7 +137,7 @@ class TestToolRegistration:
         assert "blender_job_list" in names
 
     def test_total_tool_count(self):
-        assert len(self._get_tool_names()) == 27
+        assert len(self._get_tool_names()) == 30
 
     def test_all_tools_have_descriptions(self):
         for tool in mcp._tool_manager._tools.values():
@@ -492,6 +501,31 @@ class TestToolParameters:
         await material_set_color_tool(ctx, name="M", color=[1, 0, 0])
         _command, params = ctx.request_context.lifespan_context.send_command.await_args.args
         assert params == {"name": "M", "color": [1, 0, 0]}
+
+    @pytest.mark.asyncio
+    async def test_object_create_tree_params(self):
+        ctx = self._ctx()
+        await object_create_tree_tool(ctx, height=2.5, seed=7)
+        command, params = ctx.request_context.lifespan_context.send_command.await_args.args
+        assert command == "object.create_tree"
+        assert params == {"height": 2.5, "seed": 7}
+
+    @pytest.mark.asyncio
+    async def test_object_scatter_params(self):
+        ctx = self._ctx()
+        await object_scatter_tool(ctx, source="Tree", count=3, radius=2.0, seed=1)
+        command, params = ctx.request_context.lifespan_context.send_command.await_args.args
+        assert command == "object.scatter"
+        assert params == {
+            "source": "Tree",
+            "count": 3,
+            "radius": 2.0,
+            "scale_min": 1.0,
+            "scale_max": 1.0,
+            "rotation_z_min": 0.0,
+            "rotation_z_max": 360.0,
+            "seed": 1,
+        }
 
     def test_transport_schema_is_an_enum(self):
         for tool in mcp._tool_manager._tools.values():

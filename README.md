@@ -2,7 +2,7 @@
 
 Control Blender from any AI assistant using the [Model Context Protocol (MCP)](https://modelcontextprotocol.io).
 
-27 tools across 7 namespaces — create objects, assign materials, render images, export scenes, execute Python scripts, manage async jobs, and more.
+30 tools across 7 namespaces — create objects, assign materials, render images, export scenes, execute Python scripts, manage async jobs, and more.
 
 ![Demo render — scene built entirely through MCP tools](docs/images/demo_render.png)
 
@@ -259,6 +259,8 @@ The AI calls MCP tools like `blender_scene_list_objects` and `blender_object_cre
 | `blender_object_rotate` | Set rotation `[x, y, z]` in degrees (default) or radians |
 | `blender_object_scale` | Set scale `[x, y, z]` |
 | `blender_object_duplicate` | Duplicate with optional new name |
+| `blender_object_create_tree` | Procedural low-poly tree (trunk + canopy) as one mesh, with bark/leaf materials |
+| `blender_object_scatter` | Scatter copies of an object in a disk — seeded position, Z rotation, and scale |
 
 ### Materials
 
@@ -266,6 +268,7 @@ The AI calls MCP tools like `blender_scene_list_objects` and `blender_object_cre
 |---|---|
 | `blender_material_list` | List all materials in the file |
 | `blender_material_create` | Create a material with optional base color `[r, g, b]` (0–1) |
+| `blender_material_create_emissive` | Create a Principled material with emission color and strength |
 | `blender_material_assign` | Assign a material to an object |
 | `blender_material_set_color` | Set the Principled BSDF base color |
 | `blender_material_set_texture` | Set an image texture as base color |

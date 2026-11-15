@@ -292,6 +292,64 @@ async def object_duplicate(ctx: Context, name: str, new_name: str | None = None)
     return await _bridge(ctx, "object.duplicate", name=name, new_name=new_name or None)
 
 
+@mcp.tool(
+    name="blender_object_create_tree",
+    description="Create a procedural low-poly tree (tapered trunk plus canopy blobs) as a single mesh object with bark and leaf material slots. Deterministic when 'seed' is set; ready to duplicate or scatter.",
+)
+async def object_create_tree(
+    ctx: Context,
+    name: str | None = None,
+    location: list[float] | None = None,
+    height: float = 3.0,
+    seed: int | None = None,
+    trunk_material: str | None = None,
+    leaves_material: str | None = None,
+) -> str:
+    return await _bridge(
+        ctx,
+        "object.create_tree",
+        name=name or None,
+        location=location,
+        height=height,
+        seed=seed,
+        trunk_material=trunk_material or None,
+        leaves_material=leaves_material or None,
+    )
+
+
+@mcp.tool(
+    name="blender_object_scatter",
+    description="Scatter duplicates of an object across a circular area. Randomizes position, Z rotation (degrees), and uniform scale (optionally seeded). Copies share mesh data to keep memory low.",
+)
+async def object_scatter(
+    ctx: Context,
+    source: str,
+    count: int = 10,
+    location: list[float] | None = None,
+    radius: float = 5.0,
+    scale_min: float = 1.0,
+    scale_max: float = 1.0,
+    rotation_z_min: float = 0.0,
+    rotation_z_max: float = 360.0,
+    name_prefix: str | None = None,
+    seed: int | None = None,
+) -> str:
+    return await _bridge(
+        ctx,
+        "object.scatter",
+        source=source,
+        count=count,
+        location=location,
+        radius=radius,
+        scale_min=scale_min,
+        scale_max=scale_max,
+        rotation_z_min=rotation_z_min,
+        rotation_z_max=rotation_z_max,
+        name_prefix=name_prefix or None,
+        seed=seed,
+    )
+
+
 # -- Material tools --
 
 
@@ -301,6 +359,27 @@ async def object_duplicate(ctx: Context, name: str, new_name: str | None = None)
 )
 async def material_create(ctx: Context, name: str = "Material", color: list[float] | None = None) -> str:
     return await _bridge(ctx, "material.create", name=name, color=color)
+
+
+@mcp.tool(
+    name="blender_material_create_emissive",
+    description="Create an emissive Principled material for glowing objects. Set base color, emission color, and emission strength.",
+)
+async def material_create_emissive(
+    ctx: Context,
+    name: str = "Glow",
+    color: list[float] | None = None,
+    emission_color: list[float] | None = None,
+    emission_strength: float = 5.0,
+) -> str:
+    return await _bridge(
+        ctx,
+        "material.create_emissive",
+        name=name,
+        color=color,
+        emission_color=emission_color,
+        emission_strength=emission_strength,
+    )
 
 
 @mcp.tool(

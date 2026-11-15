@@ -188,6 +188,68 @@ class TestMaterialCommands:
         assert result["materials"] == []
 
 
+class TestHighLevelCommands:
+    @staticmethod
+    def _fake_material_factory():
+        def fake_material(name=None, **kwargs):
+            mat = MagicMock()
+            mat.name = name or "Material"
+            return mat
+
+        return fake_material
+
+    def test_build_tree_pydata_deterministic(self, addon_module):
+        verts, faces, indices = addon_module._build_tree_pydata(3.0, seed=7)
+        verts2, faces2, indices2 = addon_module._build_tree_pydata(3.0, seed=7)
+        assert verts == verts2
+        assert faces == faces2
+        assert indices == indices2
+        assert set(indices) == {0, 1}
+        assert len(verts) > 100
+
+    def test_build_tree_pydata_seed_changes_layout(self, addon_module):
+        first = addon_module._build_tree_pydata(3.0, seed=1)[0]
+        second = addon_module._build_tree_pydata(3.0, seed=2)[0]
+        assert first != second
+
+    def test_create_tree_handler(self, handler, mock_bpy):
+        mock_bpy.data.materials.new.side_effect = self._fake_material_factory()
+        result = handler.handle("object.create_tree", {"height": 2.5, "location": [1, 2, 0], "seed": 3})
+        assert result["height"] == 2.5
+        assert result["location"] == [1, 2, 0]
+        assert result["vertices"] > 0
+        assert result["faces"] > 0
+        assert result["materials"] == ["TreeBark", "TreeLeaves"]
+
+    def test_create_tree_rejects_missing_material(self, handler):
+        with pytest.raises(ValueError, match="not found"):
+            handler.handle("object.create_tree", {"trunk_material": "Nope"})
+
+    def test_scatter_handler(self, handler):
+        result = handler.handle("object.scatter", {"source": "Cube", "count": 5, "radius": 2.0, "seed": 1})
+        assert result["source"] == "Cube"
+        assert result["count"] == 5
+        assert len(result["names"]) == 5
+
+    def test_scatter_rejects_count_above_cap(self, handler):
+        with pytest.raises(ValueError, match="at most"):
+            handler.handle("object.scatter", {"source": "Cube", "count": 501})
+
+    def test_scatter_rejects_inverted_scale_range(self, handler):
+        with pytest.raises(ValueError, match="scale_max"):
+            handler.handle("object.scatter", {"source": "Cube", "scale_min": 2.0, "scale_max": 1.0})
+
+    def test_material_create_emissive(self, handler, mock_bpy):
+        mock_bpy.data.materials.new.side_effect = self._fake_material_factory()
+        result = handler.handle(
+            "material.create_emissive",
+            {"name": "Glow", "emission_color": [0, 1, 1], "emission_strength": 8},
+        )
+        assert result["name"] == "Glow"
+        assert result["emission_color"] == [0.0, 1.0, 1.0, 1.0]
+        assert result["emission_strength"] == 8.0
+
+
 class TestServerExecution:
     def test_mutation_request_skips_undo_when_poll_fails(self, addon_module, mock_bpy):
         server = addon_module.BlenderMCPServer()
