@@ -120,7 +120,14 @@ def field(
 
 
 class SceneListObjectsParams(BridgeParams):
-    fields = {"type": field("str", allow_none=True)}
+    fields = {
+        "type": field("str", allow_none=True),
+        "name": field("str", allow_none=True),
+        "collection": field("str", allow_none=True),
+        "visible": field("bool", allow_none=True),
+        "limit": field("int", allow_none=True, gt=0),
+        "offset": field("int", allow_none=True),
+    }
 
 
 class ObjectGetTransformParams(BridgeParams):
@@ -226,3 +233,143 @@ class PythonExecuteParams(BridgeParams):
 
 class JobIdParams(BridgeParams):
     fields = {"job_id": field("str", required=True)}
+
+
+class CameraCreateParams(BridgeParams):
+    fields = {
+        "name": field("str", allow_none=True),
+        "location": field("number_list", allow_none=True, min_length=3, max_length=3),
+        "rotation": field("number_list", allow_none=True, min_length=3, max_length=3),
+        "look_at": field("number_list", allow_none=True, min_length=3, max_length=3),
+        "projection": field("str", allow_none=True),
+        "lens": field("float", allow_none=True, gt=0),
+        "ortho_scale": field("float", allow_none=True, gt=0),
+        "clip_start": field("float", allow_none=True, gt=0),
+        "clip_end": field("float", allow_none=True, gt=0),
+        "set_active": field("bool", False),
+    }
+
+
+class CameraUpdateParams(BridgeParams):
+    fields = {
+        "name": field("str", required=True),
+        "location": field("number_list", allow_none=True, min_length=3, max_length=3),
+        "rotation": field("number_list", allow_none=True, min_length=3, max_length=3),
+        "look_at": field("number_list", allow_none=True, min_length=3, max_length=3),
+        "projection": field("str", allow_none=True),
+        "lens": field("float", allow_none=True, gt=0),
+        "ortho_scale": field("float", allow_none=True, gt=0),
+        "clip_start": field("float", allow_none=True, gt=0),
+        "clip_end": field("float", allow_none=True, gt=0),
+        "set_active": field("bool", False),
+    }
+
+
+class LightCreateParams(BridgeParams):
+    fields = {
+        "type": field("str", "POINT"),
+        "name": field("str", allow_none=True),
+        "location": field("number_list", allow_none=True, min_length=3, max_length=3),
+        "rotation": field("number_list", allow_none=True, min_length=3, max_length=3),
+        "look_at": field("number_list", allow_none=True, min_length=3, max_length=3),
+        "color": field("number_list", allow_none=True, min_length=3, max_length=4),
+        "energy": field("float", allow_none=True, gt=0),
+        "size": field("float", allow_none=True, gt=0),
+        "size_y": field("float", allow_none=True, gt=0),
+        "angle": field("float", allow_none=True, gt=0),
+        "spot_angle": field("float", allow_none=True, gt=0),
+        "spot_blend": field("float", allow_none=True),
+    }
+
+
+class LightUpdateParams(BridgeParams):
+    fields = {
+        "name": field("str", required=True),
+        "type": field("str", allow_none=True),
+        "location": field("number_list", allow_none=True, min_length=3, max_length=3),
+        "rotation": field("number_list", allow_none=True, min_length=3, max_length=3),
+        "look_at": field("number_list", allow_none=True, min_length=3, max_length=3),
+        "color": field("number_list", allow_none=True, min_length=3, max_length=4),
+        "energy": field("float", allow_none=True, gt=0),
+        "size": field("float", allow_none=True, gt=0),
+        "size_y": field("float", allow_none=True, gt=0),
+        "angle": field("float", allow_none=True, gt=0),
+        "spot_angle": field("float", allow_none=True, gt=0),
+        "spot_blend": field("float", allow_none=True),
+    }
+
+
+class TimelineSetParams(BridgeParams):
+    fields = {
+        "frame_current": field("int", allow_none=True),
+        "frame_start": field("int", allow_none=True),
+        "frame_end": field("int", allow_none=True),
+    }
+
+
+class KeyframeInsertParams(BridgeParams):
+    fields = {
+        "name": field("str", required=True),
+        "property": field("str", required=True),
+        "frame": field("int", required=True),
+        "value": field("number_list", allow_none=True, min_length=3, max_length=3),
+        "interpolation": field("str", allow_none=True),
+    }
+
+
+class KeyframeListParams(BridgeParams):
+    fields = {
+        "name": field("str", required=True),
+        "property": field("str", allow_none=True),
+    }
+
+
+class KeyframeRemoveParams(BridgeParams):
+    fields = {
+        "name": field("str", required=True),
+        "property": field("str", required=True),
+        "frame": field("int", required=True),
+    }
+
+
+class CollectionCreateParams(BridgeParams):
+    fields = {
+        "name": field("str", required=True),
+        "parent": field("str", allow_none=True),
+    }
+
+
+class CollectionRenameParams(BridgeParams):
+    fields = {
+        "name": field("str", required=True),
+        "new_name": field("str", required=True),
+    }
+
+
+class CollectionObjectParams(BridgeParams):
+    fields = {
+        "collection": field("str", required=True),
+        "object": field("str", required=True),
+    }
+
+
+class ObjectRenameParams(BridgeParams):
+    fields = {
+        "name": field("str", required=True),
+        "new_name": field("str", required=True),
+    }
+
+
+class ObjectParentParams(BridgeParams):
+    fields = {
+        "name": field("str", required=True),
+        "parent": field("str", required=True),
+        "keep_transform": field("bool", False),
+    }
+
+
+class ObjectUnparentParams(BridgeParams):
+    fields = {
+        "name": field("str", required=True),
+        "keep_transform": field("bool", False),
+    }

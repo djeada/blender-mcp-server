@@ -69,10 +69,31 @@ async def scene_get_info(ctx: Context) -> str:
 
 @mcp.tool(
     name="blender_scene_list_objects",
-    description="List all objects in the current Blender scene. Optionally filter by type (MESH, CAMERA, LIGHT, EMPTY, CURVE, etc.).",
+    description=(
+        "List all objects in the current Blender scene with stable name sorting, pagination and filters. "
+        "Optional: type (MESH, CAMERA, LIGHT, EMPTY, CURVE, ...), name substring, collection membership, "
+        "visibility, limit and offset. Returns total matches plus the returned page."
+    ),
 )
-async def scene_list_objects(ctx: Context, type: str | None = None) -> str:
-    return await _bridge(ctx, "scene.list_objects", type=type or None)
+async def scene_list_objects(
+    ctx: Context,
+    type: str | None = None,
+    name: str | None = None,
+    collection: str | None = None,
+    visible: bool | None = None,
+    limit: int | None = None,
+    offset: int | None = None,
+) -> str:
+    return await _bridge(
+        ctx,
+        "scene.list_objects",
+        type=type,
+        name=name,
+        collection=collection,
+        visible=visible,
+        limit=limit,
+        offset=offset,
+    )
 
 
 @mcp.tool(
@@ -199,6 +220,334 @@ async def material_set_color(ctx: Context, name: str, color: list[float]) -> str
 )
 async def material_set_texture(ctx: Context, name: str, filepath: str) -> str:
     return await _bridge(ctx, "material.set_texture", name=name, filepath=filepath)
+
+
+# -- Camera & light tools --
+
+
+@mcp.tool(
+    name="blender_camera_create",
+    description=(
+        "Create a camera. Optionally set name, location, orientation via rotation (degrees) or look_at "
+        "[x, y, z] target (not both), projection ('PERSP' or 'ORTHO'), focal length in mm (PERSP only), "
+        "ortho_scale (ORTHO only), clip_start/clip_end, and set_active to make it the active scene camera."
+    ),
+)
+async def camera_create(
+    ctx: Context,
+    name: str | None = None,
+    location: list[float] | None = None,
+    rotation: list[float] | None = None,
+    look_at: list[float] | None = None,
+    projection: str | None = None,
+    lens: float | None = None,
+    ortho_scale: float | None = None,
+    clip_start: float | None = None,
+    clip_end: float | None = None,
+    set_active: bool | None = None,
+) -> str:
+    return await _bridge(
+        ctx,
+        "camera.create",
+        name=name,
+        location=location,
+        rotation=rotation,
+        look_at=look_at,
+        projection=projection,
+        lens=lens,
+        ortho_scale=ortho_scale,
+        clip_start=clip_start,
+        clip_end=clip_end,
+        set_active=set_active,
+    )
+
+
+@mcp.tool(
+    name="blender_camera_update",
+    description=(
+        "Update an existing camera by name. Optionally change location, orientation via rotation (degrees) "
+        "or look_at [x, y, z] target (not both), projection ('PERSP' or 'ORTHO'), focal length in mm "
+        "(PERSP only), ortho_scale (ORTHO only), clip_start/clip_end, and set_active to make it the "
+        "active scene camera."
+    ),
+)
+async def camera_update(
+    ctx: Context,
+    name: str,
+    location: list[float] | None = None,
+    rotation: list[float] | None = None,
+    look_at: list[float] | None = None,
+    projection: str | None = None,
+    lens: float | None = None,
+    ortho_scale: float | None = None,
+    clip_start: float | None = None,
+    clip_end: float | None = None,
+    set_active: bool | None = None,
+) -> str:
+    return await _bridge(
+        ctx,
+        "camera.update",
+        name=name,
+        location=location,
+        rotation=rotation,
+        look_at=look_at,
+        projection=projection,
+        lens=lens,
+        ortho_scale=ortho_scale,
+        clip_start=clip_start,
+        clip_end=clip_end,
+        set_active=set_active,
+    )
+
+
+@mcp.tool(
+    name="blender_light_create",
+    description=(
+        "Create a light. type is POINT, SUN, SPOT, or AREA (default POINT). Optionally set name, location, "
+        "orientation via rotation (degrees) or look_at [x, y, z] target (not both), color [r, g, b] (0-1), "
+        "energy, size (POINT/SPOT radius, AREA size), size_y (AREA rectangle only), angle in degrees (SUN "
+        "only), spot_angle in degrees (SPOT only), and spot_blend 0-1 (SPOT only). Unsupported parameters "
+        "for the chosen type produce explicit errors."
+    ),
+)
+async def light_create(
+    ctx: Context,
+    light_type: str = "POINT",
+    name: str | None = None,
+    location: list[float] | None = None,
+    rotation: list[float] | None = None,
+    look_at: list[float] | None = None,
+    color: list[float] | None = None,
+    energy: float | None = None,
+    size: float | None = None,
+    size_y: float | None = None,
+    angle: float | None = None,
+    spot_angle: float | None = None,
+    spot_blend: float | None = None,
+) -> str:
+    return await _bridge(
+        ctx,
+        "light.create",
+        type=light_type,
+        name=name,
+        location=location,
+        rotation=rotation,
+        look_at=look_at,
+        color=color,
+        energy=energy,
+        size=size,
+        size_y=size_y,
+        angle=angle,
+        spot_angle=spot_angle,
+        spot_blend=spot_blend,
+    )
+
+
+@mcp.tool(
+    name="blender_light_update",
+    description=(
+        "Update an existing light by name. Optionally change type (POINT, SUN, SPOT, AREA), location, "
+        "orientation via rotation (degrees) or look_at [x, y, z] target (not both), color [r, g, b] (0-1), "
+        "energy, size (POINT/SPOT radius, AREA size), size_y (AREA rectangle only), angle in degrees (SUN "
+        "only), spot_angle in degrees (SPOT only), and spot_blend 0-1 (SPOT only). Unsupported parameters "
+        "for the current type produce explicit errors."
+    ),
+)
+async def light_update(
+    ctx: Context,
+    name: str,
+    light_type: str | None = None,
+    location: list[float] | None = None,
+    rotation: list[float] | None = None,
+    look_at: list[float] | None = None,
+    color: list[float] | None = None,
+    energy: float | None = None,
+    size: float | None = None,
+    size_y: float | None = None,
+    angle: float | None = None,
+    spot_angle: float | None = None,
+    spot_blend: float | None = None,
+) -> str:
+    return await _bridge(
+        ctx,
+        "light.update",
+        name=name,
+        type=light_type,
+        location=location,
+        rotation=rotation,
+        look_at=look_at,
+        color=color,
+        energy=energy,
+        size=size,
+        size_y=size_y,
+        angle=angle,
+        spot_angle=spot_angle,
+        spot_blend=spot_blend,
+    )
+
+
+# -- Timeline & animation tools --
+
+
+@mcp.tool(
+    name="blender_timeline_get",
+    description="Get the current frame and scene frame range (frame_start, frame_current, frame_end).",
+)
+async def timeline_get(ctx: Context) -> str:
+    return await _bridge(ctx, "timeline.get")
+
+
+@mcp.tool(
+    name="blender_timeline_set",
+    description=(
+        "Set the current frame and/or scene frame range. Rotation-independent; frames are integers. "
+        "Provide any subset of frame_current, frame_start, frame_end. Returns the resulting timeline."
+    ),
+)
+async def timeline_set(
+    ctx: Context,
+    frame_current: int | None = None,
+    frame_start: int | None = None,
+    frame_end: int | None = None,
+) -> str:
+    return await _bridge(ctx, "timeline.set", frame_current=frame_current, frame_start=frame_start, frame_end=frame_end)
+
+
+@mcp.tool(
+    name="blender_keyframe_add",
+    description=(
+        "Insert a keyframe on an object for a common animatable property: 'location', 'rotation' (values in "
+        "degrees) or 'scale'. Optionally set the property's value at the given frame and an interpolation mode "
+        "(BEZIER, LINEAR, CONSTANT) applied to the inserted keys. Returns the action name, keyframe count, "
+        "and whether the key was inserted or overwrote an existing key."
+    ),
+)
+async def keyframe_add(
+    ctx: Context,
+    name: str,
+    property: str,
+    frame: int,
+    value: list[float] | None = None,
+    interpolation: str | None = None,
+) -> str:
+    return await _bridge(
+        ctx,
+        "keyframe.insert",
+        name=name,
+        property=property,
+        frame=frame,
+        value=value,
+        interpolation=interpolation,
+    )
+
+
+@mcp.tool(
+    name="blender_keyframe_list",
+    description=(
+        "List keyframes on an object for 'location', 'rotation' or 'scale'. Returns channel index, frame and "
+        "value for each key (rotation values are radians as stored by Blender). Fails clearly when the "
+        "object has no animation data."
+    ),
+)
+async def keyframe_list(ctx: Context, name: str, property: str | None = None) -> str:
+    return await _bridge(ctx, "keyframe.list", name=name, property=property)
+
+
+@mcp.tool(
+    name="blender_keyframe_remove",
+    description=(
+        "Remove the keyframe(s) at a given frame on an object for 'location', 'rotation' or 'scale'. "
+        "Returns how many keys were removed and the remaining count; fails clearly when none exist."
+    ),
+)
+async def keyframe_remove(ctx: Context, name: str, property: str, frame: int) -> str:
+    return await _bridge(ctx, "keyframe.remove", name=name, property=property, frame=frame)
+
+
+# -- Scene organization tools --
+
+
+@mcp.tool(
+    name="blender_collection_create",
+    description="Create a collection. Optionally link it under an existing parent collection (otherwise at scene root).",
+)
+async def collection_create(ctx: Context, name: str, parent: str | None = None) -> str:
+    return await _bridge(ctx, "collection.create", name=name, parent=parent)
+
+
+@mcp.tool(
+    name="blender_collection_list",
+    description="List all collections with their object counts.",
+)
+async def collection_list(ctx: Context) -> str:
+    return await _bridge(ctx, "collection.list")
+
+
+@mcp.tool(
+    name="blender_collection_rename",
+    description=(
+        "Rename a collection. Blender appends a .001 suffix when the requested name is taken; "
+        "the returned 'name' is the canonical one."
+    ),
+)
+async def collection_rename(ctx: Context, name: str, new_name: str) -> str:
+    return await _bridge(ctx, "collection.rename", name=name, new_name=new_name)
+
+
+@mcp.tool(
+    name="blender_collection_add_object",
+    description=(
+        "Add an object to a collection, moving it out of its current collection(s). Returns whether it moved "
+        "and the collections it left."
+    ),
+)
+async def collection_add_object(ctx: Context, collection: str, object: str) -> str:
+    return await _bridge(ctx, "collection.add_object", collection=collection, object=object)
+
+
+@mcp.tool(
+    name="blender_collection_remove_object",
+    description=(
+        "Remove an object from a collection. If the object would be left unlinked, it is re-linked to the "
+        "scene root collection so it stays part of the scene."
+    ),
+)
+async def collection_remove_object(ctx: Context, collection: str, object: str) -> str:
+    return await _bridge(ctx, "collection.remove_object", collection=collection, object=object)
+
+
+@mcp.tool(
+    name="blender_object_rename",
+    description=(
+        "Rename an object. Blender appends a .001 suffix when the requested name is taken; "
+        "the returned 'name' is the canonical one."
+    ),
+)
+async def object_rename(ctx: Context, name: str, new_name: str) -> str:
+    return await _bridge(ctx, "object.rename", name=name, new_name=new_name)
+
+
+@mcp.tool(
+    name="blender_object_parent",
+    description=(
+        "Parent an object to another object. Parenting to itself or a descendant is refused (cycle detection). "
+        "Set keep_transform=true to preserve the object's current world transform via the parent inverse "
+        "matrix; otherwise the object moves with the parent's local space."
+    ),
+)
+async def object_parent(ctx: Context, name: str, parent: str, keep_transform: bool | None = None) -> str:
+    return await _bridge(ctx, "object.parent", name=name, parent=parent, keep_transform=keep_transform)
+
+
+@mcp.tool(
+    name="blender_object_unparent",
+    description=(
+        "Clear an object's parent. Set keep_transform=true to bake the current world transform first so the "
+        "object stays in place; otherwise it keeps its local transform."
+    ),
+)
+async def object_unparent(ctx: Context, name: str, keep_transform: bool | None = None) -> str:
+    return await _bridge(ctx, "object.unparent", name=name, keep_transform=keep_transform)
 
 
 # -- Render tools --

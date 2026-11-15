@@ -91,6 +91,29 @@ class TestToolRegistration:
         ]:
             assert tool in names
 
+    def test_camera_light_timeline_and_scene_org_tools_registered(self):
+        names = self._get_tool_names()
+        for tool in [
+            "blender_camera_create",
+            "blender_camera_update",
+            "blender_light_create",
+            "blender_light_update",
+            "blender_timeline_get",
+            "blender_timeline_set",
+            "blender_keyframe_add",
+            "blender_keyframe_list",
+            "blender_keyframe_remove",
+            "blender_collection_create",
+            "blender_collection_list",
+            "blender_collection_rename",
+            "blender_collection_add_object",
+            "blender_collection_remove_object",
+            "blender_object_rename",
+            "blender_object_parent",
+            "blender_object_unparent",
+        ]:
+            assert tool in names
+
     def test_render_tools_registered(self):
         names = self._get_tool_names()
         assert "blender_render_still" in names
@@ -122,7 +145,7 @@ class TestToolRegistration:
         assert "blender_job_list" in names
 
     def test_total_tool_count(self):
-        assert len(self._get_tool_names()) == 27
+        assert len(self._get_tool_names()) == 44
 
     @pytest.mark.parametrize(
         "name", ["blender_object_create_tree", "blender_object_scatter", "blender_material_create_emissive"]
