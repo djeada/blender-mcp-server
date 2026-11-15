@@ -274,11 +274,11 @@ The AI calls MCP tools like `blender_scene_list_objects` and `blender_object_cre
 
 | Tool | Description |
 |---|---|
-| `blender_render_still` | Render still image — output path, resolution, engine (`EEVEE`, `CYCLES`, `WORKBENCH`) |
-| `blender_render_animation` | Render animation — frame range, output path, engine |
-| `blender_export_gltf` | Export as glTF/GLB |
-| `blender_export_obj` | Export as OBJ |
-| `blender_export_fbx` | Export as FBX |
+| `blender_render_still` | Render still image — output path, resolution, engine (`EEVEE`, `CYCLES`, `WORKBENCH`); `transport="headless"` renders a `.blend` file without opening Blender |
+| `blender_render_animation` | Render animation — frame range, output path, engine; also works headless |
+| `blender_export_gltf` | Export as glTF/GLB; `transport="headless"` exports a `.blend` file without opening Blender |
+| `blender_export_obj` | Export as OBJ; also works headless |
+| `blender_export_fbx` | Export as FBX; also works headless |
 
 Render and export tools return the absolute path they wrote. A path starting with `//` is relative to the
 `.blend` file; while the file is unsaved it goes to `blender-mcp/` in the system temp directory. Missing
@@ -380,9 +380,9 @@ All scripts accept `--host`, `--port`, and `--timeout` flags, and read the auth 
 <details>
 <summary><strong>Headless / background mode</strong></summary>
 
-For one-off scripts and renders you don't need the add-on at all: pass `transport="headless"` to
-`blender_python_exec`, `blender_python_exec_async`, or the render tools and the server runs a separate
-`blender -b` process.
+For one-off scripts, renders, and exports you don't need the add-on at all: pass `transport="headless"` to
+`blender_python_exec`, `blender_python_exec_async`, the render tools, or the export tools and the server runs
+a separate `blender -b` process.
 
 To serve the bridge from background Blender, note that `bpy.app.timers` does not fire after the startup
 script returns, so the script has to drain the request queue itself. See

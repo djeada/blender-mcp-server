@@ -10,6 +10,9 @@ import pytest
 
 from blender_mcp_server.headless import HeadlessBlenderExecutor, HeadlessJobManager
 from blender_mcp_server.server import (
+    _HEADLESS_EXPORT_FBX,
+    _HEADLESS_EXPORT_GLTF,
+    _HEADLESS_EXPORT_OBJ,
     _HEADLESS_RENDER_ANIMATION,
     _HEADLESS_RENDER_STILL,
     HEADLESS_JOB_MANAGER,
@@ -568,6 +571,46 @@ class TestHeadlessRenderScripts:
         args = {"output_path": str(tmp_path / "r.png"), "engine": "luxrender"}
         with pytest.raises(ValueError, match="Unknown render engine 'luxrender'.*CYCLES"):
             self._run(monkeypatch, tmp_path, _HEADLESS_RENDER_STILL, args)
+
+
+class TestHeadlessExportScripts:
+    """Run the export scripts sent to ``blender -b`` against a stand-in bpy module."""
+
+    def _run(self, monkeypatch, tmp_path, script, args, *, blend_file=""):
+        bpy = MagicMock()
+        bpy.data.filepath = blend_file
+        bpy.path.abspath = lambda path: str(tmp_path / path[2:]) if path.startswith("//") else path
+        monkeypatch.setitem(sys.modules, "bpy", bpy)
+        monkeypatch.setattr(tempfile, "gettempdir", lambda: str(tmp_path))
+        namespace = {"args": args, "__result__": None}
+        exec(compile(script, "<headless-export>", "exec"), namespace)
+        return bpy, namespace["__result__"]
+
+    def test_gltf_appends_extension_and_creates_folder(self, monkeypatch, tmp_path):
+        args = {"filepath": str(tmp_path / "new" / "dir" / "model")}
+        bpy, result = self._run(monkeypatch, tmp_path, _HEADLESS_EXPORT_GLTF, args)
+        assert result["filepath"] == f"{tmp_path}/new/dir/model.glb"
+        assert (tmp_path / "new" / "dir").is_dir()
+        bpy.ops.export_scene.gltf.assert_called_once_with(filepath=result["filepath"])
+
+    def test_obj_extension_check_ignores_case(self, monkeypatch, tmp_path):
+        args = {"filepath": str(tmp_path / "a.OBJ")}
+        bpy, result = self._run(monkeypatch, tmp_path, _HEADLESS_EXPORT_OBJ, args)
+        assert result["filepath"] == str(tmp_path / "a.OBJ")
+        bpy.ops.wm.obj_export.assert_called_once_with(filepath=result["filepath"])
+
+    def test_fbx_blend_relative_path_from_unsaved_file(self, monkeypatch, tmp_path):
+        args = {"filepath": "//scene.fbx"}
+        bpy, result = self._run(monkeypatch, tmp_path, _HEADLESS_EXPORT_FBX, args)
+        assert result["filepath"] == str(tmp_path / "blender-mcp" / "scene.fbx")
+        bpy.ops.export_scene.fbx.assert_called_once_with(filepath=result["filepath"])
+
+    def test_fbx_blend_relative_path_from_saved_file(self, monkeypatch, tmp_path):
+        args = {"filepath": "//out/model"}
+        bpy, result = self._run(
+            monkeypatch, tmp_path, _HEADLESS_EXPORT_FBX, args, blend_file=str(tmp_path / "scene.blend")
+        )
+        assert result["filepath"] == str(tmp_path / "out" / "model.fbx")
 
 
 class TestHeadlessJobFailures:

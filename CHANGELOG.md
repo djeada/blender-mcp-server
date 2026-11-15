@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+- `blender_export_gltf` / `blender_export_obj` / `blender_export_fbx` accept `transport="headless"`, exporting
+  a `.blend` file in a separate `blender -b` process without a live Blender session (same resolution rules as
+  renders: absolute path returned, missing folders created, extensions appended only when absent).
+
 ### Fixed
 - `blender_render_still` / `blender_render_animation` failed with their default output path in an unsaved
   Blender file (`cannot save: 'render.png'`). `//` paths now resolve next to the `.blend` file, or to
