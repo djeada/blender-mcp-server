@@ -1,9 +1,4 @@
-"""Headless Blender execution helpers used as a fallback transport.
-
-This path avoids executing heavy physics scripts inside the interactive
-Blender add-on process. Instead, it runs a separate ``blender -b`` process,
-executes the script there, and returns a structured result payload.
-"""
+"""Execute shared Blender commands in a background process with bounded output."""
 
 from __future__ import annotations
 
@@ -12,21 +7,32 @@ import contextlib
 import json
 import os
 import tempfile
-import textwrap
 import time
 import uuid
+from dataclasses import asdict
 from pathlib import Path
 from typing import Any
 
-RESULT_PREFIX = "__BLENDER_MCP_RESULT__="
-DEFAULT_TIMEOUT_SECONDS = 3600.0
+from blender_mcp_server.shared import ADDON_PATH, policy, protocol
+
 MAX_FINISHED_JOBS = 100
+OUTPUT_BYTES = 50_000
+REQUEST_BYTES = 16 * 1024 * 1024
+HEADLESS_COMMANDS = frozenset(
+    {
+        "python.execute",
+        "python.execute_async",
+        "project.get_info",
+        "project.save",
+        "render.still",
+        "render.animation",
+        "export.gltf",
+        "export.obj",
+        "export.fbx",
+    }
+)
 
-
-def _default_timeout() -> float:
-    """Timeout applied when a caller does not pass one (BLENDER_MCP_HEADLESS_TIMEOUT overrides)."""
-    raw = os.environ.get("BLENDER_MCP_HEADLESS_TIMEOUT")
-    return float(raw) if raw else DEFAULT_TIMEOUT_SECONDS
+HEADLESS_JOB_COMMANDS = frozenset({"job.status", "job.cancel", "job.list"})
 
 
 def validate_source(code: str | None, script_path: str | None) -> None:
@@ -36,91 +42,84 @@ def validate_source(code: str | None, script_path: str | None) -> None:
         raise ValueError("Either 'code' or 'script_path' must be provided")
 
 
-def _cap_output(text: str, limit: int = 50000) -> str:
-    if len(text) <= limit:
-        return text
-    return text[:limit] + f"\n... (truncated, {len(text)} total chars)"
+def _wrapper(request: Path, response: Path) -> str:
+    return f"""
+import importlib.util
+import sys
+spec = importlib.util.spec_from_file_location(
+    "_mcp_blender_addon", {str(ADDON_PATH / "__init__.py")!r},
+    submodule_search_locations=[{str(ADDON_PATH)!r}],
+)
+addon = importlib.util.module_from_spec(spec)
+sys.modules[spec.name] = addon
+spec.loader.exec_module(addon)
+from _mcp_blender_addon.headless_runner import run
+run({str(request)!r}, {str(response)!r})
+"""
 
 
-def _safe_json(value: Any) -> Any:
-    if value is None:
-        return None
-    try:
-        json.dumps(value)
-        return value
-    except (TypeError, ValueError):
-        return repr(value)
-
-
-def _extract_payload(stdout: str) -> tuple[dict[str, Any] | None, str]:
-    payload = None
-    clean_lines: list[str] = []
-    for line in stdout.splitlines():
-        if line.startswith(RESULT_PREFIX):
-            payload = json.loads(line[len(RESULT_PREFIX) :])
-        else:
-            clean_lines.append(line)
-    cleaned = "\n".join(clean_lines)
-    if stdout.endswith("\n"):
-        cleaned += "\n"
-    return payload, cleaned
-
-
-def _build_wrapper_script(code_path: Path, args_path: Path) -> str:
-    return textwrap.dedent(
-        f"""
-        import io
-        import json
-        import pathlib
-        import traceback
-        from contextlib import redirect_stdout, redirect_stderr
-
-        import bpy
-        import mathutils
-
-        code = pathlib.Path({code_path.as_posix()!r}).read_text(encoding="utf-8")
-        args = json.loads(pathlib.Path({args_path.as_posix()!r}).read_text(encoding="utf-8"))
-        namespace = {{
-            "bpy": bpy,
-            "mathutils": mathutils,
-            "args": args,
-            "__result__": None,
-        }}
-        stdout_buf = io.StringIO()
-        stderr_buf = io.StringIO()
-
-        try:
-            with redirect_stdout(stdout_buf), redirect_stderr(stderr_buf):
-                exec(compile(code, "<mcp-headless-script>", "exec"), namespace)
-            payload = {{
-                "result": namespace.get("__result__"),
-                "stdout": stdout_buf.getvalue(),
-                "stderr": stderr_buf.getvalue(),
-                "error": None,
-                "timed_out": False,
-                "cancelled": False,
-            }}
-        except BaseException as exc:  # SystemExit must still produce a result payload
-            tb = traceback.format_exception(type(exc), exc, exc.__traceback__)
-            payload = {{
-                "result": None,
-                "stdout": stdout_buf.getvalue(),
-                "stderr": stderr_buf.getvalue(),
-                "error": "".join(tb).strip(),
-                "timed_out": False,
-                "cancelled": False,
-            }}
-
-        print({RESULT_PREFIX!r} + json.dumps(payload, ensure_ascii=True, default=repr))
-        """
-    )
+async def _read_output(stream: asyncio.StreamReader) -> str:
+    output = bytearray()
+    total = 0
+    while chunk := await stream.read(65536):
+        output.extend(chunk[: max(0, OUTPUT_BYTES - len(output))])
+        total += len(chunk)
+    text = output.decode("utf-8", errors="replace")
+    if total > OUTPUT_BYTES:
+        text += f"\n… (truncated, {total} total bytes)"
+    return text
 
 
 class HeadlessBlenderExecutor:
-    """Run Blender scripts in a separate headless Blender process."""
+    """Run typed Blender operations or explicitly authorized Python in background Blender."""
 
-    def __init__(self, blender_binary: str | None = None):
+    _active = 0
+
+    def __init__(self, blender_binary: str | None = None, configured_policy: policy.Policy | None = None):
         self.blender_binary = blender_binary or os.environ.get("BLENDER_BIN", "blender")
+        self.policy = configured_policy if configured_policy is not None else policy.Policy.load()
+
+    @staticmethod
+    def available_commands(config: policy.Policy) -> list[str]:
+        names = []
+        for name in sorted(HEADLESS_COMMANDS | HEADLESS_JOB_COMMANDS):
+            try:
+                config.require_command(name)
+            except PermissionError:
+                continue
+            names.append(name)
+        return names
+
+    def prepare(self, command: str, params: dict, blend_file: str | None) -> str:
+        self.policy.require_transport("headless")
+        if command not in HEADLESS_COMMANDS:
+            raise protocol.UnsupportedError("Command is unavailable in headless Blender")
+        self.policy.require_command(command)
+        source = ""
+        if blend_file:
+            source = policy.resolve_path(blend_file, "")
+            if Path(blend_file).suffix.lower() != ".blend" or Path(source).suffix.lower() != ".blend":
+                raise ValueError("Headless input must be a .blend file")
+            if self.policy.output_roots is not None:
+                if not self.policy.output_roots:
+                    raise PermissionError("Configure explicit output_roots to load a headless .blend project")
+                policy.require_within(source, self.policy.output_roots, "Project is outside configured output roots")
+            if not os.path.isfile(source):
+                raise FileNotFoundError("Headless input project does not exist")
+        if command in {"python.execute", "python.execute_async"}:
+            validate_source(params.get("code"), params.get("script_path"))
+            if params.get("code") and not self.policy.allow_inline_code:
+                raise PermissionError("Inline code execution is disabled by policy")
+            if script_path := params.get("script_path"):
+                resolved = policy.resolve_path(script_path, source)
+                roots = self.policy.script_roots or (policy.project_directory(source),)
+                policy.require_within(resolved, roots, "Script path is outside approved script roots")
+                if Path(resolved).suffix.lower() != ".py":
+                    raise ValueError("Script must be a .py file")
+                if not os.path.isfile(resolved):
+                    raise FileNotFoundError("Script file does not exist")
+                params["script_path"] = resolved
+        return source
 
     async def execute(
         self,
@@ -131,99 +130,139 @@ class HeadlessBlenderExecutor:
         timeout_seconds: int | None = None,
         blend_file: str | None = None,
         factory_startup: bool | None = None,
-        process_holder: dict[str, Any] | None = None,
-    ) -> dict[str, Any]:
-        validate_source(code, script_path)
+        command: str = "python.execute",
+    ) -> dict:
+        return await self.execute_command(
+            command,
+            {"code": code, "script_path": script_path, "args": args},
+            blend_file=blend_file,
+            factory_startup=factory_startup,
+            timeout_seconds=timeout_seconds,
+        )
 
-        if script_path is not None:
-            code = Path(script_path).read_text(encoding="utf-8")
+    async def execute_command(
+        self,
+        command: str,
+        params: dict,
+        *,
+        blend_file: str | None = None,
+        factory_startup: bool | None = None,
+        timeout_seconds: int | None = None,
+        legacy_result: bool = False,
+    ) -> dict:
+        params = {k: v for k, v in params.items() if v is not None}
+        source = self.prepare(command, params, blend_file)
+        limit = (
+            self.policy.long_timeout
+            if command in protocol.LONG_COMMANDS or command == "python.execute_async"
+            else self.policy.command_timeout
+        )
+        if command in {"python.execute", "python.execute_async"}:
+            limit = min(limit, self.policy.max_script_seconds)
+        if timeout_seconds is not None and (type(timeout_seconds) is not int or timeout_seconds <= 0):
+            raise ValueError("Headless timeout_seconds must be a positive integer")
+        default = policy.env_seconds("BLENDER_MCP_HEADLESS_TIMEOUT", limit)
+        timeout = min(limit, timeout_seconds if timeout_seconds is not None else default)
+        payload = json.dumps({"command": command, "params": params, "policy": asdict(self.policy)}, allow_nan=False)
+        if len(payload.encode()) > REQUEST_BYTES:
+            raise ValueError("Headless request exceeds the byte limit")
+        if HeadlessBlenderExecutor._active >= self.policy.max_jobs:
+            raise protocol.BridgeError("busy", "Headless Blender process capacity reached", retryable=True)
+        HeadlessBlenderExecutor._active += 1
+        try:
+            return await self._run(payload, source, factory_startup, timeout, command, legacy_result)
+        finally:
+            HeadlessBlenderExecutor._active -= 1
 
-        args = args or {}
-        timeout = float(timeout_seconds) if timeout_seconds and timeout_seconds > 0 else _default_timeout()
+    async def _run(
+        self, payload: str, source: str, factory_startup: bool | None, timeout: float, command: str, legacy_result: bool
+    ) -> dict:
         start = time.monotonic()
-
-        with tempfile.TemporaryDirectory(prefix="blender-mcp-headless-") as tmpdir:
-            tmp = Path(tmpdir)
-            code_path = tmp / "script.py"
-            args_path = tmp / "args.json"
-            wrapper_path = tmp / "wrapper.py"
-
-            code_path.write_text(code or "", encoding="utf-8")
-            args_path.write_text(json.dumps(args), encoding="utf-8")
-            wrapper_path.write_text(_build_wrapper_script(code_path, args_path), encoding="utf-8")
-
-            cmd = [self.blender_binary, "-b"]
+        script_command = command in {"python.execute", "python.execute_async"}
+        with tempfile.TemporaryDirectory(prefix="blender-mcp-headless-") as directory:
+            tmp = Path(directory)
+            request, response, wrapper = tmp / "request.json", tmp / "result.json", tmp / "wrapper.py"
+            request.write_text(payload, encoding="utf-8")
+            wrapper.write_text(_wrapper(request, response), encoding="utf-8")
+            cmd = [self.blender_binary, "-b", "--disable-autoexec"]
             if factory_startup is not False:
                 cmd.append("--factory-startup")
-            if blend_file:
-                cmd.append(blend_file)
-            cmd.extend(["--python", str(wrapper_path)])
-
+            if source:
+                cmd.append(source)
+            cmd.extend(["--python-exit-code", "1", "--python", str(wrapper)])
             try:
                 proc = await asyncio.create_subprocess_exec(
-                    *cmd,
-                    stdout=asyncio.subprocess.PIPE,
-                    stderr=asyncio.subprocess.PIPE,
+                    *cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
                 )
             except FileNotFoundError as exc:
-                raise FileNotFoundError(
-                    f"Blender executable '{self.blender_binary}' not found. "
-                    "Install Blender or set BLENDER_BIN to its full path."
-                ) from exc
-            if process_holder is not None:
-                process_holder["process"] = proc
+                raise FileNotFoundError("Blender executable not found. Install Blender or set BLENDER_BIN") from exc
+
+            async def collect():
+                assert proc.stdout is not None and proc.stderr is not None
+                stdout, stderr, _ = await asyncio.gather(
+                    _read_output(proc.stdout), _read_output(proc.stderr), proc.wait()
+                )
+                return stdout, stderr
 
             try:
-                stdout_b, stderr_b = await asyncio.wait_for(proc.communicate(), timeout=timeout)
-            except asyncio.TimeoutError:
-                proc.kill()
-                stdout_b, stderr_b = await proc.communicate()
-                elapsed = time.monotonic() - start
+                stdout, stderr = await asyncio.wait_for(collect(), timeout=timeout)
+            except (asyncio.TimeoutError, asyncio.CancelledError) as exc:
+                if proc.returncode is None:
+                    with contextlib.suppress(ProcessLookupError):
+                        proc.kill()
+                with contextlib.suppress(asyncio.TimeoutError):
+                    await asyncio.wait_for(proc.wait(), timeout=5)
+                if isinstance(exc, asyncio.CancelledError):
+                    raise
+                message = f"Headless Blender exceeded the {timeout:g}s deadline"
+                if not script_command:
+                    raise protocol.RequestTimeoutError("execution_timeout", message, command=command) from exc
                 return {
                     "result": None,
-                    "stdout": _cap_output(stdout_b.decode("utf-8", errors="replace")),
-                    "stderr": _cap_output(stderr_b.decode("utf-8", errors="replace")),
-                    "error": f"Execution exceeded timeout of {timeout:.3f}s",
-                    "duration_seconds": round(elapsed, 4),
+                    "stdout": "",
+                    "stderr": "",
+                    "error": message,
+                    "duration_seconds": round(time.monotonic() - start, 4),
                     "timed_out": True,
                     "cancelled": False,
                 }
-            except asyncio.CancelledError:
-                # Stop Blender, then let the cancellation propagate to the caller.
-                if proc.returncode is None:
-                    proc.kill()
-                with contextlib.suppress(ProcessLookupError):
-                    await proc.wait()
-                raise
 
-        elapsed = time.monotonic() - start
-        stdout = stdout_b.decode("utf-8", errors="replace")
-        stderr = stderr_b.decode("utf-8", errors="replace")
-        payload, clean_stdout = _extract_payload(stdout)
-
-        if payload is None:
-            error = f"Headless Blender exited with code {proc.returncode} without a result payload"
-            if stderr.strip():
-                error = f"{error}\n{stderr.strip()}"
-            return {
-                "result": None,
-                "stdout": _cap_output(stdout),
-                "stderr": _cap_output(stderr),
-                "error": error,
-                "duration_seconds": round(elapsed, 4),
-                "timed_out": False,
-                "cancelled": False,
-            }
-
-        return {
-            "result": _safe_json(payload.get("result")),
-            "stdout": _cap_output(clean_stdout + payload.get("stdout", "")),
-            "stderr": _cap_output(stderr + payload.get("stderr", "")),
-            "error": payload.get("error"),
-            "duration_seconds": round(elapsed, 4),
-            "timed_out": bool(payload.get("timed_out")),
-            "cancelled": bool(payload.get("cancelled")),
-        }
+            if proc.returncode != 0 or not response.is_file():
+                raise protocol.BridgeError(
+                    "command_failed", "Headless Blender exited before returning a result", command=command
+                )
+            with response.open(encoding="utf-8") as handle:
+                raw_response = handle.read(protocol.MAX_RESPONSE_BYTES + 1)
+            if len(raw_response) > protocol.MAX_RESPONSE_BYTES:
+                raise protocol.BridgeError(
+                    "response_too_large", "Blender response exceeds the byte limit", command=command
+                )
+            envelope = json.loads(raw_response)
+            if not envelope["success"]:
+                error = envelope["error_details"]
+                raise protocol.BridgeError(
+                    error["code"],
+                    error["message"],
+                    command=command,
+                    retryable=error["retryable"],
+                    details=error["details"],
+                )
+            result: dict = envelope["result"]
+            if legacy_result:
+                return {
+                    "result": result,
+                    "stdout": stdout,
+                    "stderr": stderr,
+                    "error": None,
+                    "duration_seconds": round(time.monotonic() - start, 4),
+                    "timed_out": False,
+                    "cancelled": False,
+                }
+            if script_command:
+                result["duration_seconds"] = round(time.monotonic() - start, 4)
+                for field, output in (("stdout", stdout), ("stderr", stderr)):
+                    result[field] = (output + result[field])[: 2 * OUTPUT_BYTES]
+            return result
 
 
 class HeadlessJobManager:
@@ -243,10 +282,11 @@ class HeadlessJobManager:
         blend_file: str | None = None,
         factory_startup: bool | None = None,
     ) -> str:
-        validate_source(code, script_path)
+        executor.prepare("python.execute_async", {"code": code, "script_path": script_path, "args": args}, blend_file)
+        if sum(job["status"] in {"queued", "running"} for job in self._jobs.values()) >= executor.policy.max_jobs:
+            raise protocol.BridgeError("busy", "Headless job capacity reached", retryable=True)
         self._prune_finished_jobs()
         job_id = f"headless-job-{uuid.uuid4().hex[:8]}"
-        process_holder: dict[str, Any] = {}
         job = {
             "job_id": job_id,
             "status": "queued",
@@ -259,7 +299,6 @@ class HeadlessJobManager:
             "error": None,
             "cancelled": False,
             "timed_out": False,
-            "process_holder": process_holder,
             "task": None,
         }
         self._jobs[job_id] = job
@@ -275,7 +314,7 @@ class HeadlessJobManager:
                     timeout_seconds=timeout_seconds,
                     blend_file=blend_file,
                     factory_startup=factory_startup,
-                    process_holder=process_holder,
+                    command="python.execute_async",
                 )
             except asyncio.CancelledError:
                 job["status"] = "cancelled"
@@ -285,7 +324,9 @@ class HeadlessJobManager:
                 raise
             except Exception as exc:  # e.g. missing Blender binary or unreadable script_path
                 job["status"] = "failed"
-                job["error"] = f"{type(exc).__name__}: {exc}"
+                error = protocol.command_error(exc, "python.execute_async", job_id)
+                job["error"] = str(error)
+                job["error_details"] = error.as_dict()
                 job["completed_at"] = time.time()
                 return
             job["result"] = result.get("result")
@@ -314,7 +355,7 @@ class HeadlessJobManager:
     def get_status(self, job_id: str) -> dict[str, Any]:
         job = self._jobs.get(job_id)
         if not job:
-            raise ValueError(f"Unknown job: {job_id}")
+            raise protocol.MissingResourceError("Unknown job")
         return {
             "job_id": job["job_id"],
             "status": job["status"],
@@ -325,6 +366,7 @@ class HeadlessJobManager:
             "stdout": job["stdout"],
             "stderr": job["stderr"],
             "error": job["error"],
+            "error_details": job.get("error_details"),
             "cancelled": job["cancelled"],
             "timed_out": job["timed_out"],
         }
@@ -343,7 +385,7 @@ class HeadlessJobManager:
     async def cancel(self, job_id: str) -> dict[str, Any]:
         job = self._jobs.get(job_id)
         if not job:
-            raise ValueError(f"Unknown job: {job_id}")
+            raise protocol.MissingResourceError("Unknown job")
 
         task = job.get("task")
         if task is not None and not task.done():
@@ -355,3 +397,10 @@ class HeadlessJobManager:
             job["completed_at"] = time.time()
             job["cancelled"] = True
         return {"job_id": job_id, "status": job["status"]}
+
+    async def close(self) -> None:
+        tasks = [job["task"] for job in self._jobs.values() if not job["task"].done()]
+        for task in tasks:
+            task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
+        self._jobs.clear()

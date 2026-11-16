@@ -1,8 +1,10 @@
 """MCP tools for objects."""
 
+from typing import Literal
+
 from mcp.server.fastmcp import Context
 
-from blender_mcp_server.app import bridge, mcp
+from blender_mcp_server.app import bridge, bridge_result, mcp
 
 
 @mcp.tool(
@@ -133,3 +135,46 @@ async def history_undo(ctx: Context) -> str:
 )
 async def history_redo(ctx: Context) -> str:
     return await bridge(ctx, "history.redo")
+
+
+@mcp.tool(name="blender_object_list_modifiers", description="List the ordered modifier stack on an object.")
+async def object_list_modifiers(ctx: Context, name: str) -> dict:
+    return {"result": await bridge_result(ctx, "object.list_modifiers", name=name)}
+
+
+@mcp.tool(name="blender_object_add_modifier", description="Add a Bevel, Subsurf, Mirror, or Solidify mesh modifier.")
+async def object_add_modifier(
+    ctx: Context,
+    name: str,
+    modifier_type: Literal["BEVEL", "SUBSURF", "MIRROR", "SOLIDIFY"],
+    modifier_name: str | None = None,
+    properties: dict | None = None,
+) -> dict:
+    return {
+        "result": await bridge_result(
+            ctx,
+            "object.add_modifier",
+            name=name,
+            modifier_type=modifier_type,
+            modifier_name=modifier_name,
+            properties=properties,
+        )
+    }
+
+
+@mcp.tool(name="blender_object_update_modifier", description="Update permitted settings on a named mesh modifier.")
+async def object_update_modifier(ctx: Context, name: str, modifier_name: str, properties: dict) -> dict:
+    return {
+        "result": await bridge_result(
+            ctx,
+            "object.update_modifier",
+            name=name,
+            modifier_name=modifier_name,
+            properties=properties,
+        )
+    }
+
+
+@mcp.tool(name="blender_object_remove_modifier", description="Remove a supported modifier without baking it.")
+async def object_remove_modifier(ctx: Context, name: str, modifier_name: str) -> dict:
+    return {"result": await bridge_result(ctx, "object.remove_modifier", name=name, modifier_name=modifier_name)}

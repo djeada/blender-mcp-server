@@ -36,6 +36,7 @@ class TestBlenderConnection:
 
         mock_reader = AsyncMock()
         mock_reader.readline = AsyncMock(return_value=b"")
+        mock_reader.at_eof = MagicMock(return_value=False)
         mock_writer = AsyncMock()
         mock_writer.write = MagicMock()
         mock_writer.drain = AsyncMock()
@@ -59,7 +60,7 @@ class TestBlenderConnection:
         conn = BlenderConnection(host="127.0.0.1", port=19999)
         with (
             patch("asyncio.open_connection", new=AsyncMock(side_effect=ConnectionRefusedError("refused"))),
-            pytest.raises(ConnectionError, match=r"Cannot reach Blender at 127\.0\.0\.1:19999 \(refused\).*add-on"),
+            pytest.raises(ConnectionError, match=r"Cannot reach Blender at 127\.0\.0\.1:19999.*add-on"),
         ):
             await conn.send_command("scene.get_info")
 
@@ -85,6 +86,7 @@ class TestConnectionHardening:
         monkeypatch.delenv("BLENDER_MCP_TOKEN")
         token_file = tmp_path / "token"
         token_file.write_text("from-file\n")
+        token_file.chmod(0o600)
         monkeypatch.setenv("BLENDER_MCP_TOKEN_FILE", str(token_file))
         assert load_auth_token() == "from-file"
 

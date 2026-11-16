@@ -5,6 +5,7 @@ import math
 import bpy
 
 from .geometry import build_primitive_pydata
+from .protocol import MissingResourceError
 
 
 def create_primitive_mesh_object(
@@ -30,7 +31,7 @@ def get_transform(params: dict) -> dict:
     name = params["name"]
     obj = bpy.data.objects.get(name)
     if not obj:
-        raise ValueError(f"Object '{name}' not found")
+        raise MissingResourceError(f"Object '{name}' not found")
     return {
         "name": obj.name,
         "location": list(obj.location),
@@ -51,7 +52,7 @@ def get_hierarchy(params: dict) -> dict:
     if name:
         obj = bpy.data.objects.get(name)
         if not obj:
-            raise ValueError(f"Object '{name}' not found")
+            raise MissingResourceError(f"Object '{name}' not found")
         subtree: dict = build_tree(obj)
         return subtree
 
@@ -77,7 +78,7 @@ def delete(params: dict) -> dict:
     name = params["name"]
     obj = bpy.data.objects.get(name)
     if not obj:
-        raise ValueError(f"Object '{name}' not found")
+        raise MissingResourceError(f"Object '{name}' not found")
     bpy.data.objects.remove(obj, do_unlink=True)
     return {"deleted": name}
 
@@ -86,7 +87,7 @@ def translate(params: dict) -> dict:
     name = params["name"]
     obj = bpy.data.objects.get(name)
     if not obj:
-        raise ValueError(f"Object '{name}' not found")
+        raise MissingResourceError(f"Object '{name}' not found")
     offset = params.get("offset", [0, 0, 0])
     absolute = params.get("location")
     if absolute is not None and "offset" in params:
@@ -104,7 +105,7 @@ def rotate(params: dict) -> dict:
     name = params["name"]
     obj = bpy.data.objects.get(name)
     if not obj:
-        raise ValueError(f"Object '{name}' not found")
+        raise MissingResourceError(f"Object '{name}' not found")
     rotation = params.get("rotation", [0, 0, 0])
     degrees = params.get("degrees", True)
     if degrees:
@@ -117,7 +118,7 @@ def scale(params: dict) -> dict:
     name = params["name"]
     obj = bpy.data.objects.get(name)
     if not obj:
-        raise ValueError(f"Object '{name}' not found")
+        raise MissingResourceError(f"Object '{name}' not found")
     scale = params.get("scale", [1, 1, 1])
     obj.scale = scale
     return {"name": obj.name, "scale": list(obj.scale)}
@@ -127,7 +128,7 @@ def duplicate(params: dict) -> dict:
     name = params["name"]
     obj = bpy.data.objects.get(name)
     if not obj:
-        raise ValueError(f"Object '{name}' not found")
+        raise MissingResourceError(f"Object '{name}' not found")
     new_obj = obj.copy()
     if obj.data is not None:  # Empties carry no data block
         new_obj.data = obj.data.copy()
@@ -145,7 +146,7 @@ def duplicate(params: dict) -> dict:
 def rename(params: dict) -> dict:
     obj = bpy.data.objects.get(params["name"])
     if not obj:
-        raise ValueError(f"Object '{params['name']}' not found")
+        raise MissingResourceError(f"Object '{params['name']}' not found")
     new_name = params["new_name"].strip()
     if not new_name:
         raise ValueError("Object name must not be empty")
@@ -157,10 +158,10 @@ def rename(params: dict) -> dict:
 def parent(params: dict) -> dict:
     obj = bpy.data.objects.get(params["name"])
     if not obj:
-        raise ValueError(f"Object '{params['name']}' not found")
+        raise MissingResourceError(f"Object '{params['name']}' not found")
     parent_obj = bpy.data.objects.get(params["parent"])
     if not parent_obj:
-        raise ValueError(f"Object '{params['parent']}' not found")
+        raise MissingResourceError(f"Object '{params['parent']}' not found")
     if parent_obj is obj:
         raise ValueError(f"Object '{obj.name}' cannot be parented to itself")
     ancestor = parent_obj
@@ -187,7 +188,7 @@ def parent(params: dict) -> dict:
 def unparent(params: dict) -> dict:
     obj = bpy.data.objects.get(params["name"])
     if not obj:
-        raise ValueError(f"Object '{params['name']}' not found")
+        raise MissingResourceError(f"Object '{params['name']}' not found")
     if obj.parent is None:
         raise ValueError(f"Object '{obj.name}' has no parent")
     keep_transform = bool(params.get("keep_transform"))
@@ -201,7 +202,7 @@ def unparent(params: dict) -> dict:
 def get_object_of_type(name: str, expected_type: str):
     obj = bpy.data.objects.get(name)
     if not obj:
-        raise ValueError(f"Object '{name}' not found")
+        raise MissingResourceError(f"Object '{name}' not found")
     if obj.type != expected_type:
         raise ValueError(f"Object '{name}' is of type {obj.type}, not {expected_type}")
     return obj

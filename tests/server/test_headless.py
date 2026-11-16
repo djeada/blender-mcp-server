@@ -1,338 +1,169 @@
-"""Tests for MCP headless."""
+"""Headless execution, subprocess deadlines and shared-policy enforcement."""
 
 import asyncio
 import json
-import sys
-import tempfile
+from dataclasses import replace
+from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
 from blender_mcp_server.app import HEADLESS_JOB_MANAGER
 from blender_mcp_server.headless import HeadlessBlenderExecutor, HeadlessJobManager
-from blender_mcp_server.headless_scripts import EXPORT_FBX, EXPORT_GLTF, EXPORT_OBJ, RENDER_ANIMATION, RENDER_STILL
-from blender_mcp_server.server import (
-    job_cancel,
-    job_list,
-    job_status,
-    python_exec,
-    python_exec_async,
-    render_still,
-)
-
-from .helpers import _FakeRender
+from blender_mcp_server.server import job_status, python_exec, python_exec_async, render_still
+from blender_mcp_server.shared import policy, protocol
 
 
-class TestHeadlessExecutor:
-    @pytest.mark.asyncio
-    async def test_execute_parses_structured_payload(self):
-        executor = HeadlessBlenderExecutor(blender_binary="blender")
-        payload = {
-            "result": {"ok": True},
-            "stdout": "inner stdout\n",
-            "stderr": "",
-            "error": None,
-            "timed_out": False,
-            "cancelled": False,
-        }
-
-        proc = AsyncMock()
-        proc.communicate = AsyncMock(
-            return_value=(
-                ("noise before\n__BLENDER_MCP_RESULT__=" + json.dumps(payload) + "\n").encode(),
-                b"",
-            )
-        )
-        proc.returncode = 0
-
-        with patch("asyncio.create_subprocess_exec", return_value=proc):
-            result = await executor.execute(code="__result__ = {'ok': True}")
-
-        assert result["result"] == {"ok": True}
-        assert "noise before" in result["stdout"]
-        assert "inner stdout" in result["stdout"]
-        assert result["error"] is None
-
-    @pytest.mark.asyncio
-    async def test_execute_uses_factory_startup_by_default_with_blend_file(self):
-        executor = HeadlessBlenderExecutor(blender_binary="blender")
-
-        proc = AsyncMock()
-        proc.communicate = AsyncMock(
-            return_value=(
-                (
-                    "__BLENDER_MCP_RESULT__="
-                    + json.dumps(
-                        {
-                            "result": {"ok": True},
-                            "stdout": "",
-                            "stderr": "",
-                            "error": None,
-                            "timed_out": False,
-                            "cancelled": False,
-                        }
-                    )
-                    + "\n"
-                ).encode(),
-                b"",
-            )
-        )
-        proc.returncode = 0
-
-        with patch("asyncio.create_subprocess_exec", return_value=proc) as create_proc:
-            await executor.execute(code="__result__ = {'ok': True}", blend_file="/tmp/test.blend")
-
-        cmd = create_proc.await_args.args
-        assert "--factory-startup" in cmd
-        assert "/tmp/test.blend" in cmd
+def _context(config, send=None):
+    ctx = MagicMock()
+    conn = ctx.request_context.lifespan_context
+    conn.policy = config
+    conn.send_command = AsyncMock(return_value=send)
+    return ctx
 
 
-class TestHeadlessTransportTools:
-    @pytest.mark.asyncio
-    async def test_python_exec_uses_headless_transport(self):
-        ctx = MagicMock()
-        ctx.request_context.lifespan_context = MagicMock()
-
-        with patch(
-            "blender_mcp_server.headless.HeadlessBlenderExecutor.execute",
-            new=AsyncMock(return_value={"result": {"mode": "headless"}}),
-        ) as execute:
-            result = await python_exec(
-                ctx,
-                code="__result__ = {'mode': 'headless'}",
-                transport="headless",
-            )
-
-        assert json.loads(result) == {"result": {"mode": "headless"}}
-        execute.assert_awaited_once()
-
-    @pytest.mark.asyncio
-    async def test_headless_async_job_lifecycle(self):
-        HEADLESS_JOB_MANAGER._jobs.clear()
-        ctx = MagicMock()
-        ctx.request_context.lifespan_context = MagicMock()
-
-        with patch(
-            "blender_mcp_server.headless.HeadlessBlenderExecutor.execute",
-            new=AsyncMock(
-                return_value={
-                    "result": {"ok": True},
-                    "stdout": "",
-                    "stderr": "",
-                    "error": None,
-                    "cancelled": False,
-                    "timed_out": False,
-                }
-            ),
-        ):
-            created = json.loads(
-                await python_exec_async(
-                    ctx,
-                    code="__result__ = {'ok': True}",
-                    transport="headless",
-                )
-            )
-            job_id = created["job_id"]
-            await asyncio.sleep(0)
-            status = json.loads(await job_status(ctx, job_id))
-
-        assert job_id.startswith("headless-job-")
-        assert status["status"] == "succeeded"
-        assert status["result"] == {"ok": True}
-
-    @pytest.mark.asyncio
-    async def test_render_still_uses_headless_transport(self):
-        ctx = MagicMock()
-        ctx.request_context.lifespan_context = MagicMock()
-
-        with patch(
-            "blender_mcp_server.headless.HeadlessBlenderExecutor.execute",
-            new=AsyncMock(return_value={"result": {"output_path": "/tmp/test.png"}}),
-        ) as execute:
-            result = await render_still(
-                ctx,
-                output_path="/tmp/test.png",
-                transport="headless",
-                blend_file="/tmp/test.blend",
-            )
-
-        assert json.loads(result) == {"result": {"output_path": "/tmp/test.png"}}
-        execute.assert_awaited_once()
-        assert execute.await_args.kwargs["factory_startup"] is None
-
-    @pytest.mark.asyncio
-    async def test_job_list_merges_headless_jobs(self):
-        HEADLESS_JOB_MANAGER._jobs.clear()
-        HEADLESS_JOB_MANAGER._jobs["headless-job-1"] = {
-            "job_id": "headless-job-1",
-            "status": "queued",
-            "created_at": 1.0,
-        }
-        ctx = MagicMock()
-        ctx.request_context.lifespan_context = MagicMock()
-        ctx.request_context.lifespan_context.send_command = AsyncMock(
-            return_value={"jobs": [{"job_id": "bridge-job-1", "status": "running", "created_at": 2.0}]}
-        )
-        result = json.loads(await job_list(ctx))
-
-        ids = {job["job_id"] for job in result["jobs"]}
-        assert ids == {"bridge-job-1", "headless-job-1"}
-
-    @pytest.mark.asyncio
-    async def test_headless_job_cancel(self):
-        HEADLESS_JOB_MANAGER._jobs.clear()
-        ctx = MagicMock()
-        ctx.request_context.lifespan_context = MagicMock()
-
-        async def slow_execute(**_kwargs):
-            await asyncio.sleep(10)
-            return {"result": None, "stdout": "", "stderr": "", "error": None, "cancelled": False, "timed_out": False}
-
-        with patch(
-            "blender_mcp_server.headless.HeadlessBlenderExecutor.execute",
-            new=slow_execute,
-        ):
-            created = json.loads(await python_exec_async(ctx, code="pass", transport="headless"))
-            job_id = created["job_id"]
-            cancelled = json.loads(await job_cancel(ctx, job_id))
-
-        assert cancelled["status"] == "cancelled"
+def _stream(data):
+    reader = asyncio.StreamReader()
+    reader.feed_data(data)
+    reader.feed_eof()
+    return reader
 
 
-class TestHeadlessRenderScripts:
-    """Run the scripts sent to ``blender -b`` against a stand-in bpy module."""
+@pytest.mark.asyncio
+async def test_executor_uses_json_result_file_and_disables_autoexec(headless_policy, tmp_path):
+    source = tmp_path / "model.blend"
+    source.touch()
+    proc = MagicMock(returncode=0, stderr=_stream(b""), stdout=_stream(b"native output\n"))
+    proc.wait = AsyncMock(return_value=0)
 
-    def _run(self, monkeypatch, tmp_path, script, args, *, blend_file="", engines=("BLENDER_EEVEE_NEXT", "CYCLES")):
-        bpy = MagicMock()
-        bpy.data.filepath = blend_file
-        bpy.path.abspath = lambda path: path
-        bpy.context.scene.render = _FakeRender(engines)
-        monkeypatch.setitem(sys.modules, "bpy", bpy)
-        monkeypatch.setattr(tempfile, "gettempdir", lambda: str(tmp_path))
-        namespace = {"args": args, "__result__": None}
-        exec(compile(script, "<headless-render>", "exec"), namespace)
-        return bpy, namespace["__result__"]
+    async def spawn(*cmd, **kwargs):
+        assert cmd[:4] == ("blender", "-b", "--disable-autoexec", "--factory-startup")
+        assert cmd[4] == str(source)
+        tmp = Path(cmd[-1]).parent
+        request = json.loads((tmp / "request.json").read_text())
+        assert request["command"] == "python.execute"
+        result = {"result": {"ok": True}, "stdout": "script output", "stderr": "", "error": None}
+        (tmp / "result.json").write_text(json.dumps({"success": True, "result": result}))
+        return proc
 
-    def test_still_resolves_default_path_and_engine_alias(self, monkeypatch, tmp_path):
-        args = {"output_path": "//render.png", "resolution_x": 64, "resolution_y": None, "engine": "eevee"}
-        bpy, result = self._run(monkeypatch, tmp_path, RENDER_STILL, args)
-        assert result == {
-            "output_path": str(tmp_path / "blender-mcp" / "render.png"),
-            "engine": "BLENDER_EEVEE_NEXT",
-            "resolution": [64, 1080],
-        }
-        assert (tmp_path / "blender-mcp").is_dir()
-        bpy.ops.render.render.assert_called_once_with(write_still=True)
-
-    def test_animation_creates_output_folder(self, monkeypatch, tmp_path):
-        args = {"output_path": str(tmp_path / "frames" / "f_"), "frame_start": 1, "frame_end": 3, "engine": None}
-        bpy, result = self._run(monkeypatch, tmp_path, RENDER_ANIMATION, args)
-        assert result["output_path"] == str(tmp_path / "frames" / "f_")
-        assert result["frame_range"] == [1, 3]
-        assert (tmp_path / "frames").is_dir()
-        bpy.ops.render.render.assert_called_once_with(animation=True)
-
-    def test_unknown_engine_is_reported_before_rendering(self, monkeypatch, tmp_path):
-        args = {"output_path": str(tmp_path / "r.png"), "engine": "luxrender"}
-        with pytest.raises(ValueError, match="Unknown render engine 'luxrender'.*CYCLES"):
-            self._run(monkeypatch, tmp_path, RENDER_STILL, args)
+    executor = HeadlessBlenderExecutor(configured_policy=headless_policy)
+    with patch("asyncio.create_subprocess_exec", side_effect=spawn):
+        result = await executor.execute(code="pass", blend_file=str(source))
+    assert result["result"] == {"ok": True}
+    assert result["stdout"] == "native output\nscript output"
 
 
-class TestHeadlessExportScripts:
-    """Run the export scripts sent to ``blender -b`` against a stand-in bpy module."""
-
-    def _run(self, monkeypatch, tmp_path, script, args, *, blend_file=""):
-        bpy = MagicMock()
-        bpy.data.filepath = blend_file
-        bpy.path.abspath = lambda path: str(tmp_path / path[2:]) if path.startswith("//") else path
-        monkeypatch.setitem(sys.modules, "bpy", bpy)
-        monkeypatch.setattr(tempfile, "gettempdir", lambda: str(tmp_path))
-        namespace = {"args": args, "__result__": None}
-        exec(compile(script, "<headless-export>", "exec"), namespace)
-        return bpy, namespace["__result__"]
-
-    def test_gltf_appends_extension_and_creates_folder(self, monkeypatch, tmp_path):
-        args = {"filepath": str(tmp_path / "new" / "dir" / "model")}
-        bpy, result = self._run(monkeypatch, tmp_path, EXPORT_GLTF, args)
-        assert result["filepath"] == f"{tmp_path}/new/dir/model.glb"
-        assert (tmp_path / "new" / "dir").is_dir()
-        bpy.ops.export_scene.gltf.assert_called_once_with(filepath=result["filepath"])
-
-    def test_obj_extension_check_ignores_case(self, monkeypatch, tmp_path):
-        args = {"filepath": str(tmp_path / "a.OBJ")}
-        bpy, result = self._run(monkeypatch, tmp_path, EXPORT_OBJ, args)
-        assert result["filepath"] == str(tmp_path / "a.OBJ")
-        bpy.ops.wm.obj_export.assert_called_once_with(filepath=result["filepath"])
-
-    def test_fbx_blend_relative_path_from_unsaved_file(self, monkeypatch, tmp_path):
-        args = {"filepath": "//scene.fbx"}
-        bpy, result = self._run(monkeypatch, tmp_path, EXPORT_FBX, args)
-        assert result["filepath"] == str(tmp_path / "blender-mcp" / "scene.fbx")
-        bpy.ops.export_scene.fbx.assert_called_once_with(filepath=result["filepath"])
-
-    def test_fbx_blend_relative_path_from_saved_file(self, monkeypatch, tmp_path):
-        args = {"filepath": "//out/model"}
-        bpy, result = self._run(monkeypatch, tmp_path, EXPORT_FBX, args, blend_file=str(tmp_path / "scene.blend"))
-        assert result["filepath"] == str(tmp_path / "out" / "model.fbx")
+@pytest.mark.asyncio
+async def test_headless_status_and_cancel_lifecycle(headless_policy):
+    await HEADLESS_JOB_MANAGER.close()
+    ctx = _context(headless_policy)
+    with patch.object(HeadlessBlenderExecutor, "execute", new=AsyncMock(return_value={"result": "ok"})):
+        job_id = json.loads(await python_exec_async(ctx, code="pass", transport="headless"))["job_id"]
+        await HEADLESS_JOB_MANAGER._jobs[job_id]["task"]
+    assert json.loads(await job_status(ctx, job_id))["status"] == "succeeded"
+    await HEADLESS_JOB_MANAGER.close()
 
 
-class TestHeadlessJobFailures:
-    @pytest.mark.asyncio
-    async def test_missing_blender_binary_names_the_fix(self):
-        with pytest.raises(FileNotFoundError, match="'/nonexistent/blender' not found.*BLENDER_BIN"):
-            await HeadlessBlenderExecutor("/nonexistent/blender").execute(code="pass")
+@pytest.mark.asyncio
+async def test_typed_render_uses_its_own_command(headless_policy):
+    configured = replace(headless_policy, allow_python=False, allow_inline_code=False)
+    with patch.object(HeadlessBlenderExecutor, "execute_command", new=AsyncMock(return_value={})) as execute:
+        await render_still(_context(configured), output_path="/tmp/image", transport="headless")
+    assert execute.await_args.args[0] == "render.still"
 
-    @pytest.mark.asyncio
-    async def test_executor_exception_marks_job_failed(self):
-        manager = HeadlessJobManager()
-        job_id = await manager.create_job(HeadlessBlenderExecutor("/nonexistent/blender"), code="pass")
-        await manager._jobs[job_id]["task"]
-        status = manager.get_status(job_id)
-        assert status["status"] == "failed"
-        assert "FileNotFoundError" in status["error"]
 
-    @pytest.mark.asyncio
-    async def test_cancel_kills_process_and_propagates(self):
-        executor = HeadlessBlenderExecutor("blender")
-        proc = MagicMock()
-        proc.returncode = None
+@pytest.mark.asyncio
+@pytest.mark.parametrize("allowed_commands", [None, ("render.still",)])
+async def test_headless_does_not_bypass_live_preferences(headless_policy, allowed_commands):
+    config = replace(
+        headless_policy, transports=("bridge", "headless"), output_roots=(), allowed_commands=allowed_commands
+    )
+    ctx = _context(config, {"policy": {"local_restrictions": True}})
+    with patch("asyncio.create_subprocess_exec") as spawn:
+        if allowed_commands is None:
+            with pytest.raises(protocol.BridgeError, match="local Blender") as error:
+                await python_exec(ctx, code="pass", transport="headless")
+            assert error.value.code == "policy_mismatch"
+        else:
+            with pytest.raises(PermissionError, match="allowlist"):
+                await python_exec(ctx, code="pass", transport="headless")
+    spawn.assert_not_called()
 
-        async def hang():
-            await asyncio.sleep(10)
 
-        proc.communicate = hang
-        proc.wait = AsyncMock(return_value=-9)
-        with patch("asyncio.create_subprocess_exec", new=AsyncMock(return_value=proc)):
-            task = asyncio.create_task(executor.execute(code="pass"))
-            await asyncio.sleep(0.01)
+@pytest.mark.asyncio
+async def test_managed_script_and_project_paths_are_checked_before_spawn(headless_policy, tmp_path):
+    approved = tmp_path / "works"
+    approved.mkdir()
+    (tmp_path / "outside.py").write_text("pass")
+    (tmp_path / "outside.blend").touch()
+    config = replace(headless_policy, script_roots=(str(approved),), output_roots=(str(approved),))
+    executor = HeadlessBlenderExecutor(configured_policy=config)
+    with patch("asyncio.create_subprocess_exec") as spawn:
+        with pytest.raises(PermissionError, match="approved script"):
+            await executor.execute(script_path=str(approved / ".." / "outside.py"))
+        with pytest.raises(PermissionError, match="output roots"):
+            await executor.execute_command("project.get_info", {}, blend_file=str(tmp_path / "outside.blend"))
+    spawn.assert_not_called()
+
+
+def test_policy_file_is_explicit_and_rejects_unknown_settings(monkeypatch, tmp_path):
+    monkeypatch.delenv("BLENDER_MCP_POLICY_FILE", raising=False)
+    assert policy.Policy.load().transports == ("bridge",)
+    config = tmp_path / "policy.json"
+    monkeypatch.setenv("BLENDER_MCP_POLICY_FILE", str(config))
+    config.write_text('{"transports": ["headless"], "allowed_commands": []}')
+    value = policy.Policy.load()
+    assert value.policy_id and not value.allow_python
+    with pytest.raises(PermissionError):
+        value.require_command("scene.get_info")
+    config.write_text('{"allow_pythn": true}')
+    with pytest.raises(ValueError, match="Unknown policy"):
+        policy.Policy.load()
+
+
+@pytest.mark.asyncio
+async def test_missing_blender_marks_job_failed(headless_policy):
+    executor = HeadlessBlenderExecutor("/nonexistent/blender", headless_policy)
+    manager = HeadlessJobManager()
+    job_id = await manager.create_job(executor, code="pass")
+    await manager._jobs[job_id]["task"]
+    status = manager.get_status(job_id)
+    assert status["status"] == "failed"
+    assert status["error_details"]["code"] == "not_found"
+    assert "BLENDER_BIN" in status["error"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("cancel", [True, False])
+async def test_subprocess_is_killed_on_timeout_or_cancellation(headless_policy, monkeypatch, cancel):
+    spawned = asyncio.Event()
+    proc = MagicMock(returncode=None, stdout=asyncio.StreamReader(), stderr=asyncio.StreamReader())
+    proc.wait = AsyncMock(return_value=-9)
+
+    async def spawn(*args, **kwargs):
+        spawned.set()
+        return proc
+
+    monkeypatch.setenv("BLENDER_MCP_HEADLESS_TIMEOUT", "1" if cancel else "0.02")
+    executor = HeadlessBlenderExecutor(configured_policy=headless_policy)
+    with patch("asyncio.create_subprocess_exec", side_effect=spawn):
+        task = asyncio.create_task(executor.execute(code="pass"))
+        await spawned.wait()
+        if cancel:
             task.cancel()
             with pytest.raises(asyncio.CancelledError):
                 await task
-        proc.kill.assert_called_once()
+        else:
+            assert (await task)["timed_out"]
+    proc.kill.assert_called_once()
 
-    @pytest.mark.asyncio
-    async def test_default_timeout_is_applied(self, monkeypatch):
-        monkeypatch.setenv("BLENDER_MCP_HEADLESS_TIMEOUT", "0.01")
-        executor = HeadlessBlenderExecutor("blender")
-        proc = MagicMock()
-        proc.returncode = None
-        calls = {"n": 0}
 
-        async def communicate():
-            calls["n"] += 1
-            if calls["n"] == 1:
-                await asyncio.sleep(10)
-            return b"", b""
+@pytest.mark.asyncio
+async def test_headless_job_queries_obey_command_policy(headless_policy):
+    from blender_mcp_server.server import job_cancel, job_list
 
-        proc.communicate = communicate
-        with patch("asyncio.create_subprocess_exec", new=AsyncMock(return_value=proc)):
-            result = await executor.execute(code="pass")
-        assert result["timed_out"] is True
-
-    def test_finished_jobs_are_pruned(self):
-        manager = HeadlessJobManager()
-        for i in range(150):
-            manager._jobs[f"headless-job-{i}"] = {"job_id": f"headless-job-{i}", "status": "succeeded", "created_at": i}
-        manager._prune_finished_jobs()
-        assert len(manager._jobs) < 100
-        assert "headless-job-149" in manager._jobs
+    ctx = _context(replace(headless_policy, allowed_commands=("python.execute_async",)))
+    for tool in (job_status, job_cancel, job_list):
+        params = {} if tool is job_list else {"job_id": "headless-job-private"}
+        with pytest.raises(PermissionError, match="allowlist"):
+            await tool(ctx, **params)

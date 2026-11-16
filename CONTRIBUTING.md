@@ -52,7 +52,7 @@ BLENDER_MCP_INTEGRATION=1 pytest tests/integration -v --no-cov   # End-to-end ag
 ```
 
 Coverage (server and add-on) is collected automatically; the minimum threshold is 70 %.
-CI runs the unit tests on Python 3.10–3.13 and the integration tests against Ubuntu's Blender package.
+CI runs the unit tests on Python 3.10–3.13 and uses pinned Blender builds for the [integration matrix](docs/compatibility.md).
 
 ### 5. Commit and Push
 

@@ -9,6 +9,14 @@ class TestServerAddonContract:
     """Every MCP tool must send parameters the add-on's validator accepts."""
 
     CALLS = [
+        ("scene_execute_batch", {"commands": [{"command": "scene.get_info"}]}),
+        ("project_save", {"filepath": "/tmp/file.blend", "overwrite": True}),
+        ("project_open", {"filepath": "/tmp/file.blend", "discard_changes": True}),
+        ("project_revert", {"confirm": True}),
+        ("object_list_modifiers", {"name": "Cube"}),
+        ("object_add_modifier", {"name": "Cube", "modifier_type": "BEVEL", "properties": {"segments": 2}}),
+        ("object_update_modifier", {"name": "Cube", "modifier_name": "Edge", "properties": {"width": 0.1}}),
+        ("object_remove_modifier", {"name": "Cube", "modifier_name": "Edge"}),
         ("scene_list_objects", {"type": "MESH"}),
         ("object_get_transform", {"name": "Cube"}),
         ("object_get_hierarchy", {"name": "Cube"}),
@@ -75,7 +83,7 @@ class TestServerAddonContract:
         commands = set()
         for tool in server.mcp._tool_manager._tools.values():
             source = inspect.getsource(tool.fn)
-            commands.update(re.findall(r'bridge\(\s*ctx,\s*"([a-z_.]+)"', source))
+            commands.update(re.findall(r'bridge(?:_result)?\(\s*ctx,\s*"([a-z_.]+)"', source))
             commands.update(re.findall(r'send_command\("([a-z_.]+)"', source))
         assert commands == set(runtime.handler.commands)
 

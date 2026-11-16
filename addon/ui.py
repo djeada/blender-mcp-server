@@ -6,15 +6,33 @@ from bpy.app.handlers import persistent
 from .auth import token_file_path
 from .runtime import runtime
 
+_restart_bridge = runtime.ensure_server_running
+
+
+@persistent
+def _on_load_pre(_dummy):
+    if runtime.server:
+        runtime.server.begin_scene_load()
+
 
 @persistent
 def _on_load_post(_dummy):
-    bpy.app.timers.register(runtime.ensure_server_running, first_interval=0.1)
+    if runtime.server:
+        runtime.server.end_scene_load()
+    _schedule_restart()
+
+
+def _schedule_restart():
+    if runtime.enabled and not bpy.app.timers.is_registered(_restart_bridge):
+        bpy.app.timers.register(_restart_bridge, first_interval=0.1)
 
 
 def _on_port_changed(_prefs, _context):
-    """Rebind the bridge when the port preference changes."""
-    bpy.app.timers.register(runtime.ensure_server_running, first_interval=0.1)
+    _schedule_restart()
+
+
+def _on_policy_changed(_prefs, _context):
+    runtime.settings.sync_preferences()
 
 
 class MCP_AddonPreferences(bpy.types.AddonPreferences):
@@ -27,6 +45,7 @@ class MCP_AddonPreferences(bpy.types.AddonPreferences):
             "and disable inline Python code"
         ),
         default=False,
+        update=_on_policy_changed,
     )
     port: bpy.props.IntProperty(  # type: ignore[valid-type]
         name="Port",
@@ -40,16 +59,19 @@ class MCP_AddonPreferences(bpy.types.AddonPreferences):
         name="Allow Inline Code",
         description="Allow python.execute to run inline code strings. Disable to only allow script files",
         default=True,
+        update=_on_policy_changed,
     )
     approved_script_roots: bpy.props.StringProperty(  # type: ignore[valid-type]
         name="Approved Script Roots",
         description="Semicolon-separated list of directories from which script files may be loaded",
         default="",
+        update=_on_policy_changed,
     )
     allowed_commands: bpy.props.StringProperty(  # type: ignore[valid-type]
         name="Allowed Commands",
         description="Comma-separated bridge commands to accept (e.g. scene.get_info,object.create_mesh). Empty = all",
         default="",
+        update=_on_policy_changed,
     )
 
     def draw(self, context):
@@ -102,9 +124,14 @@ class MCP_OT_StartServer(bpy.types.Operator):
     bl_label = "Start MCP Server"
 
     def execute(self, context):
-        if runtime.server is None:
-            runtime.server = runtime.create_server()
-        runtime.server.start()
+        runtime.enabled = True
+        try:
+            runtime.settings.policy.require_transport("bridge")
+            runtime.ensure_server_running()
+        except (OSError, PermissionError, ValueError) as exc:
+            self.report({"ERROR"}, str(exc))
+            return {"CANCELLED"}
+        assert runtime.server is not None
         self.report({"INFO"}, f"MCP Bridge started on {runtime.server.address}")
         return {"FINISHED"}
 
@@ -114,8 +141,7 @@ class MCP_OT_StopServer(bpy.types.Operator):
     bl_label = "Stop MCP Server"
 
     def execute(self, context):
-        if runtime.server:
-            runtime.server.stop()
+        runtime.stop()
         self.report({"INFO"}, "MCP Bridge stopped")
         return {"FINISHED"}
 
@@ -123,19 +149,30 @@ class MCP_OT_StopServer(bpy.types.Operator):
 classes = (MCP_AddonPreferences, MCP_PT_Panel, MCP_OT_StartServer, MCP_OT_StopServer)
 
 
+def _load_handlers():
+    handlers = bpy.app.handlers
+    pairs = [(handlers.load_pre, _on_load_pre), (handlers.load_post, _on_load_post)]
+    if hasattr(handlers, "load_post_fail"):
+        pairs.append((handlers.load_post_fail, _on_load_post))
+    return pairs
+
+
 def register():
     for cls in classes:
         bpy.utils.register_class(cls)
-    if _on_load_post not in bpy.app.handlers.load_post:
-        bpy.app.handlers.load_post.append(_on_load_post)
+    for handlers, callback in _load_handlers():
+        if callback not in handlers:
+            handlers.append(callback)
+    runtime.enabled = True
     runtime.ensure_server_running()
 
 
 def unregister():
-    if _on_load_post in bpy.app.handlers.load_post:
-        bpy.app.handlers.load_post.remove(_on_load_post)
-    if runtime.server:
-        runtime.server.stop()
-        runtime.server = None
+    for handlers, callback in _load_handlers():
+        if callback in handlers:
+            handlers.remove(callback)
+    if bpy.app.timers.is_registered(_restart_bridge):
+        bpy.app.timers.unregister(_restart_bridge)
+    runtime.stop()
     for cls in reversed(classes):
         bpy.utils.unregister_class(cls)

@@ -28,3 +28,15 @@ def test_registration_starts_runtime_and_unregister_stops_it(addon_module, runti
     server.stop.assert_called_once_with()
     assert runtime.server is None
     assert addon_module.ui._on_load_post not in mock_bpy.app.handlers.load_post
+
+
+def test_bridge_recovery_timer_keeps_same_callback(addon_module, mock_bpy):
+    callbacks = set()
+    timers = mock_bpy.app.timers
+    timers.is_registered.side_effect = callbacks.__contains__
+    timers.register.side_effect = lambda callback, **kwargs: callbacks.add(callback)
+
+    addon_module.ui._on_port_changed(None, None)
+    addon_module.ui._on_port_changed(None, None)
+    timers.register.assert_called_once()
+    assert next(iter(callbacks)) is addon_module.ui._restart_bridge

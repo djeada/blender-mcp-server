@@ -79,7 +79,7 @@ run_blender_helper() {
 
 if [ "${SKIP_ADDON}" -eq 0 ]; then
     log "Building the add-on zip"
-    "${REPO_ROOT}/scripts/build_addon_zip.sh" >/dev/null
+    "${VENV_PYTHON}" "${REPO_ROOT}/scripts/build_addon_zip.py" >/dev/null
     if version_ge "${VERSION}" "4.2"; then
         # A legacy copy with the same name would also bind the bridge port.
         run_blender_helper remove-legacy | grep '^MCP_LEGACY' | sed 's/^/    /' >&2 || true

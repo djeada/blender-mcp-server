@@ -5,6 +5,8 @@ from dataclasses import dataclass, field
 
 import bpy
 
+from .policy import Policy, resolve_path
+
 
 def get_addon_preferences():
     """Return this add-on's preferences object when available."""
@@ -26,6 +28,7 @@ def get_addon_preferences():
 
 @dataclass
 class RuntimeSettings:
+    policy: Policy = field(default_factory=Policy.load)
     host: str = "127.0.0.1"
     port: int = 9876
     safe_mode: bool = False
@@ -59,14 +62,15 @@ class RuntimeSettings:
         self.allow_inline_code = bool(getattr(prefs, "allow_inline_code", self.allow_inline_code))
 
         raw_roots = getattr(prefs, "approved_script_roots", "") or ""
-        path_helper = getattr(getattr(bpy, "path", None), "abspath", None)
         approved_roots = []
         for root in raw_roots.split(";"):
             root = root.strip()
             if not root:
                 continue
-            resolved = path_helper(root) if callable(path_helper) else root
-            approved_roots.append(os.path.realpath(resolved))
+            # A project-relative local root cannot authorize file access in an unsaved session.
+            if root.startswith("//") and not bpy.data.filepath:
+                continue
+            approved_roots.append(resolve_path(root, str(bpy.data.filepath)))
 
         self.approved_script_roots = approved_roots
         self.allowed_paths = approved_roots.copy() if self.safe_mode else []
@@ -74,3 +78,16 @@ class RuntimeSettings:
         raw_commands = getattr(prefs, "allowed_commands", "") or ""
         commands = {command.strip() for command in raw_commands.replace(";", ",").split(",") if command.strip()}
         self.tool_whitelist = commands or None
+
+    @property
+    def local_restrictions(self) -> bool:
+        return bool(
+            self.safe_mode
+            or not self.allow_inline_code
+            or self.approved_script_roots
+            or self.tool_whitelist is not None
+        )
+
+    @property
+    def inline_enabled(self) -> bool:
+        return self.policy.allow_inline_code and self.allow_inline_code and not self.safe_mode

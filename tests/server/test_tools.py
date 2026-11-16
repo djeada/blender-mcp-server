@@ -112,7 +112,7 @@ class TestToolRegistration:
         assert "blender_job_list" in names
 
     def test_total_tool_count(self):
-        assert len(self._get_tool_names()) == 44
+        assert len(self._get_tool_names()) == 54
 
     @pytest.mark.parametrize(
         "name", ["blender_object_create_tree", "blender_object_scatter", "blender_material_create_emissive"]
@@ -143,6 +143,9 @@ class TestMCPProtocol:
 class TestToolParameters:
     def _ctx(self):
         ctx = MagicMock()
+        from blender_mcp_server.shared import policy
+
+        ctx.request_context.lifespan_context.policy = policy.Policy.load()
         ctx.request_context.lifespan_context.send_command = AsyncMock(return_value={})
         return ctx
 
@@ -175,8 +178,10 @@ class TestToolParameters:
             await python_exec(self._ctx(), code="pass", transport="headless")
 
     @pytest.mark.asyncio
-    async def test_async_headless_validates_before_creating_job(self):
+    async def test_async_headless_validates_before_creating_job(self, headless_policy):
         HEADLESS_JOB_MANAGER._jobs.clear()
         with pytest.raises(ValueError):
-            await python_exec_async(self._ctx(), transport="headless")
+            ctx = self._ctx()
+            ctx.request_context.lifespan_context.policy = headless_policy
+            await python_exec_async(ctx, transport="headless")
         assert HEADLESS_JOB_MANAGER._jobs == {}

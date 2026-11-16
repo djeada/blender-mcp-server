@@ -25,8 +25,8 @@ The Blender MCP Server enables AI assistants (Claude Desktop, etc.) to control B
 `server.py` assembles and re-exports the tools defined in `tools/` by feature.
 `app.py` owns the MCP instance, connection lifespan, and transport helpers.
 `connection.py` handles authenticated TCP requests and response framing.
-`headless.py` manages background Blender processes and jobs; `headless_scripts.py`
-contains the built-in render/export scripts. Importing the package alone does not
+`headless.py` manages background Blender processes and jobs. The packaged add-on
+provides the shared rendering, export and project commands. Importing the package alone does not
 register tools or start the server.
 
 ### 2. Blender Add-on (`addon/__init__.py`)
@@ -54,8 +54,9 @@ The implementation is split by responsibility:
 
 Each runtime owns its mutable settings, job table, and last-execution status.
 Feature handlers do not import the UI, transport, or add-on entrypoint. The
-transport authorizes and validates a request before pushing an undo entry, and
-enforces its size limit on each newline-delimited request.
+transport authorizes and validates each request before dispatch. Successful
+mutations record an undo checkpoint when Blender supports it. The transport
+enforces a size limit on each newline-delimited request. The queue has a capacity and separate queue and execution deadlines. Scene loads change the generation and fail pending work. See [Policy and recovery](policy.md) for the wire error contract.
 
 ### 3. Optional Examples (`examples/`)
 

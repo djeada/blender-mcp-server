@@ -5,15 +5,17 @@ import json
 from mcp.server.fastmcp import Context
 
 from blender_mcp_server.app import Transport, bridge, headless_executor, mcp
-from blender_mcp_server.headless_scripts import EXPORT_FBX, EXPORT_GLTF, EXPORT_OBJ
 
 
-async def _headless_export(script: str, filepath: str, blend_file: str | None, factory_startup: bool | None) -> str:
-    result = await headless_executor().execute(
-        code=script,
-        args={"filepath": filepath},
+async def _headless_export(
+    ctx: Context, command: str, filepath: str, blend_file: str | None, factory_startup: bool | None
+) -> str:
+    result = await (await headless_executor(ctx, command)).execute_command(
+        command,
+        {"filepath": filepath},
         blend_file=blend_file,
         factory_startup=factory_startup,
+        legacy_result=True,
     )
     return json.dumps(result, indent=2)
 
@@ -34,7 +36,7 @@ async def export_gltf(
     factory_startup: bool | None = None,
 ) -> str:
     if transport == "headless":
-        return await _headless_export(EXPORT_GLTF, filepath, blend_file, factory_startup)
+        return await _headless_export(ctx, "export.gltf", filepath, blend_file, factory_startup)
     return await bridge(ctx, "export.gltf", filepath=filepath)
 
 
@@ -54,7 +56,7 @@ async def export_obj(
     factory_startup: bool | None = None,
 ) -> str:
     if transport == "headless":
-        return await _headless_export(EXPORT_OBJ, filepath, blend_file, factory_startup)
+        return await _headless_export(ctx, "export.obj", filepath, blend_file, factory_startup)
     return await bridge(ctx, "export.obj", filepath=filepath)
 
 
@@ -74,5 +76,5 @@ async def export_fbx(
     factory_startup: bool | None = None,
 ) -> str:
     if transport == "headless":
-        return await _headless_export(EXPORT_FBX, filepath, blend_file, factory_startup)
+        return await _headless_export(ctx, "export.fbx", filepath, blend_file, factory_startup)
     return await bridge(ctx, "export.fbx", filepath=filepath)

@@ -5,7 +5,6 @@ import json
 from mcp.server.fastmcp import Context
 
 from blender_mcp_server.app import Transport, bridge, headless_executor, mcp
-from blender_mcp_server.headless_scripts import RENDER_ANIMATION, RENDER_STILL
 
 
 @mcp.tool(
@@ -29,9 +28,9 @@ async def render_still(
     factory_startup: bool | None = None,
 ) -> str:
     if transport == "headless":
-        result = await headless_executor().execute(
-            code=RENDER_STILL,
-            args={
+        result = await (await headless_executor(ctx, "render.still")).execute_command(
+            "render.still",
+            {
                 "output_path": output_path,
                 "resolution_x": resolution_x,
                 "resolution_y": resolution_y,
@@ -39,6 +38,7 @@ async def render_still(
             },
             blend_file=blend_file,
             factory_startup=factory_startup,
+            legacy_result=True,
         )
         return json.dumps(result, indent=2)
     return await bridge(
@@ -71,9 +71,9 @@ async def render_animation(
     factory_startup: bool | None = None,
 ) -> str:
     if transport == "headless":
-        result = await headless_executor().execute(
-            code=RENDER_ANIMATION,
-            args={
+        result = await (await headless_executor(ctx, "render.animation")).execute_command(
+            "render.animation",
+            {
                 "output_path": output_path,
                 "frame_start": frame_start,
                 "frame_end": frame_end,
@@ -81,6 +81,7 @@ async def render_animation(
             },
             blend_file=blend_file,
             factory_startup=factory_startup,
+            legacy_result=True,
         )
         return json.dumps(result, indent=2)
     return await bridge(

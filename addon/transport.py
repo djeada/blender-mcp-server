@@ -1,4 +1,4 @@
-"""Authenticated TCP framing and main-thread request scheduling for Blender."""
+"""Authenticated TCP framing and bounded main-thread scheduling for Blender."""
 
 from __future__ import annotations
 
@@ -7,15 +7,28 @@ import errno
 import hmac
 import json
 import logging
-import queue
 import socket
 import threading
-import traceback
-from typing import TYPE_CHECKING, Any
+import time
+import uuid
+from collections import deque
+from dataclasses import dataclass, field
+from typing import TYPE_CHECKING
 
 import bpy
 
 from .auth import load_or_create_token
+from .protocol import (
+    ADDON_VERSION,
+    BRIDGE_STATUS,
+    LONG_COMMANDS,
+    MAX_RESPONSE_BYTES,
+    PROTOCOL_VERSION,
+    BridgeError,
+    command_error,
+    failure,
+    label,
+)
 
 if TYPE_CHECKING:
     from .commands import CommandHandler
@@ -23,10 +36,32 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 BUFFER_SIZE = 65536
 MAX_REQUEST_SIZE = 16 * 1024 * 1024
+MAX_CLIENTS = 24
+CLIENT_IDLE_SECONDS = 60
+TIMER_INTERVAL = 0.01
+
+
+@dataclass(eq=False)
+class Pending:
+    request: dict
+    generation: str
+    queued_at: float = field(default_factory=time.monotonic)
+    started_at: float | None = None
+    state: str = "queued"
+    changed: threading.Event = field(default_factory=threading.Event)
+    response: dict | None = None
+
+    @property
+    def command(self) -> str:
+        return str(self.request.get("command", ""))
+
+    @property
+    def request_id(self) -> str | None:
+        return self.request.get("id")
 
 
 class BlenderMCPServer:
-    """TCP socket server running inside Blender."""
+    """One TCP listener, one Blender timer and a bounded queue per active server."""
 
     def __init__(self, handler: CommandHandler, *, max_request_size: int = MAX_REQUEST_SIZE):
         self.settings = handler.settings
@@ -38,7 +73,12 @@ class BlenderMCPServer:
         self._host = self.settings.host
         self._port = self.settings.port
         self._handler = handler
-        self._request_queue: queue.Queue[dict[str, Any]] = queue.Queue()
+        self._lock = threading.RLock()
+        self._request_queue: deque[Pending] = deque()
+        self._active: Pending | None = None
+        self._generation = uuid.uuid4().hex
+        self._loading = False
+        self._clients: set[socket.socket] = set()
         self._drain_timer_callback = self._drain_request_queue
 
     @property
@@ -51,11 +91,7 @@ class BlenderMCPServer:
 
     def is_healthy(self) -> bool:
         return bool(
-            self._running
-            and self._server_socket is not None
-            and self._thread is not None
-            and self._thread.is_alive()
-            and self._port == self.settings.port
+            self._running and self._thread is not None and self._thread.is_alive() and self._port == self.settings.port
         )
 
     def start(self):
@@ -63,191 +99,345 @@ class BlenderMCPServer:
             self._register_request_queue_timer()
             return
         self.settings.sync_preferences()
+        self.settings.policy.require_transport("bridge")
         self._auth_token = load_or_create_token()
-        self._host = self.settings.host
-        self._port = self.settings.port
-        self._server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        self._server_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-        self._server_socket.settimeout(1.0)
+        self._host, self._port = self.settings.host, self.settings.port
+        listener = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         try:
-            self._server_socket.bind((self._host, self._port))
+            if hasattr(socket, "SO_EXCLUSIVEADDRUSE"):
+                listener.setsockopt(socket.SOL_SOCKET, socket.SO_EXCLUSIVEADDRUSE, 1)
+            else:
+                listener.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            listener.settimeout(0.5)
+            listener.bind((self._host, self._port))
+            listener.listen(MAX_CLIENTS)
         except OSError as exc:
-            if self._server_socket is not None:
-                self._server_socket.close()
-                self._server_socket = None
-            if exc.errno == errno.EADDRINUSE:
-                logger.warning(
-                    "Blender MCP Bridge port %s already in use; skipping bridge startup",
-                    self._port,
-                )
-                self._running = False
-                return
+            listener.close()
+            if exc.errno in {errno.EADDRINUSE, 10048, 10013}:
+                raise OSError(f"Cannot bind Blender MCP bridge to {self.address}; check for another listener") from exc
             raise
-        self._running = True
-        self._server_socket.listen(1)
-        self._thread = threading.Thread(target=self._accept_loop, daemon=True)
-        self._thread.start()
-        self._register_request_queue_timer()
-        logger.info(f"Blender MCP Bridge listening on {self._host}:{self._port}")
+        self._server_socket = listener
+        with self._lock:
+            self._generation = uuid.uuid4().hex
+            self._loading = False
+            self._running = True
+        try:
+            self._register_request_queue_timer()
+            self._thread = threading.Thread(target=self._accept_loop, args=(listener,), daemon=True)
+            self._thread.start()
+        except Exception:
+            self.stop()
+            raise
+        logger.info("Blender MCP Bridge listening on %s", self.address)
 
     def _register_request_queue_timer(self):
         timers = bpy.app.timers
-        is_registered = getattr(timers, "is_registered", None)
-        if callable(is_registered):
-            try:
-                if is_registered(self._drain_timer_callback):
-                    return
-            except Exception:
-                logger.debug("Unable to check MCP Bridge queue timer registration", exc_info=True)
-        try:
-            timers.register(self._drain_timer_callback, first_interval=0.01, persistent=True)
-        except TypeError:
-            # Blender versions before the persistent timer flag still need the bridge to run.
-            timers.register(self._drain_timer_callback, first_interval=0.01)
-        logger.debug("Registered MCP Bridge request queue timer")
+        if timers.is_registered(self._drain_timer_callback):
+            return
+        timers.register(self._drain_timer_callback, first_interval=TIMER_INTERVAL, persistent=True)
+
+    def _finish(self, pending: Pending, state: str, response: dict):
+        """Complete a request at most once. Caller holds the state lock."""
+        if pending.response is not None:
+            return
+        pending.state = state
+        pending.response = response
+        pending.changed.set()
+        logger.debug("MCP request %s id=%s command=%s", state, label(pending.request_id), label(pending.command))
+
+    def _fail(self, pending: Pending, code: str, message: str, *, state: str = "failed", retryable=False, details=None):
+        error = BridgeError(
+            code, message, command=pending.command, request_id=pending.request_id, retryable=retryable, details=details
+        )
+        self._finish(pending, state, failure(error, wire_id=pending.request_id))
+
+    def begin_scene_load(self):
+        with self._lock:
+            self._loading = True
+            self._generation = uuid.uuid4().hex
+            while self._request_queue:
+                self._fail(
+                    self._request_queue.popleft(),
+                    "session_changed",
+                    "Scene loading; check bridge status",
+                    state="cancelled",
+                    retryable=True,
+                )
+        self._handler.jobs.invalidate_queued("Scene changed before the job started")
+
+    def end_scene_load(self):
+        with self._lock:
+            self._loading = False
+        if self._running:
+            self._register_request_queue_timer()
 
     def stop(self):
-        self._running = False
+        with self._lock:
+            self._running = False
+            self._loading = False
+            clients = tuple(self._clients)
+            while self._request_queue:
+                self._fail(
+                    self._request_queue.popleft(),
+                    "disconnected",
+                    "Blender MCP Bridge stopped",
+                    state="cancelled",
+                    retryable=True,
+                )
+            if self._active:
+                self._fail(
+                    self._active,
+                    "disconnected",
+                    "Blender MCP Bridge stopped during execution",
+                    details={"outcome_uncertain": True},
+                )
+        self._handler.jobs.invalidate_queued("Bridge stopped before the job started")
+        timers = bpy.app.timers
+        if timers.is_registered(self._drain_timer_callback):
+            timers.unregister(self._drain_timer_callback)
         if self._server_socket:
             self._server_socket.close()
             self._server_socket = None
-        if self._thread:
-            self._thread.join(timeout=3)
-            self._thread = None
-        while not self._request_queue.empty():
-            queued = self._request_queue.get_nowait()
-            queued["response"] = {
-                "id": queued["request"].get("id"),
-                "success": False,
-                "error": "Blender MCP Bridge stopped",
-            }
-            queued["event"].set()
+        for conn in clients:
+            # Wake idle readers while allowing in-flight requests to send their final response.
+            with contextlib.suppress(OSError):
+                conn.shutdown(socket.SHUT_RD)
+        if self._thread and self._thread.ident is not None:
+            self._thread.join(timeout=1)
+        self._thread = None
         logger.info("Blender MCP Bridge stopped")
 
-    def _accept_loop(self):
-        while self._running:
+    def _accept_loop(self, listener: socket.socket):
+        while self._running and listener is self._server_socket:
             try:
-                assert self._server_socket is not None
-                conn, addr = self._server_socket.accept()
-                logger.info(f"MCP client connected from {addr}")
-                client_thread = threading.Thread(target=self._handle_client, args=(conn,), daemon=True)
-                client_thread.start()
+                conn, _ = listener.accept()
             except TimeoutError:
                 continue
             except OSError:
                 break
+            with self._lock:
+                if not self._running or listener is not self._server_socket or len(self._clients) >= MAX_CLIENTS:
+                    conn.close()
+                    continue
+                self._clients.add(conn)
+            threading.Thread(target=self._handle_client, args=(conn,), daemon=True).start()
 
     def _is_authorized(self, request: dict) -> bool:
         token = request.get("token")
-        if self._auth_token is None or not isinstance(token, str):
-            return False
-        return hmac.compare_digest(token.encode(), self._auth_token.encode())
+        return bool(
+            self._auth_token is not None
+            and isinstance(token, str)
+            and hmac.compare_digest(token.encode("utf-8", "surrogatepass"), self._auth_token.encode())
+        )
 
     @staticmethod
-    def _reject(conn: socket.socket, request_id: Any, error: str) -> None:
+    def _write_response(conn: socket.socket, response: dict) -> None:
+        try:
+            data = json.dumps(response, allow_nan=False, separators=(",", ":")).encode()
+        except (TypeError, ValueError, RecursionError):
+            error = BridgeError(
+                "command_failed", "Blender returned an unserializable response", request_id=response["id"]
+            )
+            data = json.dumps(failure(error, wire_id=response["id"])).encode()
+        if len(data) > MAX_RESPONSE_BYTES:
+            error = BridgeError(
+                "response_too_large", "Blender response exceeds the byte limit", request_id=response["id"]
+            )
+            data = json.dumps(failure(error, wire_id=response["id"])).encode()
+        conn.sendall(data + b"\n")
+
+    def _reject(self, conn: socket.socket, code: str, error: str) -> None:
         with contextlib.suppress(OSError):
-            conn.sendall(json.dumps({"id": request_id, "success": False, "error": error}).encode() + b"\n")
+            self._write_response(conn, failure(BridgeError(code, error)))
 
     def _handle_client(self, conn: socket.socket):
-        conn.settimeout(None)
+        conn.settimeout(CLIENT_IDLE_SECONDS)
         buffer = b""
+        frame_started = time.monotonic()
         try:
             while self._running:
                 data = conn.recv(BUFFER_SIZE)
                 if not data:
                     break
-                buffer += data
-                if b"\n" not in buffer and len(buffer) > self.max_request_size:
-                    self._reject(conn, None, f"Request exceeds {self.max_request_size} bytes")
+                if not buffer:
+                    frame_started = time.monotonic()
+                if time.monotonic() - frame_started > CLIENT_IDLE_SECONDS:
                     return
-                # Messages are newline-delimited JSON
+                buffer += data
                 while b"\n" in buffer:
                     line, buffer = buffer.split(b"\n", 1)
                     if len(line) > self.max_request_size:
-                        self._reject(conn, None, f"Request exceeds {self.max_request_size} bytes")
+                        self._reject(conn, "invalid_arguments", f"Request exceeds {self.max_request_size} bytes")
                         return
                     if not line.strip():
                         continue
-                    # Any malformed line closes the connection. This stops cross-protocol
-                    # payloads (e.g. a browser POST whose body smuggles a JSON command).
+                    # Close on malformed frames, including cross-protocol traffic.
                     try:
                         request = json.loads(line)
-                    except (json.JSONDecodeError, UnicodeDecodeError) as e:
-                        self._reject(conn, None, f"Invalid JSON: {e}")
+                    except (ValueError, RecursionError):
+                        self._reject(conn, "invalid_arguments", "Invalid JSON request")
                         return
                     if not isinstance(request, dict):
-                        self._reject(conn, None, "Request must be a JSON object")
+                        self._reject(conn, "invalid_arguments", "Request must be a JSON object")
                         return
                     if not self._is_authorized(request):
                         logger.warning("Rejected unauthenticated MCP bridge request")
-                        # id=None marks a connection-level rejection; the connection is closed next.
-                        self._reject(conn, None, "Unauthorized: missing or invalid token")
+                        self._reject(conn, "permission_denied", "Unauthorized: missing or invalid token")
                         return
-                    response = self._submit_request(request)
-                    conn.sendall(json.dumps(response).encode() + b"\n")
+                    request.pop("token", None)
+                    if request.get("id") is not None and label(request["id"]) is None:
+                        self._reject(conn, "invalid_arguments", "Invalid request ID")
+                        return
+                    self._write_response(conn, self._submit_request(request))
+                    frame_started = time.monotonic()
                 if len(buffer) > self.max_request_size:
-                    self._reject(conn, None, f"Request exceeds {self.max_request_size} bytes")
+                    self._reject(conn, "invalid_arguments", f"Request exceeds {self.max_request_size} bytes")
                     return
-        except Exception as e:
-            logger.error(f"Client handler error: {e}")
+        except OSError:
+            logger.debug("MCP client socket closed")
         finally:
             conn.close()
+            with self._lock:
+                self._clients.discard(conn)
 
     def _submit_request(self, request: dict) -> dict:
-        if self._handler.is_worker_command(request.get("command", "")):
-            return self._process_request(request, sync_settings=False)
-        event = threading.Event()
-        queued: dict[str, Any] = {"request": request, "event": event, "response": None}
-        logger.debug("Enqueue MCP request id=%s command=%s", request.get("id"), request.get("command"))
-        self._request_queue.put(queued)
-        event.wait()
-        response: dict = queued["response"]
-        return response
+        command = request.get("command")
+        request_id = request.get("id")
+        if not isinstance(command, str) or label(command) is None:
+            error = BridgeError("invalid_arguments", "Invalid or missing command", request_id=request_id)
+            return failure(error, wire_id=request_id)
+        if command == BRIDGE_STATUS or request.get("policy_id") == self.settings.policy.policy_id:
+            if self._handler.is_worker_command(command):
+                return self._process_request(request, sync_settings=False)
+        else:
+            error = BridgeError(
+                "policy_mismatch",
+                "Bridge and MCP policy differ; restart both with the same policy",
+                command=command,
+                request_id=request_id,
+            )
+            return failure(error, wire_id=request_id)
+
+        with self._lock:
+            pending = Pending(request, self._generation)
+            if not self._running or self._loading:
+                self._fail(
+                    pending, "session_changed", "Blender session is changing; check bridge status", retryable=True
+                )
+            elif len(self._request_queue) >= self.settings.policy.queue_capacity:
+                self._fail(pending, "busy", "Blender request queue is full; check bridge status", retryable=True)
+            else:
+                self._request_queue.append(pending)
+                logger.debug("MCP request queued id=%s command=%s", label(request_id), command)
+        return self._wait_for_request(pending)
+
+    def _wait_for_request(self, pending: Pending) -> dict:
+        policy = self.settings.policy
+        while True:
+            with self._lock:
+                if pending.response is not None:
+                    return pending.response
+                started = pending.started_at
+                budget = policy.long_timeout if pending.command in LONG_COMMANDS else policy.command_timeout
+                deadline = pending.queued_at + policy.queue_timeout if started is None else started + budget
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    if started is None:
+                        self._request_queue.remove(pending)
+                        details: dict = {"started": False}
+                        if active := self._active_request():
+                            details["active_request"] = active
+                        self._fail(
+                            pending,
+                            "queue_timeout",
+                            "Blender main thread did not start the request in time",
+                            state="cancelled",
+                            retryable=True,
+                            details=details,
+                        )
+                    else:
+                        self._fail(
+                            pending,
+                            "execution_timeout",
+                            "Blender execution deadline passed; check bridge status",
+                            details={"outcome_uncertain": True},
+                        )
+                    continue
+                pending.changed.clear()
+            pending.changed.wait(remaining)
 
     def _drain_request_queue(self):
-        while True:
-            try:
-                queued = self._request_queue.get_nowait()
-            except queue.Empty:
-                break
-            request = queued["request"]
-            logger.debug(
-                "Processing MCP request id=%s command=%s",
-                request.get("id"),
-                request.get("command"),
-            )
-            try:
-                queued["response"] = self._process_request(queued["request"])
-            except BaseException as exc:  # Never leave a client waiting or let this kill the timer
-                queued["response"] = {"id": request.get("id"), "success": False, "error": repr(exc)}
-            finally:
-                queued["event"].set()
-            logger.debug(
-                "Finished MCP request id=%s command=%s",
-                request.get("id"),
-                request.get("command"),
-            )
-        return 0.01 if self._running else None
+        with self._lock:
+            if not self._running:
+                return None
+            if self._active is not None or self._loading or not self._request_queue:
+                return TIMER_INTERVAL
+            pending = self._request_queue.popleft()
+            now = time.monotonic()
+            if now - pending.queued_at >= self.settings.policy.queue_timeout:
+                self._fail(
+                    pending,
+                    "queue_timeout",
+                    "Blender main thread did not start the request in time",
+                    state="cancelled",
+                    retryable=True,
+                    details={"started": False},
+                )
+                return TIMER_INTERVAL
+            self._active = pending
+            pending.started_at = now
+            pending.state = "executing"
+            pending.changed.set()
+            logger.debug("MCP request executing id=%s command=%s", label(pending.request_id), label(pending.command))
+        try:
+            response = self._process_request(pending.request)
+        except BaseException as exc:  # Keep the timer alive even on SystemExit.
+            response = failure(command_error(exc, pending.command, pending.request_id), wire_id=pending.request_id)
+        finally:
+            with self._lock:
+                self._finish(pending, "completed" if response["success"] else "failed", response)
+                self._active = None
+        return TIMER_INTERVAL if self._running else None
 
-    @staticmethod
-    def _maybe_push_undo(command: str):
-        undo_push = bpy.ops.ed.undo_push
-        poll = getattr(undo_push, "poll", None)
-        if callable(poll) and not poll():
-            logger.debug(f"Skipping undo push for {command}: context poll failed")
-            return
-        undo_push(message=f"MCP: {command}")
+    def _active_request(self) -> dict | None:
+        active = self._active
+        if active is None or active.command == BRIDGE_STATUS:
+            return None
+        return {"id": active.request_id, "command": active.command}
+
+    def _status(self) -> dict:
+        with self._lock:
+            oldest = self._request_queue[0] if self._request_queue else None
+            return {
+                "main_thread_progress": True,
+                "generation": self._generation,
+                "protocol_version": PROTOCOL_VERSION,
+                "bridge_version": ".".join(map(str, ADDON_VERSION)),
+                "blender_version": str(bpy.app.version_string),
+                "queue_depth": len(self._request_queue),
+                "oldest_queue_age_seconds": round(time.monotonic() - oldest.queued_at, 3) if oldest else None,
+                "active_request": self._active_request(),
+                "commands": [BRIDGE_STATUS, *sorted(self._handler.available_commands())],
+                "policy": {
+                    **self.settings.policy.summary(),
+                    "allow_inline_code": self.settings.policy.allow_python and self.settings.inline_enabled,
+                    "safe_mode": self.settings.safe_mode,
+                    "local_restrictions": self.settings.local_restrictions,
+                },
+            }
 
     def _process_request(self, request: dict, sync_settings: bool = True) -> dict:
         req_id = request.get("id")
         command = request.get("command", "")
         params = request.get("params", {})
         try:
-            specification, values = self._handler.prepare(command, params, sync_settings=sync_settings)
-            if specification.mutates:
-                self._maybe_push_undo(command)
-            result = specification.handler(values)
+            if command == BRIDGE_STATUS:
+                self.settings.sync_preferences()
+                result = self._status()
+            else:
+                result = self._handler.dispatch(command, params, sync_settings=sync_settings)
             return {"id": req_id, "success": True, "result": result}
-        except Exception as e:
-            logger.error(f"Command '{command}' failed: {e}\n{traceback.format_exc()}")
-            return {"id": req_id, "success": False, "error": str(e)}
+        except Exception as exc:
+            error = command_error(exc, command, req_id)
+            logger.debug("MCP request failed id=%s command=%s code=%s", label(req_id), label(command), error.code)
+            return failure(error, wire_id=req_id)

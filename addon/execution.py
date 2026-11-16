@@ -9,7 +9,6 @@ import logging
 import math
 import sys
 import time
-import traceback
 import uuid
 from contextlib import redirect_stderr, redirect_stdout
 from typing import TYPE_CHECKING, Any
@@ -32,7 +31,6 @@ DEFAULT_ASYNC_TIMEOUT = 300
 MAX_SYNC_TIMEOUT = 300
 MAX_ASYNC_TIMEOUT = 3600
 MAX_OUTPUT_SIZE = 50000  # Cap stdout/stderr returned to client
-LOG_CODE_PREVIEW_LEN = 120  # Max chars of code shown in log messages
 
 
 def truncate(text: str, limit: int) -> str:
@@ -40,13 +38,6 @@ def truncate(text: str, limit: int) -> str:
     if len(text) <= limit:
         return text
     return text[:limit] + "…"
-
-
-def cap_output(text: str) -> str:
-    """Cap output string to MAX_OUTPUT_SIZE."""
-    if len(text) <= MAX_OUTPUT_SIZE:
-        return text
-    return text[:MAX_OUTPUT_SIZE] + f"\n… (truncated, {len(text)} total chars)"
 
 
 def make_exec_builtins(blocked_modules: set[str]) -> dict[str, Any]:
@@ -62,6 +53,26 @@ def make_exec_builtins(blocked_modules: set[str]) -> dict[str, Any]:
 
     exec_builtins["__import__"] = guarded_import
     return exec_builtins
+
+
+class CapturedOutput(io.StringIO):
+    """Bound captured output while preserving the stream's write contract."""
+
+    def __init__(self):
+        super().__init__()
+        self.total = 0
+
+    def write(self, text: str) -> int:
+        remaining = max(0, MAX_OUTPUT_SIZE - self.total)
+        self.total += len(text)
+        super().write(text[:remaining])
+        return len(text)
+
+    def getvalue(self) -> str:
+        text = super().getvalue()
+        if self.total > MAX_OUTPUT_SIZE:
+            return f"{text}\n… (truncated, {self.total} total chars)"
+        return text
 
 
 class ScriptExecutionTimeout(BaseException):
@@ -105,16 +116,19 @@ class ScriptExecutor:
             raise ValueError("Provide either 'code' or 'script_path', not both")
         if not code and not script_path:
             raise ValueError("Either 'code' or 'script_path' must be provided")
-        if code is not None:
-            if not self.settings.allow_inline_code or self.settings.safe_mode:
+        if code:
+            if not self.settings.inline_enabled:
                 raise PermissionError(
                     "Inline code execution is disabled (Allow Inline Code is off or Safe Mode is on). "
                     "Use script_path instead."
                 )
-            return code, f"inline ({truncate(code, LOG_CODE_PREVIEW_LEN)})"
+            return code, "inline"
         validated = self.policy.validate_script_path(str(script_path))
         with open(validated, encoding="utf-8") as handle:
-            return handle.read(), f"file ({script_path})"
+            code = handle.read(16 * 1024 * 1024 + 1)
+        if len(code) > 16 * 1024 * 1024:
+            raise ValueError("Script file exceeds the source size limit")
+        return code, "file"
 
     def make_namespace(self, args: dict, cancel_event: threading.Event | None = None) -> dict:
         """Build the execution namespace for exec()."""
@@ -142,8 +156,8 @@ class ScriptExecutor:
         cancel_event: threading.Event | None = None,
     ) -> dict:
         """Execute code with stdout/stderr capture and cooperative timeout checks."""
-        stdout_buf = io.StringIO()
-        stderr_buf = io.StringIO()
+        stdout_buf = CapturedOutput()
+        stderr_buf = CapturedOutput()
         start = time.monotonic()
         previous_trace = sys.gettrace()
 
@@ -161,20 +175,15 @@ class ScriptExecutor:
                 exec(compile(code, "<mcp-script>", "exec"), namespace)
         except BaseException as exc:  # Includes SystemExit/KeyboardInterrupt, which must not reach Blender
             elapsed = time.monotonic() - start
-            tb_lines = traceback.format_exception(type(exc), exc, exc.__traceback__)
-            # Filter out internal bridge frames
-            filtered = [line for line in tb_lines if __file__ not in line]
-            error_str = "".join(filtered).strip()
-            logger.warning(
-                "Script execution failed [%s] after %.3fs: %s",
-                request_id or "?",
-                elapsed,
-                truncate(str(exc), 200),
-            )
+            if isinstance(exc, (ScriptExecutionTimeout, ScriptExecutionCancelled)):
+                error_str = str(exc)
+            else:
+                error_str = f"{type(exc).__name__}: Blender script failed"
+            logger.warning("Script execution failed [%s] after %.3fs", request_id or "?", elapsed)
             return {
                 "result": None,
-                "stdout": cap_output(stdout_buf.getvalue()),
-                "stderr": cap_output(stderr_buf.getvalue()),
+                "stdout": stdout_buf.getvalue(),
+                "stderr": stderr_buf.getvalue(),
                 "error": error_str,
                 "duration_seconds": round(elapsed, 4),
                 "timed_out": isinstance(exc, ScriptExecutionTimeout),
@@ -191,8 +200,8 @@ class ScriptExecutor:
         )
         return {
             "result": safe_json(namespace.get("__result__")),
-            "stdout": cap_output(stdout_buf.getvalue()),
-            "stderr": cap_output(stderr_buf.getvalue()),
+            "stdout": stdout_buf.getvalue(),
+            "stderr": stderr_buf.getvalue(),
             "error": None,
             "duration_seconds": round(elapsed, 4),
             "timed_out": False,
@@ -201,7 +210,11 @@ class ScriptExecutor:
 
     def execute(self, params: dict) -> dict:
         args = params.get("args", {})
-        timeout_seconds = min(params.get("timeout_seconds", DEFAULT_SYNC_TIMEOUT), MAX_SYNC_TIMEOUT)
+        timeout_seconds = min(
+            params.get("timeout_seconds", DEFAULT_SYNC_TIMEOUT),
+            MAX_SYNC_TIMEOUT,
+            self.settings.policy.max_script_seconds,
+        )
 
         request_id = f"exec-{uuid.uuid4().hex[:8]}"
 

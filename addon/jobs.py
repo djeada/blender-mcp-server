@@ -11,6 +11,7 @@ from typing import TYPE_CHECKING, Any
 import bpy
 
 from .execution import DEFAULT_ASYNC_TIMEOUT, MAX_ASYNC_TIMEOUT, truncate
+from .protocol import BridgeError, MissingResourceError
 
 if TYPE_CHECKING:
     from .execution import ScriptExecutor
@@ -55,10 +56,20 @@ class JobManager:
         }
 
         with self._lock:
+            if (
+                sum(job["status"] in {"queued", "running"} for job in self._jobs.values())
+                >= self.executor.settings.policy.max_jobs
+            ):
+                raise BridgeError("busy", "Blender async job capacity reached", retryable=True)
             self._prune_finished_jobs()
             self._jobs[job_id] = job
 
-        bpy.app.timers.register(lambda: self._execute_job(job_id), first_interval=0.01)
+        try:
+            bpy.app.timers.register(lambda: self._execute_job(job_id), first_interval=0.01)
+        except Exception:
+            with self._lock:
+                self._jobs.pop(job_id, None)
+            raise
         return job_id
 
     def _prune_finished_jobs(self) -> None:
@@ -125,11 +136,20 @@ class JobManager:
             "error_summary": truncate(job["error"], 200) if job.get("error") else None,
         }
 
+    def invalidate_queued(self, reason: str) -> None:
+        with self._lock:
+            for job in self._jobs.values():
+                if job["status"] == "queued":
+                    job["status"] = "failed"
+                    job["completed_at"] = time.time()
+                    job["error"] = reason
+                    self._release_job_inputs(job)
+
     def get_status(self, job_id: str) -> dict:
         with self._lock:
             job = self._jobs.get(job_id)
             if not job:
-                raise ValueError(f"Unknown job: {job_id}")
+                raise MissingResourceError("Unknown job")
             return {
                 "job_id": job["job_id"],
                 "status": job["status"],
@@ -147,7 +167,7 @@ class JobManager:
         with self._lock:
             job = self._jobs.get(job_id)
             if not job:
-                raise ValueError(f"Unknown job: {job_id}")
+                raise MissingResourceError("Unknown job")
 
             job["cancel_event"].set()
             job["cancellation_requested"] = True
@@ -180,7 +200,11 @@ class JobManager:
 
     def execute_async(self, params: dict) -> dict:
         code, source_label = self.executor.prepare_source(params)
-        timeout = min(params.get("timeout_seconds", DEFAULT_ASYNC_TIMEOUT), MAX_ASYNC_TIMEOUT)
+        timeout = min(
+            params.get("timeout_seconds", DEFAULT_ASYNC_TIMEOUT),
+            MAX_ASYNC_TIMEOUT,
+            self.executor.settings.policy.max_script_seconds,
+        )
         job_id = self.create_job(code, params.get("args", {}), timeout)
         logger.info("python.execute_async [%s] queued: %s", job_id, source_label)
         return {"job_id": job_id}
