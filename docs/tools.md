@@ -227,6 +227,47 @@ The result lists the effective `bindings`, what was `replaced` and `removed`, `w
 
 In Blender, `directx` renders identically to the OpenGL version of the same map: the green channel is inverted with nodes and the file is not modified. For export, convert the file itself to OpenGL and bind it as `opengl`. Displacement needs geometry fine enough to move, and Cycles and EEVEE support it differently. Normals are tangent space only.
 
+#### Shader node graphs
+
+`blender_shader_graph_inspect` and `blender_shader_graph_edit` read and change the nodes of a `material`, or of the scene's world with `world=true`. `group_path` is a list of group node IDs (up to three deep) to work inside node groups. A node's ID is its Blender node name.
+
+**Inspect.** Without options you get a page of node IDs and types, plus the links that feed those nodes. `sockets=true`, or `nodes=[ids]` (up to 50), adds each socket's `id`, name, type, whether it is linked and its value when not, the settings you may change, and color ramp stops. `limit` and `offset` page the nodes. Sockets disabled by a node's settings are left out. Unsupported node types are listed with `supported: false` and can still be connected to or removed.
+
+**Edit.** `operations` holds 1–64 of these:
+
+| `op` | Keys |
+|---|---|
+| `add_node` | `id`, `type`; optional `properties`, `inputs`, `location`, `label` |
+| `remove_node` | `node` (output nodes cannot be removed) |
+| `set_input` | `node`, `socket`, `value` (the input must be unlinked) |
+| `set_property` | `node`, `property`, `value` |
+| `set_color_ramp` | `node`, `stops` (`position`, `color`), optional `interpolation` |
+| `connect` | `from`, `from_socket`, `to`, `to_socket`; `replace: true` to take over a linked input |
+| `disconnect` | `to`, `to_socket` |
+| `move_node` | `node`, `location` |
+
+Address sockets by `id`. A name also works when only one enabled socket has it; nodes such as Mix repeat names. Socket and setting names can differ between Blender versions, so inspect before editing.
+
+```json
+{
+  "material": "Stone",
+  "operations": [
+    {"op": "add_node", "id": "noise", "type": "ShaderNodeTexNoise", "inputs": {"Scale": 6}},
+    {"op": "add_node", "id": "bump", "type": "ShaderNodeBump", "inputs": {"Strength": 0.4}},
+    {"op": "connect", "from": "noise", "from_socket": "Fac", "to": "bump", "to_socket": "Height"},
+    {"op": "connect", "from": "bump", "from_socket": "Normal", "to": "Principled BSDF", "to_socket": "Normal"}
+  ]
+}
+```
+
+**All or nothing.** The patch is first applied to a temporary copy of the tree, so Blender's own rules, including sockets that appear only after a setting changes, are checked before your tree is touched. If any operation fails, the error names its index and nothing changes. A successful patch is one undo step. The same patch is then applied to the real tree. If that second pass failed despite the dry run, earlier operations would remain; undo restores the previous graph.
+
+Rejected: links between a shader and a value, links that would form a loop (Blender itself accepts them), replacing a link without `replace`, and duplicate node IDs.
+
+**Supported nodes** are common inputs (texture coordinates, UV map, attribute, geometry, object info, layer weight, Fresnel), mapping, noise, Voronoi, wave, gradient, checker, brick, image and environment textures, color ramp, math, vector math, mix, map range, clamp, separate and combine, RGB and value, invert, hue/saturation, brightness/contrast, bump, normal map, displacement, the Principled, diffuse, transparent, emission and background shaders, mix and add shader, reroute and frame. Each has a fixed list of settings that may be changed. Script (OSL) nodes cannot be added, no general property can be set, and no operation reads files: `image` refers to an image that is already loaded. Group nodes cannot be added, but existing groups can be edited.
+
+**Shared data.** Editing a material changes every object that uses it, as usual. A node group used more than once, or a world used by several scenes, needs `shared_data="update_all"`; groups also allow `"make_single_user"`.
+
 #### Material slots and face regions
 
 One mesh can use several materials, such as skin, eyes and armor. `blender_material_assign` still sets the mesh's first slot (or adds one). These tools manage the others. They work on mesh objects outside Edit Mode.

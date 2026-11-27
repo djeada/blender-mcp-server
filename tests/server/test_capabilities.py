@@ -88,6 +88,8 @@ LEGACY_TOOLS = [
     "material_slot_remove",
     "material_assign_faces",
     "material_set_texture_set",
+    "shader_graph_inspect",
+    "shader_graph_edit",
     "recipe_get",
     "recipe_run",
     "recipe_search",

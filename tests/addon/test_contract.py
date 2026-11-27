@@ -68,6 +68,14 @@ class TestServerAddonContract:
         ("material_create", {"name": "M", "color": [1, 0, 0]}),
         ("material_slots", {"object": "Cube", "limit": 2, "offset": 1}),
         (
+            "shader_graph_inspect",
+            {"material": "M", "group_path": ["G"], "nodes": ["a"], "sockets": True, "limit": 3, "offset": 1},
+        ),
+        (
+            "shader_graph_edit",
+            {"world": True, "operations": [{"op": "remove_node", "node": "a"}], "shared_data": "update_all"},
+        ),
+        (
             "material_set_texture_set",
             {
                 "name": "M",

@@ -2,8 +2,8 @@
   "note": "CI limits for what a client must hold in context, in bytes. Raising one is a deliberate change: explain why in the pull request and update the sizes in docs/profiles.md. Exact current sizes: python scripts/context_benchmark.py sizes",
   "tools_list": {
     "compact": {"tools": 15, "bytes": 6200},
-    "standard": {"tools": 63, "bytes": 50000},
-    "full": {"tools": 72, "bytes": 58000}
+    "standard": {"tools": 65, "bytes": 52000},
+    "full": {"tools": 74, "bytes": 60000}
   },
   "responses": {
     "capability_overview": 1900,

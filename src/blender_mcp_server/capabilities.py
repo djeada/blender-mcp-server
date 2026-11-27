@@ -74,8 +74,10 @@ GROUPS: dict[str, Group] = {
         },
     ),
     "materials": Group(
-        "Create, assign and color materials, set image textures, and manage material slots and face regions.",
+        "Materials, PBR texture sets, material slots and face regions, and shader node graphs.",
         {
+            "blender_shader_graph_inspect": ("shader.inspect_graph",),
+            "blender_shader_graph_edit": ("shader.edit_graph",),
             "blender_material_slots": ("material.list_slots",),
             "blender_material_slot_append": ("material.slot_append",),
             "blender_material_slot_replace": ("material.slot_replace",),
@@ -189,6 +191,9 @@ KEYWORDS: dict[str, str] = {
     "blender_material_create": "shader surface color pbr",
     "blender_material_set_texture": "image map albedo basecolor pbr texturing uv",
     "blender_material_set_color": "paint tint albedo",
+    "blender_shader_graph_inspect": "node tree shader nodes links read material graph world",
+    "blender_shader_graph_edit": "procedural noise color ramp bump voronoi nodes connect shader graph build material "
+    "texture",
     "blender_material_set_texture_set": "pbr texture maps roughness metallic normal ambient occlusion orm emission "
     "opacity alpha height bump displacement gltf game ready",
     "blender_material_assign": "apply shader whole object",

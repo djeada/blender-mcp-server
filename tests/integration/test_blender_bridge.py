@@ -1390,6 +1390,214 @@ def test_directx_normal_conversion_renders_like_the_opengl_equivalent(call, brid
     assert unconverted != pytest.approx(opengl, abs=0.05)  # the test would notice a missing flip
 
 
+_GRAPH_STATE = """
+def state(tree):
+    return [
+        sorted((n.name, n.bl_idname) for n in tree.nodes),
+        sorted((l.from_node.name, l.from_socket.identifier, l.to_node.name, l.to_socket.identifier) for l in tree.links),
+    ]
+__result__ = [
+    state(bpy.data.materials[args['name']].node_tree),
+    [len(bpy.data.materials), len(bpy.data.node_groups), len(bpy.data.worlds)],
+]
+"""
+
+
+def _noise_chain(shader):
+    """Noise -> color ramp -> base color, and noise -> bump -> normal, with no Python."""
+    return [
+        {"op": "add_node", "id": "coords", "type": "ShaderNodeTexCoord", "location": [-900, 0]},
+        {"op": "add_node", "id": "noise", "type": "ShaderNodeTexNoise", "inputs": {"Scale": 6.0, "Detail": 3.0}},
+        {"op": "add_node", "id": "ramp", "type": "ShaderNodeValToRGB"},
+        {
+            "op": "set_color_ramp",
+            "node": "ramp",
+            "stops": [
+                {"position": 0.4, "color": [0.05, 0.02, 0.01]},
+                {"position": 0.6, "color": [0.8, 0.5, 0.2]},
+            ],
+        },
+        {"op": "add_node", "id": "bump", "type": "ShaderNodeBump", "inputs": {"Strength": 0.4}},
+        {"op": "connect", "from": "coords", "from_socket": "Object", "to": "noise", "to_socket": "Vector"},
+        {"op": "connect", "from": "noise", "from_socket": "Fac", "to": "ramp", "to_socket": "Fac"},
+        {"op": "connect", "from": "ramp", "from_socket": "Color", "to": shader, "to_socket": "Base Color"},
+        {"op": "connect", "from": "noise", "from_socket": "Fac", "to": "bump", "to_socket": "Height"},
+        {"op": "connect", "from": "bump", "from_socket": "Normal", "to": shader, "to_socket": "Normal"},
+    ]
+
+
+def test_shader_graphs_are_inspected_and_patched_all_or_nothing(call, bridge):
+    if not _python(call, _USE_FAST_CYCLES):
+        pytest.skip("Cycles is not available in this Blender build")
+    call("material_create", name="ITGraph")
+
+    def state():
+        result = call("python_exec", code=_GRAPH_STATE, args={"name": "ITGraph"})
+        assert result["error"] is None, result
+        return result["result"]
+
+    def edit(operations, **options):
+        return call("shader_graph_edit", operations=operations, material="ITGraph", **options)
+
+    listed = call("shader_graph_inspect", material="ITGraph")
+    shader = next(node["id"] for node in listed["nodes"] if node["type"] == "ShaderNodeBsdfPrincipled")
+    output = next(node["id"] for node in listed["nodes"] if node["type"] == "ShaderNodeOutputMaterial")
+    assert listed["node_count"] == 2 and "inputs" not in listed["nodes"][0]
+
+    before = state()
+    chain = _noise_chain(shader)
+    # Each bad final operation must leave the tree and the datablock counts exactly as they were,
+    # even though every operation before it is valid.
+    for last, code, message in (
+        (
+            {"op": "connect", "from": shader, "from_socket": "BSDF", "to": "bump", "to_socket": "Strength"},
+            "invalid_arguments",
+            "cannot feed",
+        ),
+        (
+            {"op": "connect", "from": "ramp", "from_socket": "Color", "to": "noise", "to_socket": "Scale"},
+            "invalid_arguments",
+            "cycle",
+        ),
+        (
+            {"op": "connect", "from": "noise", "from_socket": "Fac", "to": "noise", "to_socket": "Scale"},
+            "invalid_arguments",
+            "cycle",
+        ),
+        (
+            {"op": "connect", "from": "noise", "from_socket": "Fac", "to": shader, "to_socket": "Base Color"},
+            "conflict",
+            "already fed",
+        ),
+        ({"op": "set_input", "node": "noise", "socket": "Nope", "value": 1}, "invalid_arguments", "Use one of"),
+        (
+            {"op": "set_property", "node": "bump", "property": "name", "value": "x"},
+            "invalid_arguments",
+            "cannot be set",
+        ),
+        (
+            {"op": "set_property", "node": "noise", "property": "noise_dimensions", "value": "9D"},
+            "invalid_arguments",
+            "must be one of",
+        ),
+        ({"op": "add_node", "id": shader, "type": "ShaderNodeMath"}, "invalid_arguments", "already exists"),
+        ({"op": "remove_node", "node": output}, "invalid_arguments", "Output nodes"),
+        ({"op": "remove_node", "node": "ghost"}, "not_found", "No node named"),
+    ):
+        with pytest.raises(protocol.BridgeError, match=message) as failure:
+            edit([*chain, last])  # ten valid operations, then the bad one
+        assert failure.value.code == code, last
+        assert state() == before, last
+
+    result = edit(chain)
+    assert result["applied"] == 10 and result["node_count"] == 6 and "warnings" not in result
+    detail = call("shader_graph_inspect", material="ITGraph", nodes=["ramp", shader])
+    ramp = detail["nodes"][0]
+    assert [round(stop["position"], 2) for stop in ramp["color_ramp"]["stops"]] == [0.4, 0.6]
+    assert {(link["from"], link["to_socket"]) for link in detail["links"]} == {
+        ("noise", "Fac"),
+        ("ramp", "Base Color"),
+        ("bump", "Normal"),
+    }
+    page = call("shader_graph_inspect", material="ITGraph", limit=4)
+    assert len(page["nodes"]) == 4 and page["next_offset"] == 4
+
+    # Sockets that only exist after a setting changes can be used in the same patch.
+    edit(
+        [
+            {
+                "op": "add_node",
+                "id": "mix",
+                "type": "ShaderNodeMix",
+                "properties": {"data_type": "RGBA"},
+                "inputs": {"Factor_Float": 0.5, "B_Color": [0.1, 0.2, 0.9]},
+            },
+            {"op": "connect", "from": "ramp", "from_socket": "Color", "to": "mix", "to_socket": "A_Color"},
+            {
+                "op": "connect",
+                "from": "mix",
+                "from_socket": "Result_Color",
+                "to": shader,
+                "to_socket": "Base Color",
+                "replace": True,
+            },
+        ]
+    )
+    with pytest.raises(protocol.BridgeError, match="does not exist or is disabled"):
+        edit([{"op": "set_input", "node": "mix", "socket": "A_Float", "value": 1}])
+
+    # The patched material renders, and the procedural pattern varies across the surface.
+    call("object_create", mesh_type="sphere", name="ITGraphBall", location=[500, 0, 0])
+    call("material_assign", object="ITGraphBall", material="ITGraph")
+    loop = asyncio.new_event_loop()
+    connection = BlenderConnection(port=bridge["port"])
+    context = MagicMock()
+    context.request_context.lifespan_context = connection
+    try:
+        blocks = loop.run_until_complete(
+            server.view_capture(context, object="ITGraphBall", mode="material", resolution=64, views=["front"])
+        )
+    finally:
+        loop.run_until_complete(connection.disconnect())
+        loop.close()
+    picture = bridge["tmp"] / "graph.png"
+    picture.write_bytes(base64.b64decode(blocks[-1].data))
+    spread = _python(
+        call,
+        f"""
+image = bpy.data.images.load({str(picture)!r}, check_existing=False)
+pixels = list(image.pixels)
+bpy.data.images.remove(image)
+reds = [pixels[(y * 64 + x) * 4] for y in range(24, 40) for x in range(24, 40)]
+__result__ = max(reds) - min(reds)
+""",
+    )
+    assert spread > 0.05
+
+    # Shared node groups need an explicit choice.
+    _python(
+        call,
+        """
+group = bpy.data.node_groups.new('ITSharedGroup', 'ShaderNodeTree')
+value = group.nodes.new('ShaderNodeValue')
+value.name = 'level'
+for name in ('ITGroupA', 'ITGroupB'):
+    material = bpy.data.materials.new(name)
+    material.use_nodes = True
+    node = material.node_tree.nodes.new('ShaderNodeGroup')
+    node.name = 'shared'
+    node.node_tree = group
+""",
+    )
+    inside = call("shader_graph_inspect", material="ITGroupA", group_path=["shared"], sockets=True)
+    assert inside["tree"] == "ITSharedGroup" and inside["tree_users"] == 2
+    change = [{"op": "set_property", "node": "level", "property": "value", "value": 0.75}]
+    levels = (
+        "__result__ = [bpy.data.materials[n].node_tree.nodes['shared'].node_tree.nodes['level'].outputs[0]"
+        ".default_value for n in ('ITGroupA', 'ITGroupB')]"
+    )
+    with pytest.raises(protocol.BridgeError, match="used 2 times"):
+        call("shader_graph_edit", material="ITGroupA", group_path=["shared"], operations=change)
+    call(
+        "shader_graph_edit",
+        material="ITGroupA",
+        group_path=["shared"],
+        operations=change,
+        shared_data="make_single_user",
+    )
+    assert _python(call, levels) == [0.75, 0.0]
+
+    call("world_set", mode="color", color=[0.2, 0.2, 0.2], on_conflict="new_world")
+    nodes = call("shader_graph_inspect", world=True)["nodes"]
+    background = next(node["id"] for node in nodes if node["type"] == "ShaderNodeBackground")
+    call(
+        "shader_graph_edit",
+        world=True,
+        operations=[{"op": "set_input", "node": background, "socket": "Strength", "value": 2.5}],
+    )
+    assert call("world_get")["settings"]["strength"] == 2.5
+
+
 @pytest.mark.asyncio
 async def test_mcp_stdio_compact_profile_discovers_and_invokes(bridge):
     async with (

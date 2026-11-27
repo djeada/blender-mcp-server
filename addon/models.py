@@ -573,3 +573,24 @@ class MaterialTextureSetParams(BridgeParams):
         "remove": field("list", allow_none=True),
         "on_conflict": field("str", "error"),
     }
+
+
+class ShaderGraphInspectParams(BridgeParams):
+    fields = {
+        "material": field("str", allow_none=True),
+        "world": field("bool", False),
+        "group_path": field("list", allow_none=True),
+        "nodes": field("list", allow_none=True),
+        "sockets": field("bool", False),
+        **PageParams.fields,
+    }
+
+
+class ShaderGraphEditParams(BridgeParams):
+    fields = {
+        "material": field("str", allow_none=True),
+        "world": field("bool", False),
+        "group_path": field("list", allow_none=True),
+        "operations": field("list", required=True),
+        "shared_data": field("str", "error"),
+    }

@@ -56,6 +56,8 @@ from blender_mcp_server.tools.materials import (
     material_slot_remove,
     material_slot_replace,
     material_slots,
+    shader_graph_edit,
+    shader_graph_inspect,
 )
 from blender_mcp_server.tools.mesh import mesh_inspect
 from blender_mcp_server.tools.objects import (
@@ -145,6 +147,8 @@ __all__ = [
     "material_set_color",
     "material_set_texture",
     "material_set_texture_set",
+    "shader_graph_inspect",
+    "shader_graph_edit",
     "material_slots",
     "material_slot_append",
     "material_slot_replace",

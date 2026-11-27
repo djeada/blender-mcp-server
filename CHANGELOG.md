@@ -12,6 +12,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   or `make_single_user`. Moving or rotating such a light works as before.
 
 ### Added
+- `blender_shader_graph_inspect` and `blender_shader_graph_edit` read and patch material, world and shader group
+  nodes. Patches are limited to listed node types and settings and are all-or-nothing.
 - `blender_material_set_texture_set` binds PBR texture sets, including packed ORM, with required choices for normal
   convention, occlusion, opacity and height modes. It validates and loads every file before changing the material,
   never changes a shared image's color space, and warns when a binding will not survive glTF export.
@@ -39,7 +41,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   material or wireframe mode, framed from evaluated bounds in a temporary scene that leaves the project unchanged.
   Also works headless.
 - Tool profiles (`--profile compact|standard|full`, `--enable-groups`, `--allow-groups`, or the matching
-  environment variables). `compact` advertises 15 tools in 5.8 KB instead of every schema (56.2 KB). The default
+  environment variables). `compact` advertises 15 tools in 5.8 KB instead of every schema (58.4 KB). The default
   stays `full`.
 - Compact output (`--output compact`, on by default in the compact profile) pages listings, keeps log tails and
   turns oversized responses into previews that `blender_output_read` can finish without rerunning anything. Budgets

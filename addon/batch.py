@@ -37,6 +37,8 @@ BATCH_COMMANDS = frozenset(
         "material.assign",
         "material.set_color",
         "material.list_slots",
+        "shader.inspect_graph",
+        "shader.edit_graph",
         "material.slot_append",
         "material.slot_replace",
         "material.slot_remove",

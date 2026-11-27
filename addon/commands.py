@@ -28,6 +28,7 @@ from . import (
     project,
     rendering,
     scene,
+    shader_graph,
     world,
 )
 from .execution import ScriptExecutor
@@ -96,6 +97,8 @@ class CommandHandler:
             "material.set_texture_set": Command(
                 partial(pbr.set_texture_set, policy=self.policy), models.MaterialTextureSetParams, mutates=True
             ),
+            "shader.inspect_graph": Command(shader_graph.inspect, models.ShaderGraphInspectParams),
+            "shader.edit_graph": Command(shader_graph.edit, models.ShaderGraphEditParams, mutates=True),
             "camera.create": Command(camera.create, models.CameraCreateParams, mutates=True),
             "camera.update": Command(camera.update, models.CameraUpdateParams, mutates=True),
             "lighting.inspect": Command(lighting_report.inspect, models.LightingInspectParams),

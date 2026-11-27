@@ -200,3 +200,68 @@ async def material_set_texture_set(
             on_conflict=on_conflict,
         )
     }
+
+
+@mcp.tool(
+    name="blender_shader_graph_inspect",
+    description=(
+        "Read a material's (or the world's) shader nodes and links without changing them, in pages. Lists node IDs "
+        "and types; pass sockets=true, or nodes=[ids], for socket IDs, values and settings. group_path=[group node "
+        "ids] looks inside node groups."
+    ),
+)
+async def shader_graph_inspect(
+    ctx: Context,
+    material: str | None = None,
+    world: bool = False,
+    group_path: list[str] | None = None,
+    nodes: Annotated[list[str] | None, Field(max_length=50)] = None,
+    sockets: bool = False,
+    limit: Annotated[int | None, Field(ge=1)] = None,
+    offset: Slot | None = None,
+) -> dict:
+    return {
+        "result": await bridge_result(
+            ctx,
+            "shader.inspect_graph",
+            material=material,
+            world=world,
+            group_path=group_path,
+            nodes=nodes,
+            sockets=sockets,
+            limit=page_limit(limit),
+            offset=offset,
+        )
+    }
+
+
+@mcp.tool(
+    name="blender_shader_graph_edit",
+    description=(
+        "Patch shader nodes, all or nothing. operations (max 64): add_node{id,type,properties?,inputs?,location?}, "
+        "remove_node{node}, set_input{node,socket,value}, set_property{node,property,value}, "
+        "set_color_ramp{node,stops:[{position,color}],interpolation?}, "
+        "connect{from,from_socket,to,to_socket,replace?}, disconnect{to,to_socket}, move_node{node,location}. "
+        "Each has 'op'. type is a Blender idname such as ShaderNodeTexNoise; get socket IDs from "
+        "blender_shader_graph_inspect."
+    ),
+)
+async def shader_graph_edit(
+    ctx: Context,
+    operations: Annotated[list[dict], Field(min_length=1, max_length=64)],
+    material: str | None = None,
+    world: bool = False,
+    group_path: list[str] | None = None,
+    shared_data: SharedData = "error",
+) -> dict:
+    return {
+        "result": await bridge_result(
+            ctx,
+            "shader.edit_graph",
+            material=material,
+            world=world,
+            group_path=group_path,
+            operations=operations,
+            shared_data=shared_data,
+        )
+    }
