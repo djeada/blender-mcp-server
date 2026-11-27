@@ -1785,8 +1785,9 @@ obj.location = (args['radius'] * 3, 0, 0)
 _RENDER_SCENE = """
 scene = bpy.data.scenes[args['scene']]
 world = bpy.data.worlds.new(args['scene'])
-world.use_nodes = False
-world.color = (0, 0, 0)
+world.use_nodes = True
+background = next(n for n in world.node_tree.nodes if n.type == 'BACKGROUND')
+background.inputs['Strength'].default_value = 0.0  # truly black on every version
 scene.world = world
 for obj in args['objects']:
     scene.collection.objects.link(bpy.data.objects[obj])
@@ -1940,6 +1941,40 @@ def test_lighting_rigs_keep_exposure_across_scales_and_leave_other_objects_alone
         call("lighting_rig_apply", rig="turntable", object="ITDot")
     assert _python(call, counts) == existing
     assert _python(call, _SCENE_LIGHTS_AND_CAMERAS) == before
+
+
+def test_world_lighting_preview_of_a_scene_without_a_world_is_unlit(call, bridge):
+    """Blender 5 ignores use_nodes=False, which once left a grey light in this preview."""
+    if not _python(call, _USE_FAST_CYCLES):
+        pytest.skip("Cycles is not available in this Blender build")
+    call("object_create", mesh_type="cube", name="ITUnlitCube", location=[800, 0, 0])
+    _python(call, "bpy.app.driver_namespace['it_world'] = bpy.context.scene.world\nbpy.context.scene.world = None")
+    loop = asyncio.new_event_loop()
+    connection = BlenderConnection(port=bridge["port"])
+    context = MagicMock()
+    context.request_context.lifespan_context = connection
+    try:
+        blocks = loop.run_until_complete(
+            server.view_capture(
+                context, object="ITUnlitCube", mode="material", lighting="world", resolution=64, views=["front"]
+            )
+        )
+    finally:
+        loop.run_until_complete(connection.disconnect())
+        loop.close()
+        _python(call, "bpy.context.scene.world = bpy.app.driver_namespace.pop('it_world')")
+    picture = bridge["tmp"] / "unlit.png"
+    picture.write_bytes(base64.b64decode(blocks[-1].data))
+    brightest = _python(
+        call,
+        f"""
+image = bpy.data.images.load({str(picture)!r}, check_existing=False)
+pixels = list(image.pixels)
+bpy.data.images.remove(image)
+__result__ = max(v for i, v in enumerate(pixels) if i % 4 != 3)
+""",
+    )
+    assert brightest < 0.01, brightest
 
 
 @pytest.mark.asyncio

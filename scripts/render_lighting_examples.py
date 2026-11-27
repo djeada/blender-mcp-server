@@ -103,8 +103,11 @@ def main():
     scene.render.image_settings.file_format = "PNG"
     scene.render.image_settings.color_mode = "RGBA"
     scene.view_settings.view_transform = "Standard"
-    scene.world.use_nodes = False
-    scene.world.color = (0.012, 0.012, 0.012)
+    # Set the world through its nodes: Blender 5 ignores use_nodes=False.
+    scene.world.use_nodes = True
+    background = next(node for node in scene.world.node_tree.nodes if node.type == "BACKGROUND")
+    background.inputs["Color"].default_value = (0.012, 0.012, 0.012, 1.0)
+    background.inputs["Strength"].default_value = 1.0
     handler = CommandHandler()
     subjects = (character(), product())
 

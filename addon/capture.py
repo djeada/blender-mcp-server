@@ -287,6 +287,18 @@ def _engine(mode: str) -> str:
     return "EEVEE" if mode == "material" else "WORKBENCH"
 
 
+def _set_background(world, color: tuple, strength: float) -> None:
+    """Set a new world's light through its nodes.
+
+    Blender 5 ignores `use_nodes = False`, so `world.color` alone would leave the default
+    grey background lighting the scene.
+    """
+    world.use_nodes = True
+    background = next(node for node in world.node_tree.nodes if node.type == "BACKGROUND")
+    background.inputs["Color"].default_value = (*color, 1.0)
+    background.inputs["Strength"].default_value = strength
+
+
 def _configure(scene, view_layer, temp: _Temporary, engine: str, mode: str, resolution: int, rendering) -> None:
     rendering._set_render_engine(scene, engine)
     render = scene.render
@@ -303,11 +315,8 @@ def _configure(scene, view_layer, temp: _Temporary, engine: str, mode: str, reso
     with contextlib.suppress(TypeError):  # a custom color configuration without the Standard view
         scene.view_settings.view_transform = "Standard"
     world = temp.add("worlds", bpy.data.worlds.new("mcp-capture-world"))
-    world.color = (0.18, 0.18, 0.18)
-    world.use_nodes = True
-    background = next(node for node in world.node_tree.nodes if node.type == "BACKGROUND")
-    background.inputs["Color"].default_value = (0.18, 0.18, 0.18, 1.0)
-    background.inputs["Strength"].default_value = 1.0
+    world.color = (0.18, 0.18, 0.18)  # Workbench's background
+    _set_background(world, (0.18, 0.18, 0.18), 1.0)
     scene.world = world
     if engine == "WORKBENCH":
         shading = scene.display.shading
@@ -331,8 +340,7 @@ def _use_project_lighting(temp: _Temporary, scene, source, lighting: str, member
         scene.world = source.world  # shared, only read
     else:
         world = temp.add("worlds", bpy.data.worlds.new("mcp-capture-black"))
-        world.color = (0.0, 0.0, 0.0)
-        world.use_nodes = False
+        _set_background(world, (0.0, 0.0, 0.0), 0.0)
         scene.world = world
         notes.append("The scene has no world, so there is no environment light")
     scene.display_settings.display_device = source.display_settings.display_device

@@ -80,6 +80,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   renders: absolute path returned, missing folders created, extensions appended only when absent).
 
 ### Fixed
+- On Blender 5, `blender_view_capture` with `lighting="world"` or `"scene"` lit a scene that had no world with
+  Blender's default grey background, while reporting that there was no environment light. The preview is now black.
 - A rejected `light.create` (for example `size` on a SUN light) left a light object and its data in the scene, and a
   rejected type-changing `light.update` left the new type applied. Requests are now validated before any change.
 - Rejected mutation requests no longer add undo entries, and the bridge also rejects oversized
