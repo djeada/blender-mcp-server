@@ -1138,6 +1138,258 @@ obj.vertex_groups.new(name='top').add([v.index for v in obj.data.vertices if v.c
     assert after_assign[0]["material"] == "ITArmor" and after_assign[1:] == before_assign[1:]
 
 
+_MAKE_TEXTURES = """
+import os
+for name, color in args['colors'].items():
+    image = bpy.data.images.new('ITMake', 8, 8, alpha=True)
+    image.colorspace_settings.name = 'Non-Color'
+    image.pixels = list(color) * 64
+    image.filepath_raw = os.path.join(args['directory'], name + '.png')
+    image.file_format = 'PNG'
+    image.save()
+    bpy.data.images.remove(image)
+"""
+
+_TEXTURE_COLORS = {
+    "base": (0.8, 0.6, 0.4, 1),
+    "orm": (0.25, 0.6, 0.9, 1),
+    "dx_normal": (0.5, 0.2, 1.0, 1),
+    "gl_normal": (0.5, 0.8, 1.0, 1),  # the same surface in the OpenGL convention
+    "emit": (0.0, 0.5, 1.0, 1),
+    "alpha": (1.0, 1.0, 1.0, 0.4),
+}
+
+_GRAPH = """
+tree = bpy.data.materials[args['name']].node_tree
+__result__ = [
+    sorted((n.name, n.bl_idname) for n in tree.nodes),
+    sorted((l.from_node.name, l.from_socket.name, l.to_node.name, l.to_socket.name) for l in tree.links),
+]
+"""
+
+_EXPORTED_MATERIAL = """
+import json, os, struct
+bpy.ops.export_scene.gltf(filepath=args['path'], export_format='GLB')
+data = open(args['path'], 'rb').read()
+length = struct.unpack('<I', data[12:16])[0]
+document = json.loads(data[20:20 + length])
+blob = data[20 + length + 8:]
+material = next(m for m in document['materials'] if m['name'] == args['name'])
+pbr = material.get('pbrMetallicRoughness', {})
+
+def pixel(reference):
+    if reference is None:
+        return None
+    image = document['images'][document['textures'][reference['index']]['source']]
+    view = document['bufferViews'][image['bufferView']]
+    start = view.get('byteOffset', 0)
+    path = args['path'] + '.png'
+    open(path, 'wb').write(blob[start:start + view['byteLength']])
+    loaded = bpy.data.images.load(path, check_existing=False)
+    loaded.colorspace_settings.name = 'Non-Color'
+    value = list(loaded.pixels[:3])
+    bpy.data.images.remove(loaded)
+    return value
+
+__result__ = {
+    'base': pixel(pbr.get('baseColorTexture')),
+    'normal': pixel(material.get('normalTexture')),
+    'metallic_roughness': pbr.get('metallicRoughnessTexture', {}).get('index'),
+    'occlusion': material.get('occlusionTexture', {}).get('index'),
+    'emissive': 'emissiveTexture' in material,
+    'alpha_mode': material.get('alphaMode'),
+    'alpha_cutoff': material.get('alphaCutoff'),
+    'transform': pbr.get('baseColorTexture', {}).get('extensions', {}).get('KHR_texture_transform'),
+}
+"""
+
+_RENDER_NORMAL = """
+scene = bpy.data.scenes.new('ITNormal')
+mesh = bpy.data.meshes.new('ITNormalPlane')
+mesh.from_pydata([(-1, -1, 0), (1, -1, 0), (1, 1, 0), (-1, 1, 0)], [], [(0, 1, 2, 3)])
+layer = mesh.uv_layers.new(name='UVMap')
+for index, uv in enumerate([(0, 0), (1, 0), (1, 1), (0, 1)]):
+    (layer.uv[index] if hasattr(layer, 'uv') else layer.data[index]).__setattr__('vector' if hasattr(layer, 'uv') else 'uv', uv)
+mesh.materials.append(bpy.data.materials[args['name']])
+scene.collection.objects.link(bpy.data.objects.new('ITNormalPlane', mesh))
+camera = bpy.data.objects.new('ITNormalCam', bpy.data.cameras.new('ITNormalCam'))
+camera.location = (0, 0, 3)
+camera.data.type = 'ORTHO'
+camera.data.ortho_scale = 1.0
+scene.collection.objects.link(camera)
+scene.camera = camera
+light = bpy.data.objects.new('ITNormalSun', bpy.data.lights.new('ITNormalSun', 'SUN'))
+light.data.energy = 3.0
+light.rotation_euler = (0.9, 0.0, 0.0)  # tilted toward +Y, so flipping the green channel matters
+scene.collection.objects.link(light)
+scene.render.engine = 'CYCLES'
+scene.cycles.samples = 4
+scene.cycles.seed = 0
+scene.cycles.use_denoising = False
+scene.render.resolution_x = scene.render.resolution_y = 8
+scene.view_settings.view_transform = 'Standard'
+scene.render.filepath = args['path']
+bpy.ops.render.render(write_still=True, scene=scene.name)
+image = bpy.data.images.load(args['path'], check_existing=False)
+pixels = list(image.pixels)
+bpy.data.images.remove(image)
+for obj in list(scene.collection.objects):
+    bpy.data.objects.remove(obj)
+bpy.data.scenes.remove(scene)
+__result__ = pixels[(4 * 8 + 4) * 4:(4 * 8 + 4) * 4 + 3]
+"""
+
+
+def test_pbr_texture_sets_in_blender_and_gltf(call, bridge):
+    folder = bridge["tmp"] / "pbr"
+    folder.mkdir(exist_ok=True)
+
+    def python(code, **arguments):
+        result = call("python_exec", code=code, args=arguments)
+        assert result["error"] is None, (result["error"], result["stderr"])
+        return result["result"]
+
+    python(_MAKE_TEXTURES, directory=str(folder), colors=_TEXTURE_COLORS)
+    path = {name: str(folder / f"{name}.png") for name in _TEXTURE_COLORS}
+    call("object_create", mesh_type="cube", name="ITPbrCube")
+    python("import bpy\nbpy.data.objects['ITPbrCube'].data.uv_layers.new(name='UVMap')")
+    call("material_create", name="ITPbr")
+    call("material_assign", object="ITPbrCube", material="ITPbr")
+
+    def graph():
+        return python(_GRAPH, name="ITPbr")
+
+    def bind(**arguments):
+        return call("material_set_texture_set", name="ITPbr", **arguments)  # the fixture unwraps "result"
+
+    def export(label):
+        return python(_EXPORTED_MATERIAL, name="ITPbr", path=str(folder / f"{label}.glb"))
+
+    full = {
+        "orm": path["orm"],
+        "maps": {
+            "base_color": path["base"],
+            "normal": {"path": path["gl_normal"], "convention": "opengl", "strength": 0.7},
+            "emission": {"path": path["emit"], "strength": 3},
+        },
+    }
+    result = bind(**full)
+    spaces = {item["map"]: (item["color_space"], item.get("channel")) for item in result["bindings"]}
+    assert spaces == {
+        "base_color": ("sRGB", None),
+        "metallic": ("Non-Color", "B"),
+        "roughness": ("Non-Color", "G"),
+        "normal": ("Non-Color", None),
+        "ao": ("Non-Color", "R"),
+        "emission": ("sRGB", None),
+    }
+    links = {(link[0], link[1], link[2], link[3]) for link in graph()[1]}
+    ends = {(link[0], link[3]) for link in links}
+    assert ("MCP normal:map", "Normal") in ends and ("MCP roughness:through", "Roughness") in ends
+    # The green channel of the packed image feeds roughness through its labelled pass-through node.
+    assert any(
+        link[0] == "MCP separate" and link[1] == "Green" and link[2] == "MCP roughness:through" for link in links
+    )
+    built = graph()
+    bind(**full)
+    assert graph() == built  # binding again reuses nodes instead of duplicating them
+    exported = export("full")
+    assert exported["base"] == pytest.approx(_TEXTURE_COLORS["base"][:3], abs=0.02)
+    assert exported["metallic_roughness"] is not None and exported["occlusion"] == exported["metallic_roughness"]
+    assert exported["normal"] == pytest.approx(_TEXTURE_COLORS["gl_normal"][:3], abs=0.02) and exported["emissive"]
+
+    # A missing file or a foreign link leaves the graph exactly as it was.
+    for arguments, code in (
+        ({"maps": {"roughness": str(folder / "missing.png")}}, "not_found"),
+        ({"maps": {"base_color": path["base"], "roughness": "https://example.com/r.png"}}, "invalid_arguments"),
+    ):
+        with pytest.raises(protocol.BridgeError) as failure:
+            bind(**arguments)
+        assert failure.value.code == code and graph() == built
+    python(
+        """
+tree = bpy.data.materials['ITPbr'].node_tree
+noise = tree.nodes.new('ShaderNodeTexNoise')
+noise.name = 'Mine'
+shader = next(n for n in tree.nodes if n.type == 'BSDF_PRINCIPLED')
+tree.links.new(noise.outputs[0], shader.inputs['Roughness'])
+"""
+    )
+    mine = graph()
+    with pytest.raises(protocol.BridgeError, match="ShaderNodeTexNoise") as failure:
+        bind(maps={"base_color": path["emit"], "roughness": path["base"]})
+    assert failure.value.code == "conflict" and graph() == mine
+    replaced = bind(maps={"roughness": {"path": path["orm"], "channel": "G"}}, on_conflict="replace")
+    assert "roughness" in replaced["replaced"] and ["Mine", "ShaderNodeTexNoise"] in graph()[0]
+
+    # Binding an image already used as color for data loads a separate copy.
+    bind(maps={"roughness": path["base"]})
+    spaces_of_base = python(
+        "__result__ = sorted(i.colorspace_settings.name for i in bpy.data.images if i.filepath.endswith('base.png'))"
+    )
+    assert spaces_of_base == ["Non-Color", "sRGB"]
+
+    clipped = bind(
+        maps={"opacity": {"path": path["alpha"], "channel": "A", "mode": "clip", "threshold": 0.3}},
+        mapping={"scale": [2, 3]},
+        uv_map="UVMap",
+    )
+    assert clipped["mapping"]["scale"] == [2, 3] and clipped["uv_map"] == "UVMap"
+    exported = export("clip")
+    assert exported["alpha_mode"] == "MASK" and exported["alpha_cutoff"] == pytest.approx(0.3)
+    assert exported["transform"]["scale"] == [2, 3]
+    bind(maps={"opacity": {"path": path["alpha"], "channel": "A", "mode": "blend"}})
+    assert export("blend")["alpha_mode"] == "BLEND"
+
+    # The export limits described by the warnings: neither effect reaches the GLB.
+    multiplied = bind(maps={"ao": {"path": path["orm"], "mode": "multiply"}})
+    assert "without it" in multiplied["warnings"][0]
+    occluded = export("multiply")
+    assert occluded["base"] is None or occluded["base"] == pytest.approx(_TEXTURE_COLORS["base"][:3], abs=0.02)
+    directx = bind(maps={"normal": {"path": path["dx_normal"], "convention": "directx"}})
+    assert "inverted" in directx["warnings"][0]
+    exported = export("directx")
+    flipped = pytest.approx(_TEXTURE_COLORS["gl_normal"][:3], abs=0.02)
+    assert exported["normal"] is None or exported["normal"] != flipped
+
+    bump = bind(maps={"height": {"path": path["orm"], "mode": "bump"}})
+    assert "not exported" in bump["warnings"][0]
+    assert ("MCP normal:map", "Normal") in {(link[0], link[3]) for link in graph()[1] if link[2] == "MCP height:bump"}
+    displaced = bind(maps={"height": {"path": path["orm"], "mode": "displacement", "distance": 0.1}})
+    assert [item["mode"] for item in displaced["bindings"] if item["map"] == "height"] == ["displacement"]
+
+    removed = bind(remove=["base_color", "metallic", "roughness", "normal", "ao", "emission", "opacity", "height"])
+    assert removed["bindings"] == []
+    assert not [name for name, _ in graph()[0] if name.startswith("MCP ") and name not in {"MCP uv", "MCP mapping"}]
+    assert ["Mine", "ShaderNodeTexNoise"] in graph()[0]
+
+
+def test_directx_normal_conversion_renders_like_the_opengl_equivalent(call, bridge):
+    if not _python(call, _USE_FAST_CYCLES):
+        pytest.skip("Cycles is not available in this Blender build")
+    folder = bridge["tmp"] / "normals"
+    folder.mkdir(exist_ok=True)
+    made = call("python_exec", code=_MAKE_TEXTURES, args={"directory": str(folder), "colors": _TEXTURE_COLORS})
+    assert made["error"] is None
+
+    def render(name, texture, convention):
+        call("material_create", name=name, color=[0.5, 0.5, 0.5])
+        call(
+            "material_set_texture_set",
+            name=name,
+            maps={"normal": {"path": str(folder / f"{texture}.png"), "convention": convention}},
+        )
+        result = call("python_exec", code=_RENDER_NORMAL, args={"name": name, "path": str(folder / f"{name}.png")})
+        assert result["error"] is None, result
+        return result["result"]
+
+    opengl = render("ITNormalGL", "gl_normal", "opengl")
+    directx = render("ITNormalDX", "dx_normal", "directx")
+    unconverted = render("ITNormalWrong", "dx_normal", "opengl")
+    assert directx == pytest.approx(opengl, abs=0.01)
+    assert unconverted != pytest.approx(opengl, abs=0.05)  # the test would notice a missing flip
+
+
 @pytest.mark.asyncio
 async def test_mcp_stdio_compact_profile_discovers_and_invokes(bridge):
     async with (

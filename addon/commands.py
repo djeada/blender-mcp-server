@@ -24,6 +24,7 @@ from . import (
     models,
     modifiers,
     objects,
+    pbr,
     project,
     rendering,
     scene,
@@ -91,6 +92,9 @@ class CommandHandler:
             "material.set_color": Command(materials.set_color, models.MaterialSetColorParams, mutates=True),
             "material.set_texture": Command(
                 partial(materials.set_texture, policy=self.policy), models.MaterialSetTextureParams, mutates=True
+            ),
+            "material.set_texture_set": Command(
+                partial(pbr.set_texture_set, policy=self.policy), models.MaterialTextureSetParams, mutates=True
             ),
             "camera.create": Command(camera.create, models.CameraCreateParams, mutates=True),
             "camera.update": Command(camera.update, models.CameraUpdateParams, mutates=True),

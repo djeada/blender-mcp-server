@@ -164,3 +164,39 @@ async def material_assign_faces(
             shared_data=shared_data,
         )
     }
+
+
+@mcp.tool(
+    name="blender_material_set_texture_set",
+    description=(
+        "Bind local PBR texture files to a material's Principled BSDF with correct color spaces. maps: "
+        "{base_color, metallic, roughness, normal, ao, emission, opacity, height}, each a path or {path, ...}; "
+        "metallic, roughness, ao, opacity and height take channel R/G/B/A. Required choices: normal.convention "
+        "opengl|directx, ao.mode gltf|multiply, opacity.mode blend|clip, height.mode bump|displacement. orm=path "
+        "binds a packed occlusion/roughness/metallic image. Unlisted maps are kept; remove=[names] unbinds. "
+        "Nothing changes if a file or link check fails."
+    ),
+)
+async def material_set_texture_set(
+    ctx: Context,
+    name: str,
+    maps: dict[str, str | dict] | None = None,
+    orm: str | None = None,
+    uv_map: str | None = None,
+    mapping: dict | None = None,
+    remove: list[str] | None = None,
+    on_conflict: Literal["error", "replace"] = "error",
+) -> dict:
+    return {
+        "result": await bridge_result(
+            ctx,
+            "material.set_texture_set",
+            name=name,
+            maps=maps,
+            orm=orm,
+            uv_map=uv_map,
+            mapping=mapping,
+            remove=remove,
+            on_conflict=on_conflict,
+        )
+    }

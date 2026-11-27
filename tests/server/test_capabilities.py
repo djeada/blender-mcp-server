@@ -87,6 +87,7 @@ LEGACY_TOOLS = [
     "material_slot_replace",
     "material_slot_remove",
     "material_assign_faces",
+    "material_set_texture_set",
     "recipe_get",
     "recipe_run",
     "recipe_search",

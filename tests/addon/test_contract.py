@@ -67,6 +67,18 @@ class TestServerAddonContract:
         ("collection_remove_object", {"collection": "Props", "object": "Cube"}),
         ("material_create", {"name": "M", "color": [1, 0, 0]}),
         ("material_slots", {"object": "Cube", "limit": 2, "offset": 1}),
+        (
+            "material_set_texture_set",
+            {
+                "name": "M",
+                "maps": {"base_color": "/tmp/a.png"},
+                "orm": "/tmp/o.png",
+                "uv_map": "UVMap",
+                "mapping": {"scale": [2, 2]},
+                "remove": ["height"],
+                "on_conflict": "replace",
+            },
+        ),
         ("material_slot_append", {"object": "Cube", "material": "M", "link": "OBJECT", "shared_data": "update_all"}),
         ("material_slot_replace", {"object": "Cube", "index": 0, "material": "M", "link": "DATA"}),
         ("material_slot_remove", {"object": "Cube", "index": 1, "remap_to": 0}),

@@ -86,6 +86,7 @@ GROUPS: dict[str, Group] = {
             "blender_material_assign": ("material.assign",),
             "blender_material_set_color": ("material.set_color",),
             "blender_material_set_texture": ("material.set_texture",),
+            "blender_material_set_texture_set": ("material.set_texture_set",),
         },
     ),
     "lighting": Group(
@@ -188,6 +189,8 @@ KEYWORDS: dict[str, str] = {
     "blender_material_create": "shader surface color pbr",
     "blender_material_set_texture": "image map albedo basecolor pbr texturing uv",
     "blender_material_set_color": "paint tint albedo",
+    "blender_material_set_texture_set": "pbr texture maps roughness metallic normal ambient occlusion orm emission "
+    "opacity alpha height bump displacement gltf game ready",
     "blender_material_assign": "apply shader whole object",
     "blender_material_slots": "multiple materials regions list",
     "blender_material_slot_append": "multiple materials add second another region",

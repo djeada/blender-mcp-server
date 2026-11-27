@@ -5,12 +5,11 @@ that other scenes use, is only changed when the caller says how.
 """
 
 import math
-import os
 from typing import Any
 
 import bpy
 
-from .policy import resolve_path
+from . import images
 from .protocol import BridgeError, UnsupportedError
 
 
@@ -60,9 +59,6 @@ def summary(world) -> dict | None:
 
 MODES = ("color", "environment", "sky")
 CONFLICT_MODES = ("error", "new_world", "replace")
-IMAGE_EXTENSIONS = (".hdr", ".exr", ".png", ".jpg", ".jpeg", ".tif", ".tiff", ".webp")
-MAX_IMAGE_BYTES = 256 * 1024 * 1024
-MAX_IMAGE_PIXELS = 16384 * 8192
 # Sky models, by what controls them. Names differ between Blender versions.
 PHYSICAL_SKIES = ("MULTIPLE_SCATTERING", "NISHITA", "SINGLE_SCATTERING")
 ANALYTIC_SKIES = ("HOSEK_WILKIE", "PREETHAM")
@@ -204,28 +200,14 @@ def _choose_sky(requested: str | None) -> str:
 
 def _load_environment(filepath: str, policy):
     """Validate and load before anything changes. Returns the image and whether this call created it."""
-    if "://" in filepath:
-        raise ValueError("Environment images must be local files; nothing is downloaded")
-    resolved = policy.validate_filepath(resolve_path(filepath, str(bpy.data.filepath)))
-    if not resolved.lower().endswith(IMAGE_EXTENSIONS):
-        raise ValueError(f"Unsupported environment format; use one of: {', '.join(IMAGE_EXTENSIONS)}")
-    if not os.path.isfile(resolved):
-        raise FileNotFoundError("Environment image not found")
-    if os.path.getsize(resolved) > MAX_IMAGE_BYTES:
-        raise ValueError(f"Environment image exceeds {MAX_IMAGE_BYTES // (1024 * 1024)} MB")
+    resolved = images.validate_path(filepath, policy, "Environment image")
     before = len(bpy.data.images)
     try:
         image = bpy.data.images.load(resolved, check_existing=True)
     except RuntimeError as exc:
         raise ValueError("Blender cannot read this environment image") from exc
     created = len(bpy.data.images) > before
-    width, height = image.size[0], image.size[1]  # reading the size makes Blender decode the file
-    problem = None
-    if width <= 0 or height <= 0:
-        problem = "Blender cannot decode this environment image"
-    elif width * height > MAX_IMAGE_PIXELS:
-        problem = f"Environment image is {width}x{height}; the limit is {MAX_IMAGE_PIXELS} pixels"
-    if problem:
+    if problem := images.decode_problem(image, "Environment image"):
         if created:
             bpy.data.images.remove(image)
         raise ValueError(problem)

@@ -178,6 +178,55 @@ All inputs are validated, and an image is loaded and checked (at most 256 MB and
 | `blender_material_set_color` | Set the Principled BSDF base color |
 | `blender_material_set_texture` | Set an image texture as base color |
 
+#### PBR texture sets
+
+`blender_material_set_texture_set` binds several image maps to a material's Principled BSDF in one step. `blender_material_set_texture` still binds a single base color image.
+
+```json
+{
+  "name": "Crate",
+  "orm": "/project/textures/crate_orm.png",
+  "maps": {
+    "base_color": "/project/textures/crate_basecolor.png",
+    "normal": {"path": "/project/textures/crate_normal.png", "convention": "opengl"}
+  },
+  "mapping": {"scale": [2, 2]}
+}
+```
+
+| Map | Color space | Settings | Connects to |
+|---|---|---|---|
+| `base_color` | sRGB | | Base Color |
+| `metallic`, `roughness` | Non-Color | `channel` | Metallic, Roughness |
+| `normal` | Non-Color | **`convention`** `opengl` or `directx`; `strength` 0–10 | Normal Map node (tangent space) → Normal |
+| `ao` | Non-Color | **`mode`** `gltf` or `multiply`; `channel` | See below. Principled BSDF has no occlusion input |
+| `emission` | sRGB | `strength` (default 1) | Emission Color and Strength |
+| `opacity` | Non-Color | **`mode`** `blend` or `clip`; `channel`; `threshold` for clip | Alpha, and the material's transparency setting |
+| `height` | Non-Color | **`mode`** `bump` or `displacement`; `channel`; `strength`, `distance`, and `midlevel` for displacement | Bump node in front of the normal map, or Displacement on the material output |
+
+Settings in **bold** are required, because they change the result in ways that cannot be guessed. A map can be given as a bare path when it needs none. `channel` is `R` (default), `G`, `B` or `A`. `orm` is shorthand for the glTF packed layout: occlusion in red, roughness in green and metallic in blue, with occlusion in `gltf` mode. Give maps explicit channels for any other packing. Maps that use one file share one texture node.
+
+`uv_map` names a UV layer. `mapping` takes `scale` and `offset` as `[u, v]` and `rotation` in degrees. Both apply to every texture bound by this tool.
+
+**Safety.** The whole request is checked, and every file is validated and loaded, before the material changes. A missing or unreadable file changes nothing. Only local files are read, under the [policy's](policy.md) path rules, at most 256 MB and 16384×8192 pixels each. A color space belongs to the image, so if a loaded image already uses another one, a separate copy is loaded and the original is left alone. Calls only add to or replace bindings made by this tool; maps you do not list are kept, and `remove` unbinds maps. If an input is fed by a node you made, the call fails with `conflict`; `on_conflict="replace"` disconnects your link and keeps your node. The change is one undo step.
+
+The result lists the effective `bindings`, what was `replaced` and `removed`, `warnings`, and how many users the material has.
+
+**glTF export.** These behaviours were checked by inspecting exported GLB files:
+
+| Binding | In the GLB |
+|---|---|
+| Base color, normal (OpenGL), metallic, roughness, emission | Exported |
+| `orm`, or occlusion, roughness and metallic from one file | One shared texture |
+| `ao` mode `gltf` | Exported as occlusion, through the `glTF Material Output` node group the exporter looks for |
+| `ao` mode `multiply` | **Occlusion is lost**: base color is written without it |
+| `opacity` `clip` / `blend` | `alphaMode` `MASK` with the threshold as cutoff / `BLEND` |
+| `mapping` | `KHR_texture_transform`; the viewer must support it |
+| Normal with `convention="directx"` | **Wrong in glTF viewers**: the original image is written without the green flip |
+| `height`, bump or displacement | Not exported. Bake bump detail into the normal map |
+
+In Blender, `directx` renders identically to the OpenGL version of the same map: the green channel is inverted with nodes and the file is not modified. For export, convert the file itself to OpenGL and bind it as `opengl`. Displacement needs geometry fine enough to move, and Cycles and EEVEE support it differently. Normals are tangent space only.
+
 #### Material slots and face regions
 
 One mesh can use several materials, such as skin, eyes and armor. `blender_material_assign` still sets the mesh's first slot (or adds one). These tools manage the others. They work on mesh objects outside Edit Mode.

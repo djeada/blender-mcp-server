@@ -561,3 +561,15 @@ class MaterialAssignFacesParams(BridgeParams):
         "min_weight": field("float", 0.0, ge=0, le=1),
         "shared_data": _SHARED_DATA,
     }
+
+
+class MaterialTextureSetParams(BridgeParams):
+    fields = {
+        "name": field("str", required=True),
+        "maps": field("dict", allow_none=True),
+        "orm": field("str", allow_none=True),
+        "uv_map": field("str", allow_none=True),
+        "mapping": field("dict", allow_none=True),
+        "remove": field("list", allow_none=True),
+        "on_conflict": field("str", "error"),
+    }
