@@ -267,5 +267,17 @@ def test_policy_limits_apply(scene_with, handler, runtime, mock_bpy, tmp_path):
     mock_bpy.data.scenes.new.assert_not_called()
 
 
+def test_a_scene_without_a_world_previews_with_a_black_one(fake_render, handler, mock_bpy):
+    temp_scene = fake_render()
+    mock_bpy.context.scene.world = None
+    mock_bpy.context.scene.objects = []
+    result = handler.handle("view.capture", {"object": "Body", "mode": "material", "lighting": "world"})
+    background = mock_bpy.data.worlds.new.return_value.node_tree.nodes[0]
+    # The last values written are those of the black preview world: no color and no strength.
+    assert background.inputs.__getitem__.return_value.default_value == 0.0
+    assert temp_scene.world is mock_bpy.data.worlds.new.return_value
+    assert "no environment light" in result["notes"][0]
+
+
 def test_capture_adds_no_undo_checkpoint(handler):
     assert "view.capture" not in handler.mutation_commands

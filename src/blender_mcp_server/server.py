@@ -14,9 +14,10 @@ from blender_mcp_server.tools.animation import (
 )
 from blender_mcp_server.tools.camera import (
     camera_create,
+    camera_frame,
     camera_update,
 )
-from blender_mcp_server.tools.capture import view_capture
+from blender_mcp_server.tools.capture import material_preview, view_capture
 from blender_mcp_server.tools.discovery import (
     capability_describe,
     capability_invoke,
@@ -41,6 +42,8 @@ from blender_mcp_server.tools.lighting import (
     light_create,
     light_update,
     lighting_inspect,
+    lighting_rig_apply,
+    lighting_rig_remove,
     world_get,
     world_set,
 )
@@ -48,13 +51,17 @@ from blender_mcp_server.tools.materials import (
     material_assign,
     material_assign_faces,
     material_create,
+    material_diagnose,
     material_list,
     material_set_color,
     material_set_texture,
+    material_set_texture_set,
     material_slot_append,
     material_slot_remove,
     material_slot_replace,
     material_slots,
+    shader_graph_edit,
+    shader_graph_inspect,
 )
 from blender_mcp_server.tools.mesh import mesh_inspect
 from blender_mcp_server.tools.objects import (
@@ -143,6 +150,11 @@ __all__ = [
     "material_assign",
     "material_set_color",
     "material_set_texture",
+    "material_set_texture_set",
+    "material_diagnose",
+    "material_preview",
+    "shader_graph_inspect",
+    "shader_graph_edit",
     "material_slots",
     "material_slot_append",
     "material_slot_replace",
@@ -152,6 +164,9 @@ __all__ = [
     "camera_create",
     "camera_update",
     "lighting_inspect",
+    "lighting_rig_apply",
+    "lighting_rig_remove",
+    "camera_frame",
     "world_get",
     "world_set",
     "color_management_set",

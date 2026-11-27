@@ -74,8 +74,13 @@ GROUPS: dict[str, Group] = {
         },
     ),
     "materials": Group(
-        "Create, assign and color materials, set image textures, and manage material slots and face regions.",
+        "Materials, PBR texture sets, material slots and face regions, shader node graphs, and material "
+        "diagnostics and previews.",
         {
+            "blender_material_diagnose": ("material.diagnose",),
+            "blender_material_preview": ("material.preview",),
+            "blender_shader_graph_inspect": ("shader.inspect_graph",),
+            "blender_shader_graph_edit": ("shader.edit_graph",),
             "blender_material_slots": ("material.list_slots",),
             "blender_material_slot_append": ("material.slot_append",),
             "blender_material_slot_replace": ("material.slot_replace",),
@@ -86,12 +91,15 @@ GROUPS: dict[str, Group] = {
             "blender_material_assign": ("material.assign",),
             "blender_material_set_color": ("material.set_color",),
             "blender_material_set_texture": ("material.set_texture",),
+            "blender_material_set_texture_set": ("material.set_texture_set",),
         },
     ),
     "lighting": Group(
-        "Inspect scene lighting, create and adjust point, sun, spot and area lights, set environment and sky "
-        "lighting, exposure and view transforms.",
+        "Lighting rigs fitted to a subject, lighting inspection, point, sun, spot and area lights, environment "
+        "and sky lighting, exposure and view transforms.",
         {
+            "blender_lighting_rig_apply": ("lighting.rig_apply",),
+            "blender_lighting_rig_remove": ("lighting.rig_remove",),
             "blender_world_get": ("world.get",),
             "blender_world_set": ("world.set",),
             "blender_lighting_inspect": ("lighting.inspect",),
@@ -113,6 +121,7 @@ GROUPS: dict[str, Group] = {
     "rendering": Group(
         "Inspection views returned as images, cameras, still and animation renders, and glTF, OBJ and FBX export.",
         {
+            "blender_camera_frame": ("camera.frame",),
             "blender_camera_create": ("camera.create",),
             "blender_camera_update": ("camera.update",),
             "blender_view_capture": ("view.capture",),
@@ -126,8 +135,8 @@ GROUPS: dict[str, Group] = {
         "renders and exports. Still and animation renders need a scene camera; captures bring their own.",
     ),
     "knowledge": Group(
-        "Offline modeling, texturing and rigging guides, and staged workflows for tasks such as characters, props "
-        "and buildings.",
+        "Offline modeling, texturing, lighting and rigging guides, and staged workflows for tasks such as "
+        "characters, materials and lighting setups.",
         {
             "blender_workflow": (),
             "blender_guide_search": (),
@@ -160,7 +169,8 @@ GROUPS: dict[str, Group] = {
 
 # Task words that a tool's name and description may not contain.
 KEYWORDS: dict[str, str] = {
-    "blender_workflow": "plan how to start approach steps stage guidance orc sword house character prop building",
+    "blender_workflow": "plan how to start approach steps stage guidance orc sword house character prop building "
+    "texture material lighting portrait product interior night",
     "blender_guide_search": "how to technique learn tutorial help advice best practice",
     "blender_guide_get": "read documentation tutorial technique",
     "blender_recipe_search": "ready-made template tree scatter glow emissive physics rigid camera",
@@ -188,6 +198,14 @@ KEYWORDS: dict[str, str] = {
     "blender_material_create": "shader surface color pbr",
     "blender_material_set_texture": "image map albedo basecolor pbr texturing uv",
     "blender_material_set_color": "paint tint albedo",
+    "blender_material_diagnose": "check validate missing texture color space broken budget memory resolution game "
+    "ready gltf export problems audit",
+    "blender_material_preview": "see look picture swatch sphere ball preview shader result",
+    "blender_shader_graph_inspect": "node tree shader nodes links read material graph world",
+    "blender_shader_graph_edit": "procedural noise color ramp bump voronoi nodes connect shader graph build material "
+    "texture",
+    "blender_material_set_texture_set": "pbr texture maps roughness metallic normal ambient occlusion orm emission "
+    "opacity alpha height bump displacement gltf game ready",
     "blender_material_assign": "apply shader whole object",
     "blender_material_slots": "multiple materials regions list",
     "blender_material_slot_append": "multiple materials add second another region",
@@ -195,6 +213,9 @@ KEYWORDS: dict[str, str] = {
     "vertex group",
     "blender_light_create": "lamp illuminate illumination lighting brightness sun spot area key fill rim",
     "blender_light_update": "lamp illumination lighting brightness energy warm cool temperature kelvin softness",
+    "blender_lighting_rig_apply": "three point studio softbox turntable portrait dramatic low key setup light my "
+    "character product subject illuminate",
+    "blender_camera_frame": "fit subject center compose frame shot aim viewpoint margin aspect",
     "blender_lighting_inspect": "lights check review current setup report world exposure",
     "blender_world_get": "environment hdri sky background ambient",
     "blender_world_set": "environment hdri hdr sky sun outdoor daylight background ambient studio backdrop",

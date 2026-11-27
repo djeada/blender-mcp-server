@@ -10,7 +10,7 @@ Object, material, collection, keyframe and job listings accept `limit` and `offs
 
 ### Modeling Knowledge
 
-`blender_workflow`, `blender_guide_search` and `blender_guide_get` give staged plans and short technique guides offline. See [Modeling knowledge](knowledge.md).
+`blender_workflow`, `blender_guide_search` and `blender_guide_get` give staged modeling, surfacing and lighting plans and short technique guides offline. See [Modeling knowledge](knowledge.md).
 
 ### Scene Inspection
 
@@ -141,6 +141,32 @@ blender_light_create(light_type="AREA", name="KeyLight", location=[2, -2, 3],
                      size=2, size_y=3)
 ```
 
+### Lighting rigs and framing
+
+![The five rigs on a character and a metal product: three-point, softbox, portrait, low-key and turntable](images/lighting-rigs.png)
+
+*Columns: `three_point`, `studio_softbox`, `portrait`, `low_key`, `turntable`. Reproduce with `blender -b --factory-startup --python scripts/render_lighting_examples.py -- sheet.png` (Cycles on the CPU, generated subjects, nearly black world).*
+
+`blender_lighting_rig_apply(rig=..., object=... | collection=...)` places area lights around a subject, sized from the evaluated bounds of its renderable geometry.
+
+| Rig | Lights (strength relative to key) | For |
+|---|---|---|
+| `three_point` | key 1, fill 0.35, rim 0.8 | General subjects |
+| `studio_softbox` | key 1, fill 0.6, top 0.5, all large | Products; broad, soft reflections |
+| `turntable` | four equal lights at 0.6 | Even inspection from any side |
+| `portrait` | warm key 1, fill 0.3, rim 0.6 | Faces and characters |
+| `low_key` | small side key 1, fill 0.05, rim 0.9 | Dramatic, mostly shadow |
+
+**Scale.** With R as half the diagonal of the subject's world bounding box, each light sits 3.5R to 4.5R from the center, its disk is a multiple of R across, and its power is `3 W/m² × strength × π × distance²`. This is accurate for small sources; large ones deliver somewhat less (about 10% less for a disk 0.75 times its distance), so the softbox rig runs a little darker than the others. A subject and rig scaled together are geometrically identical, so exposure does not change with size; the test suite renders a 2 cm and a 200 m subject and compares them. 3 W/m² suits a mid-grey surface in an otherwise dark scene under the Standard view. It is a starting point: **the world and other lights add to it**, and the result lists other lights that will. Brighten or darken with `exposure_stops`, which doubles the light per stop. Long, thin subjects get lights fitted to their length, so check them. Very small or large scenes can still reach render engine limits such as light clamping.
+
+**Orientation.** Light directions are measured from the camera (`camera`, else the scene camera; the front view if neither exists): positive angles toward the camera's right. `rotation` turns the whole rig. Elevations are relative to the horizon.
+
+**Controls.** `ratios`, `temperatures` and `colors` are keyed by role, such as `{"fill": 0.15}`; a ratio of 0 leaves that light out. `size_scale` makes shadows softer or harder. `distance_scale` moves lights while keeping the light reaching the subject. Rigs are deterministic and use no random seeds.
+
+**Isolation.** A rig's lights go into the collection `MCP Rig <name>` (the name defaults to the rig type). It never edits or deletes other lights, and never creates or switches cameras. Applying a name again fails with `conflict` unless `on_existing="replace"`, which builds the new lights before removing the old ones. `blender_lighting_rig_remove(name)` deletes only that rig's lights; anything you moved into its collection stays, along with the collection. A subject whose geometry is all at one point is rejected. Each call is one undo step.
+
+`blender_camera_frame(camera=..., object=... | collection=...)` places a camera so the subject fits. `azimuth` 0 looks from the front and 90 from the right; `elevation` tilts up. It sets `projection`, `lens` (perspective) or the orthographic scale, and clip distances, so that every bounding box corner is inside the frame with `margin` to spare, for the render's aspect ratio or the `aspect` you give. It does not change render settings and says when the aspects differ. A new name creates a camera in the `MCP Cameras` collection. The scene camera changes only with `set_active=true`. Parented, constrained or shared-data cameras are refused. Framing uses bounding boxes, so round shapes seen at an angle can have extra space.
+
 ### World and Environment
 
 `blender_world_get` describes the scene's world: its settings, whether it can be edited in place (and why not), the sky models this Blender offers, and whether the film is transparent. `blender_world_set` changes it. Only the settings you pass change, and the mode is kept unless you pass `mode`.
@@ -177,6 +203,124 @@ All inputs are validated, and an image is loaded and checked (at most 256 MB and
 | `blender_material_assign` | Assign a material to an object |
 | `blender_material_set_color` | Set the Principled BSDF base color |
 | `blender_material_set_texture` | Set an image texture as base color |
+
+#### PBR texture sets
+
+`blender_material_set_texture_set` binds several image maps to a material's Principled BSDF in one step. `blender_material_set_texture` still binds a single base color image.
+
+```json
+{
+  "name": "Crate",
+  "orm": "/project/textures/crate_orm.png",
+  "maps": {
+    "base_color": "/project/textures/crate_basecolor.png",
+    "normal": {"path": "/project/textures/crate_normal.png", "convention": "opengl"}
+  },
+  "mapping": {"scale": [2, 2]}
+}
+```
+
+| Map | Color space | Settings | Connects to |
+|---|---|---|---|
+| `base_color` | sRGB | | Base Color |
+| `metallic`, `roughness` | Non-Color | `channel` | Metallic, Roughness |
+| `normal` | Non-Color | **`convention`** `opengl` or `directx`; `strength` 0–10 | Normal Map node (tangent space) → Normal |
+| `ao` | Non-Color | **`mode`** `gltf` or `multiply`; `channel` | See below. Principled BSDF has no occlusion input |
+| `emission` | sRGB | `strength` (default 1) | Emission Color and Strength |
+| `opacity` | Non-Color | **`mode`** `blend` or `clip`; `channel`; `threshold` for clip | Alpha, and the material's transparency setting |
+| `height` | Non-Color | **`mode`** `bump` or `displacement`; `channel`; `strength`, `distance`, and `midlevel` for displacement | Bump node in front of the normal map, or Displacement on the material output |
+
+Settings in **bold** are required, because they change the result in ways that cannot be guessed. A map can be given as a bare path when it needs none. `channel` is `R` (default), `G`, `B` or `A`. `orm` is shorthand for the glTF packed layout: occlusion in red, roughness in green and metallic in blue, with occlusion in `gltf` mode. Give maps explicit channels for any other packing. Maps that use one file share one texture node.
+
+`uv_map` names a UV layer. `mapping` takes `scale` and `offset` as `[u, v]` and `rotation` in degrees. Both apply to every texture bound by this tool.
+
+**Safety.** The whole request is checked, and every file is validated and loaded, before the material changes. A missing or unreadable file changes nothing. Only local files are read, under the [policy's](policy.md) path rules, at most 256 MB and 16384×8192 pixels each. A color space belongs to the image, so if a loaded image already uses another one, a separate copy is loaded and the original is left alone. Calls only add to or replace bindings made by this tool; maps you do not list are kept, and `remove` unbinds maps. If an input is fed by a node you made, the call fails with `conflict`; `on_conflict="replace"` disconnects your link and keeps your node. The change is one undo step.
+
+The result lists the effective `bindings`, what was `replaced` and `removed`, `warnings`, and how many users the material has.
+
+**glTF export.** These behaviours were checked by inspecting exported GLB files:
+
+| Binding | In the GLB |
+|---|---|
+| Base color, normal (OpenGL), metallic, roughness, emission | Exported |
+| `orm`, or occlusion, roughness and metallic from one file | One shared texture |
+| `ao` mode `gltf` | Exported as occlusion, through the `glTF Material Output` node group the exporter looks for |
+| `ao` mode `multiply` | **Occlusion is lost**: base color is written without it |
+| `opacity` `clip` / `blend` | `alphaMode` `MASK` with the threshold as cutoff / `BLEND` |
+| `mapping` | `KHR_texture_transform`; the viewer must support it |
+| Normal with `convention="directx"` | **Wrong in glTF viewers**: the original image is written without the green flip |
+| `height`, bump or displacement | Not exported. Bake bump detail into the normal map |
+
+In Blender, `directx` renders identically to the OpenGL version of the same map: the green channel is inverted with nodes and the file is not modified. For export, convert the file itself to OpenGL and bind it as `opengl`. Displacement needs geometry fine enough to move, and Cycles and EEVEE support it differently. Normals are tangent space only.
+
+#### Shader node graphs
+
+`blender_shader_graph_inspect` and `blender_shader_graph_edit` read and change the nodes of a `material`, or of the scene's world with `world=true`. `group_path` is a list of group node IDs (up to three deep) to work inside node groups. A node's ID is its Blender node name.
+
+**Inspect.** Without options you get a page of node IDs and types, plus the links that feed those nodes. `sockets=true`, or `nodes=[ids]` (up to 50), adds each socket's `id`, name, type, whether it is linked and its value when not, the settings you may change, and color ramp stops. `limit` and `offset` page the nodes. Sockets disabled by a node's settings are left out. Unsupported node types are listed with `supported: false` and can still be connected to or removed.
+
+**Edit.** `operations` holds 1–64 of these:
+
+| `op` | Keys |
+|---|---|
+| `add_node` | `id`, `type`; optional `properties`, `inputs`, `location`, `label` |
+| `remove_node` | `node` (output nodes cannot be removed) |
+| `set_input` | `node`, `socket`, `value` (the input must be unlinked) |
+| `set_property` | `node`, `property`, `value` |
+| `set_color_ramp` | `node`, `stops` (`position`, `color`), optional `interpolation` |
+| `connect` | `from`, `from_socket`, `to`, `to_socket`; `replace: true` to take over a linked input |
+| `disconnect` | `to`, `to_socket` |
+| `move_node` | `node`, `location` |
+
+Address sockets by `id`. A name also works when only one enabled socket has it; nodes such as Mix repeat names. Socket and setting names can differ between Blender versions, so inspect before editing.
+
+```json
+{
+  "material": "Stone",
+  "operations": [
+    {"op": "add_node", "id": "noise", "type": "ShaderNodeTexNoise", "inputs": {"Scale": 6}},
+    {"op": "add_node", "id": "bump", "type": "ShaderNodeBump", "inputs": {"Strength": 0.4}},
+    {"op": "connect", "from": "noise", "from_socket": "Fac", "to": "bump", "to_socket": "Height"},
+    {"op": "connect", "from": "bump", "from_socket": "Normal", "to": "Principled BSDF", "to_socket": "Normal"}
+  ]
+}
+```
+
+**All or nothing.** The patch is first applied to a temporary copy of the tree, so Blender's own rules, including sockets that appear only after a setting changes, are checked before your tree is touched. If any operation fails, the error names its index and nothing changes. A successful patch is one undo step. The same patch is then applied to the real tree. If that second pass failed despite the dry run, earlier operations would remain; undo restores the previous graph.
+
+Rejected: links between a shader and a value, links that would form a loop (Blender itself accepts them), replacing a link without `replace`, and duplicate node IDs.
+
+**Supported nodes** are common inputs (texture coordinates, UV map, attribute, geometry, object info, layer weight, Fresnel), mapping, noise, Voronoi, wave, gradient, checker, brick, image and environment textures, color ramp, math, vector math, mix, map range, clamp, separate and combine, RGB and value, invert, hue/saturation, brightness/contrast, bump, normal map, displacement, the Principled, diffuse, transparent, emission and background shaders, mix and add shader, reroute and frame. Each has a fixed list of settings that may be changed. Script (OSL) nodes cannot be added, no general property can be set, and no operation reads files: `image` refers to an image that is already loaded. Group nodes cannot be added, but existing groups can be edited.
+
+**Shared data.** Editing a material changes every object that uses it, as usual. A node group used more than once, or a world used by several scenes, needs `shared_data="update_all"`; groups also allow `"make_single_user"`.
+
+#### Diagnostics and preview
+
+`blender_material_diagnose` checks materials without changing anything. Give `material`, or `object` for the materials in its slots, or neither for every material used in the scene (32 per page).
+
+| Profile | Largest texture | Texture memory budget | Expected alpha modes | Unpacked metallic and roughness | glTF checks |
+|---|---:|---:|---|---|---|
+| `gltf` (default) | 4,096 | 256 MB | any | heuristic | Yes |
+| `mobile` | 2,048 | 64 MB | `OPAQUE`, `MASK` | warning | Yes |
+| `render` | 16,384 | 4,096 MB | any | not checked | No |
+
+`max_texture_size`, `max_texture_memory_mb` and `alpha_modes` override a profile. These are starting points, not platform requirements. Each material reports its `alpha_mode`: `MASK` when a greater-than or round node feeds Alpha, `BLEND` for any other link or a constant below 1, otherwise `OPAQUE`.
+
+| Severity | Meaning | Checks |
+|---|---|---|
+| `error` | Will look or export wrong | `missing_file`, `unreadable_image`, `no_image`, `broken_shader_chain`, `invalid_link`, `normal_without_normal_map`, `color_space` for data read as sRGB, `texture_size`, `texture_memory`, `gltf_unsupported` |
+| `warning` | Probably a problem | `alpha_mode`, `channel_layout` (one image, not roughness in green and metallic in blue), `channel_packing` (mobile), `color_space` for color read as linear, `mixed_use`, `unused_nodes`, `empty_normal_map`, `normal_space`, `empty_slot`, `no_material` |
+| `heuristic` | A guess, or a matter of preference | `channel_packing` (gltf), `name_mismatch`, `partial_metallic`, `non_power_of_two` |
+
+A channel read from an image's **alpha** is never a color-space error, because alpha is linear in any color space.
+
+**Intentional exceptions.** `allow` lists checks to excuse: `"unused_nodes"` everywhere, `"color_space:mask.png"` for one image or node, or `"texture_size:Hero"` for one material. Excused findings move to `allowed_findings` and do not affect the status.
+
+**What it does not know.** `unchecked` lists what was not judged: node groups (not traversed), surfaces other than Principled BSDF, other linked Principled inputs, image sequences and tiles, and files outside the [policy's](policy.md) approved roots, which are never opened. A status of `ok_with_unchecked_items` is not a clean bill of health. Each material's `gltf_export` verdict is `supported`, `unsupported` (a pattern known not to export, such as procedural nodes or non-UV coordinates) or `unknown`. `supported` means the graph uses only patterns known to export; verify the exported file for your target.
+
+The report lists each material's texture `bindings` (semantic, image, node, channel) and each image's color space, storage (`packed`, `external`, `generated`), size and estimated memory. Only file names are reported, not paths. `estimated_texture_bytes` is explained by `memory_assumption`: uncompressed memory with mipmaps, which real engines usually improve on with compression.
+
+`blender_material_preview(material, shape="sphere")` renders the material on a temporary `sphere`, `plane` or `cube` with UVs, under the same fixed lighting and settings as [view captures](#visual-inspection), then removes everything it made. To see it on a real asset, use `blender_view_capture(object=..., mode="material")`. Both tools also work with `transport="headless"`.
 
 #### Material slots and face regions
 

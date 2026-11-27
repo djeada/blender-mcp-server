@@ -465,10 +465,28 @@ def test_every_guide_pattern_runs_and_builds_clean_meshes(call):
         assert result["error"] is None, (result["error"], result["stderr"])
         return result["result"]
 
+    # Lighting examples add lights and change render settings in the shared test scene; undo that afterwards.
+    keep = "__result__ = [sorted(o.name for o in bpy.data.objects if o.type == 'LIGHT'), sorted(m.name for m in bpy.data.materials)]"
+    render_state = "s = bpy.context.scene\n__result__ = [s.render.engine, s.view_settings.view_transform, s.view_settings.exposure]"
+    original_render = run_python(render_state)
     for guide in knowledge.guides().values():
         for block in guide.python_blocks():
             before = mesh_names()
+            lights, materials = run_python(keep)
             run_python(block)
+            new_lights, new_materials = run_python(keep)
+            # A guide that says its nodes do not export must agree with the diagnostics.
+            if guide.domain in {"surfacing", "art-direction"} and "ShaderNodeTex" in block:
+                for name in sorted(set(new_materials) - set(materials)):
+                    verdict = call("material_diagnose", material=name)["materials"][0]["gltf_export"]
+                    assert verdict["status"] == "unsupported", (guide.id, name, verdict)
+                    errors = call("material_diagnose", material=name, profile="render")["findings"]
+                    assert not [item for item in errors if item["severity"] == "error"], (guide.id, errors)
+            call(
+                "python_exec",
+                code="for n in args['names']: bpy.data.objects.remove(bpy.data.objects[n])",
+                args={"names": sorted(set(new_lights) - set(lights))},
+            )
             for name in sorted(mesh_names() - before):
                 for source in ("raw", "evaluated"):
                     report = call("mesh_inspect", name=name, source=source, check_duplicates=True)
@@ -503,6 +521,11 @@ __result__ = [(posed_tip - tip).length, (posed_base - base).length, bpy.context.
 """
                 )
                 assert moved[0] > 0.5 and moved[1] < 1e-5 and moved[2] == "OBJECT"
+    call(
+        "python_exec",
+        code="s = bpy.context.scene\ns.render.engine, s.view_settings.view_transform, s.view_settings.exposure = args['v']",
+        args={"v": original_render},
+    )
 
 
 _BUILD_MESH_FIXTURES = """
@@ -1136,6 +1159,858 @@ obj.vertex_groups.new(name='top').add([v.index for v in obj.data.vertices if v.c
     after_assign = call("material_slots", object="ITRegions")["slots"]
     assert after_assign[0]["data_material"] == "ITTeeth"
     assert after_assign[0]["material"] == "ITArmor" and after_assign[1:] == before_assign[1:]
+
+
+_MAKE_TEXTURES = """
+import os
+for name, color in args['colors'].items():
+    image = bpy.data.images.new('ITMake', 8, 8, alpha=True)
+    image.colorspace_settings.name = 'Non-Color'
+    image.pixels = list(color) * 64
+    image.filepath_raw = os.path.join(args['directory'], name + '.png')
+    image.file_format = 'PNG'
+    image.save()
+    bpy.data.images.remove(image)
+"""
+
+_TEXTURE_COLORS = {
+    "base": (0.8, 0.6, 0.4, 1),
+    "orm": (0.25, 0.6, 0.9, 1),
+    "dx_normal": (0.5, 0.2, 1.0, 1),
+    "gl_normal": (0.5, 0.8, 1.0, 1),  # the same surface in the OpenGL convention
+    "emit": (0.0, 0.5, 1.0, 1),
+    "alpha": (1.0, 1.0, 1.0, 0.4),
+}
+
+_GRAPH = """
+tree = bpy.data.materials[args['name']].node_tree
+__result__ = [
+    sorted((n.name, n.bl_idname) for n in tree.nodes),
+    sorted((l.from_node.name, l.from_socket.name, l.to_node.name, l.to_socket.name) for l in tree.links),
+]
+"""
+
+_EXPORTED_MATERIAL = """
+import json, os, struct
+bpy.ops.export_scene.gltf(filepath=args['path'], export_format='GLB')
+data = open(args['path'], 'rb').read()
+length = struct.unpack('<I', data[12:16])[0]
+document = json.loads(data[20:20 + length])
+blob = data[20 + length + 8:]
+material = next(m for m in document['materials'] if m['name'] == args['name'])
+pbr = material.get('pbrMetallicRoughness', {})
+
+def pixel(reference):
+    if reference is None:
+        return None
+    image = document['images'][document['textures'][reference['index']]['source']]
+    view = document['bufferViews'][image['bufferView']]
+    start = view.get('byteOffset', 0)
+    path = args['path'] + '.png'
+    open(path, 'wb').write(blob[start:start + view['byteLength']])
+    loaded = bpy.data.images.load(path, check_existing=False)
+    loaded.colorspace_settings.name = 'Non-Color'
+    value = list(loaded.pixels[:3])
+    bpy.data.images.remove(loaded)
+    return value
+
+__result__ = {
+    'base': pixel(pbr.get('baseColorTexture')),
+    'normal': pixel(material.get('normalTexture')),
+    'metallic_roughness': pbr.get('metallicRoughnessTexture', {}).get('index'),
+    'occlusion': material.get('occlusionTexture', {}).get('index'),
+    'emissive': 'emissiveTexture' in material,
+    'alpha_mode': material.get('alphaMode'),
+    'alpha_cutoff': material.get('alphaCutoff'),
+    'transform': pbr.get('baseColorTexture', {}).get('extensions', {}).get('KHR_texture_transform'),
+}
+"""
+
+_RENDER_NORMAL = """
+scene = bpy.data.scenes.new('ITNormal')
+mesh = bpy.data.meshes.new('ITNormalPlane')
+mesh.from_pydata([(-1, -1, 0), (1, -1, 0), (1, 1, 0), (-1, 1, 0)], [], [(0, 1, 2, 3)])
+layer = mesh.uv_layers.new(name='UVMap')
+for index, uv in enumerate([(0, 0), (1, 0), (1, 1), (0, 1)]):
+    (layer.uv[index] if hasattr(layer, 'uv') else layer.data[index]).__setattr__('vector' if hasattr(layer, 'uv') else 'uv', uv)
+mesh.materials.append(bpy.data.materials[args['name']])
+scene.collection.objects.link(bpy.data.objects.new('ITNormalPlane', mesh))
+camera = bpy.data.objects.new('ITNormalCam', bpy.data.cameras.new('ITNormalCam'))
+camera.location = (0, 0, 3)
+camera.data.type = 'ORTHO'
+camera.data.ortho_scale = 1.0
+scene.collection.objects.link(camera)
+scene.camera = camera
+light = bpy.data.objects.new('ITNormalSun', bpy.data.lights.new('ITNormalSun', 'SUN'))
+light.data.energy = 3.0
+light.rotation_euler = (0.9, 0.0, 0.0)  # tilted toward +Y, so flipping the green channel matters
+scene.collection.objects.link(light)
+scene.render.engine = 'CYCLES'
+scene.cycles.samples = 4
+scene.cycles.seed = 0
+scene.cycles.use_denoising = False
+scene.render.resolution_x = scene.render.resolution_y = 8
+scene.view_settings.view_transform = 'Standard'
+scene.render.filepath = args['path']
+bpy.ops.render.render(write_still=True, scene=scene.name)
+image = bpy.data.images.load(args['path'], check_existing=False)
+pixels = list(image.pixels)
+bpy.data.images.remove(image)
+for obj in list(scene.collection.objects):
+    bpy.data.objects.remove(obj)
+bpy.data.scenes.remove(scene)
+__result__ = pixels[(4 * 8 + 4) * 4:(4 * 8 + 4) * 4 + 3]
+"""
+
+
+def test_pbr_texture_sets_in_blender_and_gltf(call, bridge):
+    folder = bridge["tmp"] / "pbr"
+    folder.mkdir(exist_ok=True)
+
+    def python(code, **arguments):
+        result = call("python_exec", code=code, args=arguments)
+        assert result["error"] is None, (result["error"], result["stderr"])
+        return result["result"]
+
+    python(_MAKE_TEXTURES, directory=str(folder), colors=_TEXTURE_COLORS)
+    path = {name: str(folder / f"{name}.png") for name in _TEXTURE_COLORS}
+    call("object_create", mesh_type="cube", name="ITPbrCube")
+    python("import bpy\nbpy.data.objects['ITPbrCube'].data.uv_layers.new(name='UVMap')")
+    call("material_create", name="ITPbr")
+    call("material_assign", object="ITPbrCube", material="ITPbr")
+
+    def graph():
+        return python(_GRAPH, name="ITPbr")
+
+    def bind(**arguments):
+        return call("material_set_texture_set", name="ITPbr", **arguments)  # the fixture unwraps "result"
+
+    def export(label):
+        return python(_EXPORTED_MATERIAL, name="ITPbr", path=str(folder / f"{label}.glb"))
+
+    full = {
+        "orm": path["orm"],
+        "maps": {
+            "base_color": path["base"],
+            "normal": {"path": path["gl_normal"], "convention": "opengl", "strength": 0.7},
+            "emission": {"path": path["emit"], "strength": 3},
+        },
+    }
+    result = bind(**full)
+    spaces = {item["map"]: (item["color_space"], item.get("channel")) for item in result["bindings"]}
+    assert spaces == {
+        "base_color": ("sRGB", None),
+        "metallic": ("Non-Color", "B"),
+        "roughness": ("Non-Color", "G"),
+        "normal": ("Non-Color", None),
+        "ao": ("Non-Color", "R"),
+        "emission": ("sRGB", None),
+    }
+    links = {(link[0], link[1], link[2], link[3]) for link in graph()[1]}
+    ends = {(link[0], link[3]) for link in links}
+    assert ("MCP normal:map", "Normal") in ends and ("MCP roughness:through", "Roughness") in ends
+    # The green channel of the packed image feeds roughness through its labelled pass-through node.
+    assert any(
+        link[0] == "MCP separate" and link[1] == "Green" and link[2] == "MCP roughness:through" for link in links
+    )
+    built = graph()
+    bind(**full)
+    assert graph() == built  # binding again reuses nodes instead of duplicating them
+    exported = export("full")
+    assert exported["base"] == pytest.approx(_TEXTURE_COLORS["base"][:3], abs=0.02)
+    assert exported["metallic_roughness"] is not None and exported["occlusion"] == exported["metallic_roughness"]
+    assert exported["normal"] == pytest.approx(_TEXTURE_COLORS["gl_normal"][:3], abs=0.02) and exported["emissive"]
+
+    # A missing file or a foreign link leaves the graph exactly as it was.
+    for arguments, code in (
+        ({"maps": {"roughness": str(folder / "missing.png")}}, "not_found"),
+        ({"maps": {"base_color": path["base"], "roughness": "https://example.com/r.png"}}, "invalid_arguments"),
+    ):
+        with pytest.raises(protocol.BridgeError) as failure:
+            bind(**arguments)
+        assert failure.value.code == code and graph() == built
+    python(
+        """
+tree = bpy.data.materials['ITPbr'].node_tree
+noise = tree.nodes.new('ShaderNodeTexNoise')
+noise.name = 'Mine'
+shader = next(n for n in tree.nodes if n.type == 'BSDF_PRINCIPLED')
+tree.links.new(noise.outputs[0], shader.inputs['Roughness'])
+"""
+    )
+    mine = graph()
+    with pytest.raises(protocol.BridgeError, match="ShaderNodeTexNoise") as failure:
+        bind(maps={"base_color": path["emit"], "roughness": path["base"]})
+    assert failure.value.code == "conflict" and graph() == mine
+    replaced = bind(maps={"roughness": {"path": path["orm"], "channel": "G"}}, on_conflict="replace")
+    assert "roughness" in replaced["replaced"] and ["Mine", "ShaderNodeTexNoise"] in graph()[0]
+
+    # Binding an image already used as color for data loads a separate copy.
+    bind(maps={"roughness": path["base"]})
+    spaces_of_base = python(
+        "__result__ = sorted(i.colorspace_settings.name for i in bpy.data.images if i.filepath.endswith('base.png'))"
+    )
+    assert spaces_of_base == ["Non-Color", "sRGB"]
+
+    clipped = bind(
+        maps={"opacity": {"path": path["alpha"], "channel": "A", "mode": "clip", "threshold": 0.3}},
+        mapping={"scale": [2, 3]},
+        uv_map="UVMap",
+    )
+    assert clipped["mapping"]["scale"] == [2, 3] and clipped["uv_map"] == "UVMap"
+    exported = export("clip")
+    assert exported["alpha_mode"] == "MASK" and exported["alpha_cutoff"] == pytest.approx(0.3)
+    assert exported["transform"]["scale"] == [2, 3]
+    bind(maps={"opacity": {"path": path["alpha"], "channel": "A", "mode": "blend"}})
+    assert export("blend")["alpha_mode"] == "BLEND"
+
+    # The export limits described by the warnings: neither effect reaches the GLB.
+    multiplied = bind(maps={"ao": {"path": path["orm"], "mode": "multiply"}})
+    assert "without it" in multiplied["warnings"][0]
+    occluded = export("multiply")
+    assert occluded["base"] is None or occluded["base"] == pytest.approx(_TEXTURE_COLORS["base"][:3], abs=0.02)
+    directx = bind(maps={"normal": {"path": path["dx_normal"], "convention": "directx"}})
+    assert "inverted" in directx["warnings"][0]
+    exported = export("directx")
+    flipped = pytest.approx(_TEXTURE_COLORS["gl_normal"][:3], abs=0.02)
+    assert exported["normal"] is None or exported["normal"] != flipped
+
+    bump = bind(maps={"height": {"path": path["orm"], "mode": "bump"}})
+    assert "not exported" in bump["warnings"][0]
+    assert ("MCP normal:map", "Normal") in {(link[0], link[3]) for link in graph()[1] if link[2] == "MCP height:bump"}
+    displaced = bind(maps={"height": {"path": path["orm"], "mode": "displacement", "distance": 0.1}})
+    assert [item["mode"] for item in displaced["bindings"] if item["map"] == "height"] == ["displacement"]
+
+    removed = bind(remove=["base_color", "metallic", "roughness", "normal", "ao", "emission", "opacity", "height"])
+    assert removed["bindings"] == []
+    assert not [name for name, _ in graph()[0] if name.startswith("MCP ") and name not in {"MCP uv", "MCP mapping"}]
+    assert ["Mine", "ShaderNodeTexNoise"] in graph()[0]
+
+
+def test_directx_normal_conversion_renders_like_the_opengl_equivalent(call, bridge):
+    if not _python(call, _USE_FAST_CYCLES):
+        pytest.skip("Cycles is not available in this Blender build")
+    folder = bridge["tmp"] / "normals"
+    folder.mkdir(exist_ok=True)
+    made = call("python_exec", code=_MAKE_TEXTURES, args={"directory": str(folder), "colors": _TEXTURE_COLORS})
+    assert made["error"] is None
+
+    def render(name, texture, convention):
+        call("material_create", name=name, color=[0.5, 0.5, 0.5])
+        call(
+            "material_set_texture_set",
+            name=name,
+            maps={"normal": {"path": str(folder / f"{texture}.png"), "convention": convention}},
+        )
+        result = call("python_exec", code=_RENDER_NORMAL, args={"name": name, "path": str(folder / f"{name}.png")})
+        assert result["error"] is None, result
+        return result["result"]
+
+    opengl = render("ITNormalGL", "gl_normal", "opengl")
+    directx = render("ITNormalDX", "dx_normal", "directx")
+    unconverted = render("ITNormalWrong", "dx_normal", "opengl")
+    assert directx == pytest.approx(opengl, abs=0.01)
+    assert unconverted != pytest.approx(opengl, abs=0.05)  # the test would notice a missing flip
+
+
+_GRAPH_STATE = """
+def state(tree):
+    return [
+        sorted((n.name, n.bl_idname) for n in tree.nodes),
+        sorted((l.from_node.name, l.from_socket.identifier, l.to_node.name, l.to_socket.identifier) for l in tree.links),
+    ]
+__result__ = [
+    state(bpy.data.materials[args['name']].node_tree),
+    [len(bpy.data.materials), len(bpy.data.node_groups), len(bpy.data.worlds)],
+]
+"""
+
+
+def _noise_chain(shader):
+    """Noise -> color ramp -> base color, and noise -> bump -> normal, with no Python."""
+    return [
+        {"op": "add_node", "id": "coords", "type": "ShaderNodeTexCoord", "location": [-900, 0]},
+        {"op": "add_node", "id": "noise", "type": "ShaderNodeTexNoise", "inputs": {"Scale": 6.0, "Detail": 3.0}},
+        {"op": "add_node", "id": "ramp", "type": "ShaderNodeValToRGB"},
+        {
+            "op": "set_color_ramp",
+            "node": "ramp",
+            "stops": [
+                {"position": 0.4, "color": [0.05, 0.02, 0.01]},
+                {"position": 0.6, "color": [0.8, 0.5, 0.2]},
+            ],
+        },
+        {"op": "add_node", "id": "bump", "type": "ShaderNodeBump", "inputs": {"Strength": 0.4}},
+        {"op": "connect", "from": "coords", "from_socket": "Object", "to": "noise", "to_socket": "Vector"},
+        {"op": "connect", "from": "noise", "from_socket": "Fac", "to": "ramp", "to_socket": "Fac"},
+        {"op": "connect", "from": "ramp", "from_socket": "Color", "to": shader, "to_socket": "Base Color"},
+        {"op": "connect", "from": "noise", "from_socket": "Fac", "to": "bump", "to_socket": "Height"},
+        {"op": "connect", "from": "bump", "from_socket": "Normal", "to": shader, "to_socket": "Normal"},
+    ]
+
+
+def test_shader_graphs_are_inspected_and_patched_all_or_nothing(call, bridge):
+    if not _python(call, _USE_FAST_CYCLES):
+        pytest.skip("Cycles is not available in this Blender build")
+    call("material_create", name="ITGraph")
+
+    def state():
+        result = call("python_exec", code=_GRAPH_STATE, args={"name": "ITGraph"})
+        assert result["error"] is None, result
+        return result["result"]
+
+    def edit(operations, **options):
+        return call("shader_graph_edit", operations=operations, material="ITGraph", **options)
+
+    listed = call("shader_graph_inspect", material="ITGraph")
+    shader = next(node["id"] for node in listed["nodes"] if node["type"] == "ShaderNodeBsdfPrincipled")
+    output = next(node["id"] for node in listed["nodes"] if node["type"] == "ShaderNodeOutputMaterial")
+    assert listed["node_count"] == 2 and "inputs" not in listed["nodes"][0]
+
+    before = state()
+    chain = _noise_chain(shader)
+    # Each bad final operation must leave the tree and the datablock counts exactly as they were,
+    # even though every operation before it is valid.
+    for last, code, message in (
+        (
+            {"op": "connect", "from": shader, "from_socket": "BSDF", "to": "bump", "to_socket": "Strength"},
+            "invalid_arguments",
+            "cannot feed",
+        ),
+        (
+            {"op": "connect", "from": "ramp", "from_socket": "Color", "to": "noise", "to_socket": "Scale"},
+            "invalid_arguments",
+            "cycle",
+        ),
+        (
+            {"op": "connect", "from": "noise", "from_socket": "Fac", "to": "noise", "to_socket": "Scale"},
+            "invalid_arguments",
+            "cycle",
+        ),
+        (
+            {"op": "connect", "from": "noise", "from_socket": "Fac", "to": shader, "to_socket": "Base Color"},
+            "conflict",
+            "already fed",
+        ),
+        ({"op": "set_input", "node": "noise", "socket": "Nope", "value": 1}, "invalid_arguments", "Use one of"),
+        (
+            {"op": "set_property", "node": "bump", "property": "name", "value": "x"},
+            "invalid_arguments",
+            "cannot be set",
+        ),
+        (
+            {"op": "set_property", "node": "noise", "property": "noise_dimensions", "value": "9D"},
+            "invalid_arguments",
+            "must be one of",
+        ),
+        ({"op": "add_node", "id": shader, "type": "ShaderNodeMath"}, "invalid_arguments", "already exists"),
+        ({"op": "remove_node", "node": output}, "invalid_arguments", "Output nodes"),
+        ({"op": "remove_node", "node": "ghost"}, "not_found", "No node named"),
+    ):
+        with pytest.raises(protocol.BridgeError, match=message) as failure:
+            edit([*chain, last])  # ten valid operations, then the bad one
+        assert failure.value.code == code, last
+        assert state() == before, last
+
+    result = edit(chain)
+    assert result["applied"] == 10 and result["node_count"] == 6 and "warnings" not in result
+    detail = call("shader_graph_inspect", material="ITGraph", nodes=["ramp", shader])
+    ramp = detail["nodes"][0]
+    assert [round(stop["position"], 2) for stop in ramp["color_ramp"]["stops"]] == [0.4, 0.6]
+    assert {(link["from"], link["to_socket"]) for link in detail["links"]} == {
+        ("noise", "Fac"),
+        ("ramp", "Base Color"),
+        ("bump", "Normal"),
+    }
+    page = call("shader_graph_inspect", material="ITGraph", limit=4)
+    assert len(page["nodes"]) == 4 and page["next_offset"] == 4
+
+    # Sockets that only exist after a setting changes can be used in the same patch.
+    edit(
+        [
+            {
+                "op": "add_node",
+                "id": "mix",
+                "type": "ShaderNodeMix",
+                "properties": {"data_type": "RGBA"},
+                "inputs": {"Factor_Float": 0.5, "B_Color": [0.1, 0.2, 0.9]},
+            },
+            {"op": "connect", "from": "ramp", "from_socket": "Color", "to": "mix", "to_socket": "A_Color"},
+            {
+                "op": "connect",
+                "from": "mix",
+                "from_socket": "Result_Color",
+                "to": shader,
+                "to_socket": "Base Color",
+                "replace": True,
+            },
+        ]
+    )
+    with pytest.raises(protocol.BridgeError, match="does not exist or is disabled"):
+        edit([{"op": "set_input", "node": "mix", "socket": "A_Float", "value": 1}])
+
+    # The patched material renders, and the procedural pattern varies across the surface.
+    call("object_create", mesh_type="sphere", name="ITGraphBall", location=[500, 0, 0])
+    call("material_assign", object="ITGraphBall", material="ITGraph")
+    loop = asyncio.new_event_loop()
+    connection = BlenderConnection(port=bridge["port"])
+    context = MagicMock()
+    context.request_context.lifespan_context = connection
+    try:
+        blocks = loop.run_until_complete(
+            server.view_capture(context, object="ITGraphBall", mode="material", resolution=64, views=["front"])
+        )
+    finally:
+        loop.run_until_complete(connection.disconnect())
+        loop.close()
+    picture = bridge["tmp"] / "graph.png"
+    picture.write_bytes(base64.b64decode(blocks[-1].data))
+    spread = _python(
+        call,
+        f"""
+image = bpy.data.images.load({str(picture)!r}, check_existing=False)
+pixels = list(image.pixels)
+bpy.data.images.remove(image)
+reds = [pixels[(y * 64 + x) * 4] for y in range(24, 40) for x in range(24, 40)]
+__result__ = max(reds) - min(reds)
+""",
+    )
+    assert spread > 0.05
+
+    # Shared node groups need an explicit choice.
+    _python(
+        call,
+        """
+group = bpy.data.node_groups.new('ITSharedGroup', 'ShaderNodeTree')
+value = group.nodes.new('ShaderNodeValue')
+value.name = 'level'
+for name in ('ITGroupA', 'ITGroupB'):
+    material = bpy.data.materials.new(name)
+    material.use_nodes = True
+    node = material.node_tree.nodes.new('ShaderNodeGroup')
+    node.name = 'shared'
+    node.node_tree = group
+""",
+    )
+    inside = call("shader_graph_inspect", material="ITGroupA", group_path=["shared"], sockets=True)
+    assert inside["tree"] == "ITSharedGroup" and inside["tree_users"] == 2
+    change = [{"op": "set_property", "node": "level", "property": "value", "value": 0.75}]
+    levels = (
+        "__result__ = [bpy.data.materials[n].node_tree.nodes['shared'].node_tree.nodes['level'].outputs[0]"
+        ".default_value for n in ('ITGroupA', 'ITGroupB')]"
+    )
+    with pytest.raises(protocol.BridgeError, match="used 2 times"):
+        call("shader_graph_edit", material="ITGroupA", group_path=["shared"], operations=change)
+    call(
+        "shader_graph_edit",
+        material="ITGroupA",
+        group_path=["shared"],
+        operations=change,
+        shared_data="make_single_user",
+    )
+    assert _python(call, levels) == [0.75, 0.0]
+
+    call("world_set", mode="color", color=[0.2, 0.2, 0.2], on_conflict="new_world")
+    nodes = call("shader_graph_inspect", world=True)["nodes"]
+    background = next(node["id"] for node in nodes if node["type"] == "ShaderNodeBackground")
+    call(
+        "shader_graph_edit",
+        world=True,
+        operations=[{"op": "set_input", "node": background, "socket": "Strength", "value": 2.5}],
+    )
+    assert call("world_get")["settings"]["strength"] == 2.5
+
+
+_MATERIAL_SNAPSHOT = """
+__result__ = {
+    'counts': [len(bpy.data.materials), len(bpy.data.images), len(bpy.data.meshes), len(bpy.data.objects),
+               len(bpy.data.scenes), len(bpy.data.node_groups)],
+    'images': sorted((i.name, i.colorspace_settings.name, i.filepath) for i in bpy.data.images
+                     if i.source != 'VIEWER'),
+    'graphs': {
+        m.name: [sorted(n.name for n in m.node_tree.nodes),
+                 sorted((l.from_node.name, l.from_socket.name, l.to_node.name, l.to_socket.name)
+                        for l in m.node_tree.links)]
+        for m in bpy.data.materials if m.name.startswith('ITDiag')
+    },
+    'selected': sorted(o.name for o in bpy.context.scene.objects if o.select_get()),
+}
+"""
+
+
+def test_material_diagnostics_find_planted_defects_without_changing_anything(call, bridge):
+    folder = bridge["tmp"] / "diagnostics"
+    folder.mkdir(exist_ok=True)
+
+    def python(code, **arguments):
+        result = call("python_exec", code=code, args=arguments)
+        assert result["error"] is None, (result["error"], result["stderr"])
+        return result["result"]
+
+    colors = {
+        "d_basecolor": (0.5, 0.4, 0.3, 1),
+        "d_orm": (1, 0.5, 0, 1),
+        "d_normal": (0.5, 0.5, 1, 1),
+        "d_leaf": (0.2, 0.6, 0.2, 0.5),
+        "d_gone": (1, 1, 1, 1),
+    }
+    python(_MAKE_TEXTURES, directory=str(folder), colors=colors)
+    path = {name: str(folder / f"{name}.png") for name in colors}
+    for name in ("ITDiagGood", "ITDiagBad", "ITDiagProcedural", "ITDiagCutout"):
+        call("material_create", name=name)
+
+    def bind(name, **arguments):
+        call("material_set_texture_set", name=name, **arguments)
+
+    bind(
+        "ITDiagGood",
+        orm=path["d_orm"],
+        maps={"base_color": path["d_basecolor"], "normal": {"path": path["d_normal"], "convention": "opengl"}},
+    )
+    # A cutout takes its alpha from the sRGB color image: alpha is linear, so this is correct.
+    bind("ITDiagCutout", maps={"base_color": path["d_leaf"]})
+    python(
+        """
+tree = bpy.data.materials['ITDiagCutout'].node_tree
+shader = next(n for n in tree.nodes if n.type == 'BSDF_PRINCIPLED')
+texture = next(n for n in tree.nodes if n.type == 'TEX_IMAGE')
+tree.links.new(texture.outputs['Alpha'], shader.inputs['Alpha'])
+"""
+    )
+    bind("ITDiagBad", maps={"roughness": path["d_gone"]})
+    os.remove(path["d_gone"])
+    python(
+        """
+tree = bpy.data.materials['ITDiagBad'].node_tree
+shader = next(n for n in tree.nodes if n.type == 'BSDF_PRINCIPLED')
+normal = tree.nodes.new('ShaderNodeTexImage')
+normal.name = 'raw normal'
+normal.image = bpy.data.images.load(args['normal'], check_existing=False)   # left as sRGB
+tree.links.new(normal.outputs['Color'], shader.inputs['Normal'])
+metal = tree.nodes.new('ShaderNodeTexImage')
+metal.name = 'metal map'
+metal.image = bpy.data.images.load(args['color'], check_existing=False)     # left as sRGB
+tree.links.new(metal.outputs['Color'], shader.inputs['Metallic'])
+empty = tree.nodes.new('ShaderNodeTexImage')
+empty.name = 'no image'
+tree.links.new(empty.outputs['Color'], shader.inputs['Base Color'])
+tree.nodes.new('ShaderNodeTexNoise').name = 'leftover'
+""",
+        normal=path["d_normal"],
+        color=path["d_basecolor"],
+    )
+    call(
+        "shader_graph_edit",
+        material="ITDiagProcedural",
+        operations=_noise_chain("Principled BSDF"),
+    )
+
+    before = python(_MATERIAL_SNAPSHOT)
+
+    def diagnose(**arguments):
+        return call("material_diagnose", **arguments)  # the fixture unwraps "result"
+
+    def checks(report):
+        return {(item["check"], item["severity"]) for item in report["findings"]}
+
+    good = diagnose(material="ITDiagGood")
+    assert good["summary"]["status"] == "ok", good["findings"]
+    assert good["materials"][0]["gltf_export"] == {"status": "supported", "reasons": []}
+    assert {b["semantic"] for b in good["materials"][0]["bindings"]} == {
+        "base_color",
+        "metallic",
+        "roughness",
+        "normal",
+        "occlusion",
+    }
+    assert good["estimated_texture_bytes"] == 3 * int(8 * 8 * 4 * 4 / 3)
+
+    cutout = diagnose(material="ITDiagCutout")
+    assert not [item for item in cutout["findings"] if item["check"] in {"color_space", "mixed_use"}], cutout
+    # A texture wired straight into Alpha blends, which the mobile profile questions unless allowed.
+    assert cutout["materials"][0]["alpha_mode"] == "BLEND" and good["materials"][0]["alpha_mode"] == "OPAQUE"
+    assert ("alpha_mode", "warning") in checks(diagnose(material="ITDiagCutout", profile="mobile"))
+    assert ("alpha_mode", "warning") not in checks(
+        diagnose(material="ITDiagCutout", profile="mobile", alpha_modes=["BLEND"])
+    )
+
+    bad = diagnose(material="ITDiagBad")
+    assert {
+        ("missing_file", "error"),
+        ("normal_without_normal_map", "error"),
+        ("color_space", "error"),
+        ("no_image", "error"),
+        ("unused_nodes", "warning"),
+    } <= checks(bad)
+    assert bad["summary"]["status"] == "errors"
+    wrong_spaces = {item["subject"].split(".png")[0] for item in bad["findings"] if item["check"] == "color_space"}
+    assert wrong_spaces == {"d_basecolor", "d_normal"}  # the metallic and normal images left as sRGB
+    assert str(folder) not in json.dumps(bad)
+
+    procedural = diagnose(material="ITDiagProcedural")
+    verdict = procedural["materials"][0]["gltf_export"]
+    assert verdict["status"] == "unsupported" and any("ShaderNodeTexNoise" in reason for reason in verdict["reasons"])
+    assert diagnose(material="ITDiagProcedural", profile="render")["summary"]["errors"] == 0
+
+    budget = diagnose(material="ITDiagGood", max_texture_size=4)
+    assert ("texture_size", "error") in checks(budget)
+    excused = diagnose(material="ITDiagGood", max_texture_size=4, allow=["texture_size"])
+    assert excused["summary"]["status"] == "ok" and excused["summary"]["allowed"] == 3
+    assert python(_MATERIAL_SNAPSHOT) == before
+    # Metallic and roughness from separate files are reported; the packed material is not.
+    call("material_create", name="ITDiagUnpacked")
+    bind("ITDiagUnpacked", maps={"roughness": path["d_leaf"], "metallic": path["d_normal"]})
+    assert ("channel_packing", "warning") in checks(diagnose(material="ITDiagUnpacked", profile="mobile"))
+    assert ("channel_packing", "heuristic") in checks(diagnose(material="ITDiagUnpacked"))
+    assert not [item for item in diagnose(material="ITDiagGood")["findings"] if item["check"].startswith("channel_")]
+    before = python(_MATERIAL_SNAPSHOT)
+
+    # The export verdict matches what the exporter really does with the supported material.
+    call("object_create", mesh_type="cube", name="ITDiagCube")
+    python("bpy.data.objects['ITDiagCube'].data.uv_layers.new(name='UVMap')")
+    call("material_assign", object="ITDiagCube", material="ITDiagGood")
+    exported = python(_EXPORTED_MATERIAL, name="ITDiagGood", path=str(folder / "good.glb"))
+    assert exported["base"] and exported["normal"] and exported["occlusion"] is not None
+    assert exported["metallic_roughness"] is not None
+
+    # Previews return an image and leave no temporary data behind, also when they fail.
+    if python(_USE_FAST_CYCLES):
+        before = python(_MATERIAL_SNAPSHOT)
+        loop = asyncio.new_event_loop()
+        connection = BlenderConnection(port=bridge["port"])
+        context = MagicMock()
+        context.request_context.lifespan_context = connection
+        try:
+            for shape in ("sphere", "plane", "cube"):
+                blocks = loop.run_until_complete(
+                    server.material_preview(context, material="ITDiagGood", shape=shape, resolution=64)
+                )
+                assert _png_size(base64.b64decode(blocks[-1].data)) == (64, 64), shape
+            with pytest.raises(protocol.BridgeError, match="not found"):
+                loop.run_until_complete(server.material_preview(context, material="Nope"))
+        finally:
+            loop.run_until_complete(connection.disconnect())
+            loop.close()
+        assert python(_MATERIAL_SNAPSHOT) == before
+
+
+# A matte sphere of the requested radius, far from every other test object, in a scene of its own with a
+# black world, so only the rig lights it.
+_RIG_SCENE = """
+import bmesh
+name = args['name']
+scene = bpy.data.scenes.new(name)
+mesh = bpy.data.meshes.new(name)
+bm = bmesh.new()
+bmesh.ops.create_icosphere(bm, subdivisions=5, radius=args['radius'])
+for face in bm.faces:
+    face.smooth = True
+bm.to_mesh(mesh)
+bm.free()
+material = bpy.data.materials.new(name)
+material.use_nodes = True
+shader = next(n for n in material.node_tree.nodes if n.type == 'BSDF_PRINCIPLED')
+shader.inputs['Base Color'].default_value = (0.18, 0.18, 0.18, 1)
+shader.inputs['Roughness'].default_value = 1.0
+mesh.materials.append(material)
+obj = bpy.data.objects.new(name, mesh)
+scene.collection.objects.link(obj)
+obj.location = (args['radius'] * 3, 0, 0)
+"""
+
+_RENDER_SCENE = """
+scene = bpy.data.scenes[args['scene']]
+world = bpy.data.worlds.new(args['scene'])
+world.use_nodes = True
+background = next(n for n in world.node_tree.nodes if n.type == 'BACKGROUND')
+background.inputs['Strength'].default_value = 0.0  # truly black on every version
+scene.world = world
+for obj in args['objects']:
+    scene.collection.objects.link(bpy.data.objects[obj])
+scene.camera = bpy.data.objects[args['camera']]
+scene.render.engine = 'CYCLES'
+scene.cycles.samples = 64
+scene.cycles.seed = 1
+scene.cycles.use_denoising = False
+scene.render.resolution_x = scene.render.resolution_y = 32
+scene.view_settings.view_transform = 'Standard'
+scene.render.filepath = args['path']
+bpy.ops.render.render(write_still=True, scene=scene.name)
+image = bpy.data.images.load(args['path'], check_existing=False)
+pixels = list(image.pixels)
+bpy.data.images.remove(image)
+__result__ = [pixels[i] for i in range(0, len(pixels), 4)]
+"""
+
+# Blender's own projection: where each bounding box corner lands in the camera frame (0-1).
+_PROJECT = """
+from bpy_extras.object_utils import world_to_camera_view
+from mathutils import Vector
+scene = bpy.context.scene
+scene.render.resolution_x, scene.render.resolution_y = args['resolution']
+bpy.context.view_layer.update()
+camera = bpy.data.objects[args['camera']]
+obj = bpy.data.objects[args['object']]
+corners = [world_to_camera_view(scene, camera, obj.matrix_world @ Vector(c)) for c in obj.bound_box]
+__result__ = [[min(c.x for c in corners), max(c.x for c in corners)],
+              [min(c.y for c in corners), max(c.y for c in corners)], min(c.z for c in corners)]
+"""
+
+_SCENE_LIGHTS_AND_CAMERAS = """
+__result__ = {
+    'active': bpy.context.scene.camera.name if bpy.context.scene.camera else None,
+    'objects': {o.name: [list(map(list, o.matrix_world)),
+                         [o.data.energy, list(o.data.color)] if o.type == 'LIGHT' else o.data.lens]
+                for o in bpy.context.scene.objects if o.type in {'LIGHT', 'CAMERA'} and not o.get('mcp_rig')
+                and not o.name.startswith('ITRigCam')},
+}
+"""
+
+
+def test_camera_framing_matches_blender_projection(call):
+    call("object_create", mesh_type="cube", name="ITFrameBox", location=[700, 0, 0])
+    call("object_scale", name="ITFrameBox", scale=[2.0, 0.5, 1.0])
+    original = _python(call, "r = bpy.context.scene.render\n__result__ = [r.resolution_x, r.resolution_y]")
+    for resolution, projection in (
+        ([1920, 1080], "PERSP"),
+        ([600, 900], "PERSP"),
+        ([800, 800], "ORTHO"),
+        ([600, 900], "ORTHO"),
+    ):
+        framed = call(
+            "camera_frame",
+            camera="ITRigCamFrame",
+            object="ITFrameBox",
+            azimuth=30,
+            elevation=25,
+            projection=projection,
+            margin=1.2,
+            aspect=resolution[0] / resolution[1],
+        )
+        assert framed["active"] is False
+        result = call(
+            "python_exec",
+            code=_PROJECT,
+            args={"camera": "ITRigCamFrame", "object": "ITFrameBox", "resolution": resolution},
+        )
+        assert result["error"] is None, result
+        (x_low, x_high), (y_low, y_high), depth = result["result"]
+        inside = (1 - 1 / 1.2) / 2
+        assert depth > 0
+        for low, high in ((x_low, x_high), (y_low, y_high)):
+            assert low >= inside - 0.01 and high <= 1 - inside + 0.01, (resolution, projection, result["result"])
+        # The subject fills the frame in at least one direction.
+        assert max(x_high - x_low, y_high - y_low) > 0.7, (resolution, projection)
+    _python(call, f"bpy.context.scene.render.resolution_x, bpy.context.scene.render.resolution_y = {original}")
+
+
+def test_lighting_rigs_keep_exposure_across_scales_and_leave_other_objects_alone(call, bridge):
+    if not _python(call, _USE_FAST_CYCLES):
+        pytest.skip("Cycles is not available in this Blender build")
+    call("light_create", name="ITRigBystander", light_type="POINT", energy=5, location=[900, 0, 0])
+    before = _python(call, _SCENE_LIGHTS_AND_CAMERAS)
+
+    renders = {}
+    for label, radius in (("small", 0.01), ("large", 100.0)):
+        name = f"ITRigSubject_{label}"
+        built = call(
+            "python_exec",
+            code=_RIG_SCENE + "bpy.context.scene.collection.objects.link(obj)",
+            args={"name": name, "radius": radius},
+        )
+        assert built["error"] is None, built
+        camera = f"ITRigCam_{label}"
+        call("camera_frame", camera=camera, object=name, azimuth=20, elevation=10, lens=85)
+        rig = call("lighting_rig_apply", rig="three_point", object=name, name=f"IT{label}", camera=camera)
+        assert rig["camera"] == camera and len(rig["lights"]) == 3
+        assert rig["subject_radius"] == pytest.approx(radius * 3**0.5, rel=0.02)
+        render = call(
+            "python_exec",
+            code=_RENDER_SCENE,
+            args={
+                "scene": name,
+                "objects": [light["name"] for light in rig["lights"]],
+                "camera": camera,
+                "path": str(bridge["tmp"] / f"rig-{label}.png"),
+            },
+        )
+        assert render["error"] is None, render
+        renders[label] = render["result"]
+    small, large = renders["small"], renders["large"]
+    lit = [value for value in small if value > 0.02]
+    assert len(lit) > 200 and 0.1 < sum(lit) / len(lit) < 0.9  # neither black nor clipped
+    # A 2 cm and a 200 m subject look the same.
+    assert sum(abs(a - b) for a, b in zip(small, large, strict=True)) / len(small) < 0.01
+
+    assert _python(call, _SCENE_LIGHTS_AND_CAMERAS) == before
+
+    with pytest.raises(protocol.BridgeError, match="already exists") as conflict:
+        call("lighting_rig_apply", rig="three_point", object="ITRigSubject_small", name="ITsmall")
+    assert conflict.value.code == "conflict"
+    replaced = call(
+        "lighting_rig_apply", rig="low_key", object="ITRigSubject_small", name="ITsmall", on_existing="replace"
+    )
+    assert len(replaced["replaced"]) == 3
+    assert sorted(light["name"] for light in replaced["lights"]) == ["ITsmall fill", "ITsmall key", "ITsmall rim"]
+    rig_lights = "__result__ = sorted(o.name for o in bpy.data.objects if o.get('mcp_rig') == 'ITsmall')"
+    assert len(_python(call, rig_lights)) == 3
+
+    # Removing a rig keeps anything the user put in its collection.
+    _python(
+        call, "o = bpy.data.objects.new('ITRigKeepsake', None)\nbpy.data.collections['MCP Rig ITsmall'].objects.link(o)"
+    )
+    removed = call("lighting_rig_remove", name="ITsmall")
+    assert len(removed["removed"]) == 3 and removed["kept_in_collection"] == ["ITRigKeepsake"]
+    assert call("lighting_rig_remove", name="ITlarge")["kept_in_collection"] == []
+    gone = "__result__ = [c.name for c in bpy.data.collections if c.name.startswith('MCP Rig IT')]"
+    assert _python(call, gone) == ["MCP Rig ITsmall"]
+
+    # A subject with no size creates nothing.
+    _python(
+        call,
+        "m = bpy.data.meshes.new('ITDot'); m.from_pydata([(0, 0, 0)], [], [])\n"
+        "bpy.context.scene.collection.objects.link(bpy.data.objects.new('ITDot', m))",
+    )
+    counts = "__result__ = [len(bpy.data.lights), len(bpy.data.collections), len(bpy.data.scenes)]"
+    existing = _python(call, counts)
+    with pytest.raises(protocol.BridgeError, match="no size|no geometry"):
+        call("lighting_rig_apply", rig="turntable", object="ITDot")
+    assert _python(call, counts) == existing
+    assert _python(call, _SCENE_LIGHTS_AND_CAMERAS) == before
+
+
+def test_world_lighting_preview_of_a_scene_without_a_world_is_unlit(call, bridge):
+    """Blender 5 ignores use_nodes=False, which once left a grey light in this preview."""
+    if not _python(call, _USE_FAST_CYCLES):
+        pytest.skip("Cycles is not available in this Blender build")
+    call("object_create", mesh_type="cube", name="ITUnlitCube", location=[800, 0, 0])
+    _python(call, "bpy.app.driver_namespace['it_world'] = bpy.context.scene.world\nbpy.context.scene.world = None")
+    loop = asyncio.new_event_loop()
+    connection = BlenderConnection(port=bridge["port"])
+    context = MagicMock()
+    context.request_context.lifespan_context = connection
+    try:
+        blocks = loop.run_until_complete(
+            server.view_capture(
+                context, object="ITUnlitCube", mode="material", lighting="world", resolution=64, views=["front"]
+            )
+        )
+    finally:
+        loop.run_until_complete(connection.disconnect())
+        loop.close()
+        _python(call, "bpy.context.scene.world = bpy.app.driver_namespace.pop('it_world')")
+    picture = bridge["tmp"] / "unlit.png"
+    picture.write_bytes(base64.b64decode(blocks[-1].data))
+    brightest = _python(
+        call,
+        f"""
+image = bpy.data.images.load({str(picture)!r}, check_existing=False)
+pixels = list(image.pixels)
+bpy.data.images.remove(image)
+__result__ = max(v for i, v in enumerate(pixels) if i % 4 != 3)
+""",
+    )
+    assert brightest < 0.01, brightest
 
 
 @pytest.mark.asyncio

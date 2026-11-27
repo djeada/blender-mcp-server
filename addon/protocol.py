@@ -8,7 +8,16 @@ PROTOCOL_VERSION = 2
 ADDON_VERSION = (0, 2, 0)
 BRIDGE_STATUS = "bridge.status"
 LONG_COMMANDS = frozenset(
-    {"render.still", "render.animation", "view.capture", "export.gltf", "export.obj", "export.fbx", "python.execute"}
+    {
+        "render.still",
+        "render.animation",
+        "view.capture",
+        "material.preview",
+        "export.gltf",
+        "export.obj",
+        "export.fbx",
+        "python.execute",
+    }
 )
 MAX_RESPONSE_BYTES = 8 * 1024 * 1024
 _LABEL = re.compile(r"[a-zA-Z0-9_.:-]{1,80}\Z")

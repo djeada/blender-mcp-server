@@ -13,6 +13,7 @@ from blender_mcp_server.tools.recipes import search_recipes
 
 Style = Literal["lowpoly", "stylized", "realistic"]
 Target = Literal["render", "game"]
+Domain = Literal["modeling", "surfacing", "lighting"]
 MAX_GUIDE_RESULTS = 10
 MAX_MATCHED_SECTIONS = 3
 MAX_RELATED_RECIPES = 3
@@ -33,9 +34,10 @@ def _section(guide: knowledge.Guide, section: str) -> knowledge.Section:
 
 
 def _index() -> dict[str, Any]:
-    domains: dict[str, list[dict]] = {}
+    # IDs only, so the index stays small as the library grows. Searching returns titles and summaries.
+    domains: dict[str, list[str]] = {}
     for guide in knowledge.guides().values():
-        domains.setdefault(guide.domain, []).append({"id": guide.id, "title": guide.title})
+        domains.setdefault(guide.domain, []).append(guide.id)
     return {"library_version": knowledge.workflows()["version"], "domains": domains}
 
 
@@ -153,8 +155,9 @@ async def guide_get(guide: str, section: str | None = None) -> dict[str, Any]:
 @mcp.tool(
     name="blender_workflow",
     description=(
-        "Get a stage-by-stage plan for a task such as 'low poly orc for a game'. Returns the stage list and only the "
-        "current stage in detail: goal, guide sections, actions and checkpoint. Pass 'stage' to move on."
+        "Get a stage-by-stage plan for a task such as 'low poly orc for a game', 'texture a rusty barrel' or 'light a "
+        "night interior'. Returns the stage list and only the current stage in detail: goal, guide sections, actions "
+        "and checkpoint. Pass 'stage' to move on, and 'domain' to force modeling, surfacing or lighting."
     ),
 )
 async def workflow(
@@ -162,8 +165,9 @@ async def workflow(
     style: Style | None = None,
     target: Target | None = None,
     stage: str | None = None,
+    domain: Domain | None = None,
 ) -> dict[str, Any]:
-    plan = knowledge.select_workflow(task, style, target)
+    plan = knowledge.select_workflow(task, style, target, domain)
     stages = plan.pop("stages")
     ids = [item["id"] for item in stages]
     if stage is not None and stage not in ids:

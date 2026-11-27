@@ -68,7 +68,7 @@ def _create_mock_bpy():
     bpy.app.timers.register = MagicMock()
     bpy.app.timers.is_registered = MagicMock(return_value=False)
     bpy.ops.ed.undo_push.poll.return_value = False
-    bpy.path.abspath = lambda path: path
+    bpy.path.abspath = lambda path, **kwargs: path
 
     # Mock data — use MagicMock for Blender collections (they support .get() and iteration)
     objects_collection = MagicMock()

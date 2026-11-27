@@ -164,3 +164,142 @@ async def material_assign_faces(
             shared_data=shared_data,
         )
     }
+
+
+@mcp.tool(
+    name="blender_material_set_texture_set",
+    description=(
+        "Bind local PBR texture files to a material's Principled BSDF with correct color spaces. maps: "
+        "{base_color, metallic, roughness, normal, ao, emission, opacity, height}, each a path or {path, ...}; "
+        "metallic, roughness, ao, opacity and height take channel R/G/B/A. Required choices: normal.convention "
+        "opengl|directx, ao.mode gltf|multiply, opacity.mode blend|clip, height.mode bump|displacement. orm=path "
+        "binds a packed occlusion/roughness/metallic image. Unlisted maps are kept; remove=[names] unbinds. "
+        "Nothing changes if a file or link check fails."
+    ),
+)
+async def material_set_texture_set(
+    ctx: Context,
+    name: str,
+    maps: dict[str, str | dict] | None = None,
+    orm: str | None = None,
+    uv_map: str | None = None,
+    mapping: dict | None = None,
+    remove: list[str] | None = None,
+    on_conflict: Literal["error", "replace"] = "error",
+) -> dict:
+    return {
+        "result": await bridge_result(
+            ctx,
+            "material.set_texture_set",
+            name=name,
+            maps=maps,
+            orm=orm,
+            uv_map=uv_map,
+            mapping=mapping,
+            remove=remove,
+            on_conflict=on_conflict,
+        )
+    }
+
+
+@mcp.tool(
+    name="blender_shader_graph_inspect",
+    description=(
+        "Read a material's (or the world's) shader nodes and links without changing them, in pages. Lists node IDs "
+        "and types; pass sockets=true, or nodes=[ids], for socket IDs, values and settings. group_path=[group node "
+        "ids] looks inside node groups."
+    ),
+)
+async def shader_graph_inspect(
+    ctx: Context,
+    material: str | None = None,
+    world: bool = False,
+    group_path: list[str] | None = None,
+    nodes: Annotated[list[str] | None, Field(max_length=50)] = None,
+    sockets: bool = False,
+    limit: Annotated[int | None, Field(ge=1)] = None,
+    offset: Slot | None = None,
+) -> dict:
+    return {
+        "result": await bridge_result(
+            ctx,
+            "shader.inspect_graph",
+            material=material,
+            world=world,
+            group_path=group_path,
+            nodes=nodes,
+            sockets=sockets,
+            limit=page_limit(limit),
+            offset=offset,
+        )
+    }
+
+
+@mcp.tool(
+    name="blender_shader_graph_edit",
+    description=(
+        "Patch shader nodes, all or nothing. operations (max 64): add_node{id,type,properties?,inputs?,location?}, "
+        "remove_node{node}, set_input{node,socket,value}, set_property{node,property,value}, "
+        "set_color_ramp{node,stops:[{position,color}],interpolation?}, "
+        "connect{from,from_socket,to,to_socket,replace?}, disconnect{to,to_socket}, move_node{node,location}. "
+        "Each has 'op'. type is a Blender idname such as ShaderNodeTexNoise; get socket IDs from "
+        "blender_shader_graph_inspect."
+    ),
+)
+async def shader_graph_edit(
+    ctx: Context,
+    operations: Annotated[list[dict], Field(min_length=1, max_length=64)],
+    material: str | None = None,
+    world: bool = False,
+    group_path: list[str] | None = None,
+    shared_data: SharedData = "error",
+) -> dict:
+    return {
+        "result": await bridge_result(
+            ctx,
+            "shader.edit_graph",
+            material=material,
+            world=world,
+            group_path=group_path,
+            operations=operations,
+            shared_data=shared_data,
+        )
+    }
+
+
+@mcp.tool(
+    name="blender_material_diagnose",
+    description=(
+        "Check materials and textures without changing them: missing files, wrong color spaces, broken shader or "
+        "normal-map chains, unused nodes, texture size and memory budgets, alpha modes, channel packing and what "
+        "glTF can export. Give 'material' or 'object', or neither for the scene's materials. profile: gltf, mobile "
+        "or render. allow=['check' or 'check:subject'] excuses intentional exceptions."
+    ),
+)
+async def material_diagnose(
+    ctx: Context,
+    material: str | None = None,
+    object: str | None = None,
+    profile: Literal["gltf", "mobile", "render"] = "gltf",
+    max_texture_size: Annotated[int | None, Field(ge=1, le=65_536)] = None,
+    max_texture_memory_mb: Annotated[int | None, Field(ge=1, le=1_000_000)] = None,
+    alpha_modes: list[Literal["OPAQUE", "MASK", "BLEND"]] | None = None,
+    allow: Annotated[list[str] | None, Field(max_length=100)] = None,
+    limit: Annotated[int | None, Field(ge=1, le=32)] = None,
+    offset: Slot | None = None,
+) -> dict:
+    return {
+        "result": await bridge_result(
+            ctx,
+            "material.diagnose",
+            material=material,
+            object=object,
+            profile=profile,
+            max_texture_size=max_texture_size,
+            max_texture_memory_mb=max_texture_memory_mb,
+            alpha_modes=alpha_modes,
+            allow=allow,
+            limit=limit,
+            offset=offset,
+        )
+    }

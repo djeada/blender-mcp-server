@@ -561,3 +561,100 @@ class MaterialAssignFacesParams(BridgeParams):
         "min_weight": field("float", 0.0, ge=0, le=1),
         "shared_data": _SHARED_DATA,
     }
+
+
+class MaterialTextureSetParams(BridgeParams):
+    fields = {
+        "name": field("str", required=True),
+        "maps": field("dict", allow_none=True),
+        "orm": field("str", allow_none=True),
+        "uv_map": field("str", allow_none=True),
+        "mapping": field("dict", allow_none=True),
+        "remove": field("list", allow_none=True),
+        "on_conflict": field("str", "error"),
+    }
+
+
+class ShaderGraphInspectParams(BridgeParams):
+    fields = {
+        "material": field("str", allow_none=True),
+        "world": field("bool", False),
+        "group_path": field("list", allow_none=True),
+        "nodes": field("list", allow_none=True),
+        "sockets": field("bool", False),
+        **PageParams.fields,
+    }
+
+
+class ShaderGraphEditParams(BridgeParams):
+    fields = {
+        "material": field("str", allow_none=True),
+        "world": field("bool", False),
+        "group_path": field("list", allow_none=True),
+        "operations": field("list", required=True),
+        "shared_data": field("str", "error"),
+    }
+
+
+class MaterialDiagnoseParams(BridgeParams):
+    fields = {
+        "material": field("str", allow_none=True),
+        "object": field("str", allow_none=True),
+        "profile": field("str", "gltf"),
+        "max_texture_size": field("int", allow_none=True, ge=1, le=65_536),
+        "max_texture_memory_mb": field("int", allow_none=True, ge=1, le=1_000_000),
+        "alpha_modes": field("list", allow_none=True),
+        "allow": field("list", allow_none=True),
+        **PageParams.fields,
+    }
+
+
+class MaterialPreviewParams(BridgeParams):
+    fields = {
+        "material": field("str", required=True),
+        "shape": field("str", "sphere"),
+        "views": field("list", allow_none=True),
+        "resolution": field("int", 384, ge=64, le=1024),
+        "include_images": field("bool", True),
+        "save_directory": field("str", allow_none=True),
+        "max_bytes": field("int", 4_000_000, ge=10_000, le=5_000_000),
+    }
+
+
+class LightingRigApplyParams(BridgeParams):
+    fields = {
+        "rig": field("str", required=True),
+        "object": field("str", allow_none=True),
+        "collection": field("str", allow_none=True),
+        "include_children": field("bool", True),
+        "name": field("str", allow_none=True),
+        "camera": field("str", allow_none=True),
+        "rotation": field("float", 0.0, ge=-360, le=360),
+        "exposure_stops": field("float", 0.0, ge=-10, le=10),
+        "distance_scale": field("float", 1.0, ge=0.25, le=10),
+        "size_scale": field("float", 1.0, ge=0.05, le=10),
+        "ratios": field("dict", allow_none=True),
+        "temperatures": field("dict", allow_none=True),
+        "colors": field("dict", allow_none=True),
+        "on_existing": field("str", "error"),
+    }
+
+
+class LightingRigRemoveParams(BridgeParams):
+    fields = {"name": field("str", required=True)}
+
+
+class CameraFrameParams(BridgeParams):
+    fields = {
+        "camera": field("str", required=True),
+        "object": field("str", allow_none=True),
+        "collection": field("str", allow_none=True),
+        "include_children": field("bool", True),
+        "azimuth": field("float", 0.0, ge=-360, le=360),
+        "elevation": field("float", 10.0, ge=-90, le=90),
+        "projection": field("str", "PERSP"),
+        "lens": field("float", 70.0, ge=1, le=5000),
+        "margin": field("float", 1.15, ge=1, le=10),
+        "aspect": field("float", allow_none=True, ge=0.05, le=20),
+        "set_active": field("bool", False),
+    }

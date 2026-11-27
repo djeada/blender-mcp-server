@@ -12,6 +12,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   or `make_single_user`. Moving or rotating such a light works as before.
 
 ### Added
+- Fourteen texturing and lighting guides with tested examples, and surfacing and lighting workflows.
+  `blender_workflow` chooses a `domain` (modeling, surfacing or lighting) from the task, or takes it as an
+  argument. The guide index now lists IDs only.
+- `blender_lighting_rig_apply` / `remove` build three-point, softbox, turntable, portrait and low-key rigs fitted to
+  a subject, with the same exposure at any scale, in their own collection. `blender_camera_frame` fits a camera to
+  a subject for a given aspect ratio without changing the active camera unless asked.
+- `blender_material_diagnose` finds missing textures, wrong color spaces, broken chains, unused nodes, texture
+  budget overruns, unexpected alpha modes, unpacked or misplaced channels and glTF export limits, separating errors, warnings, heuristics and unchecked items.
+  `blender_material_preview` renders a material on a temporary sphere, plane or cube.
+- `blender_shader_graph_inspect` and `blender_shader_graph_edit` read and patch material, world and shader group
+  nodes. Patches are limited to listed node types and settings and are all-or-nothing.
+- `blender_material_set_texture_set` binds PBR texture sets, including packed ORM, with required choices for normal
+  convention, occlusion, opacity and height modes. It validates and loads every file before changing the material,
+  never changes a shared image's color space, and warns when a binding will not survive glTF export.
 - Material slot tools: `blender_material_slots`, `blender_material_slot_append` / `replace` / `remove` and
   `blender_material_assign_faces` (by face index, vertex group or current slot). Shared meshes need an explicit
   choice, and removing a slot keeps what every other face and object showed, which Blender's own removal does not.
@@ -36,7 +50,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   material or wireframe mode, framed from evaluated bounds in a temporary scene that leaves the project unchanged.
   Also works headless.
 - Tool profiles (`--profile compact|standard|full`, `--enable-groups`, `--allow-groups`, or the matching
-  environment variables). `compact` advertises 15 tools in 5.8 KB instead of every schema (54.8 KB). The default
+  environment variables). `compact` advertises 15 tools in 5.8 KB instead of every schema (65.2 KB). The default
   stays `full`.
 - Compact output (`--output compact`, on by default in the compact profile) pages listings, keeps log tails and
   turns oversized responses into previews that `blender_output_read` can finish without rerunning anything. Budgets
@@ -69,6 +83,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   renders: absolute path returned, missing folders created, extensions appended only when absent).
 
 ### Fixed
+- On Blender 5, `blender_view_capture` with `lighting="world"` or `"scene"` lit a scene that had no world with
+  Blender's default grey background, while reporting that there was no environment light. The preview is now black.
 - A rejected `light.create` (for example `size` on a SUN light) left a light object and its data in the scene, and a
   rejected type-changing `light.update` left the new type applied. Requests are now validated before any change.
 - Rejected mutation requests no longer add undo entries, and the bridge also rejects oversized

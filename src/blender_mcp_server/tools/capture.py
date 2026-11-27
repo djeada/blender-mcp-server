@@ -17,7 +17,7 @@ COMPACT_RESOLUTION, DEFAULT_RESOLUTION = 384, 512
 def image_content(report: dict[str, Any]) -> list[types.TextContent | types.ImageContent]:
     """Split a capture report into one metadata block and a labelled image per view."""
     images: list[types.TextContent | types.ImageContent] = []
-    for entry in report["views"]:
+    for entry in report.get("views", ()):
         if data := entry.pop("png_base64", None):
             images.append(types.TextContent(type="text", text=f"view: {entry['view']}"))
             images.append(types.ImageContent(type="image", data=data, mimeType="image/png"))
@@ -72,4 +72,42 @@ async def view_capture(
         )
     else:
         report = await bridge_result(ctx, "view.capture", **params)
+    return image_content(report)
+
+
+@mcp.tool(
+    name="blender_material_preview",
+    description=(
+        "See a material on a neutral temporary sphere, plane or cube under fixed lighting, returned as images. The "
+        "scene is not changed. To see it on a real object, use blender_view_capture with mode='material'."
+    ),
+    structured_output=False,
+)
+async def material_preview(
+    ctx: Context,
+    material: str,
+    shape: Literal["sphere", "plane", "cube"] = "sphere",
+    views: Annotated[list[View] | None, Field(max_length=6)] = None,
+    resolution: Annotated[int | None, Field(ge=64, le=1024)] = None,
+    include_images: bool = True,
+    save_directory: str | None = None,
+    transport: Transport = "bridge",
+    blend_file: str | None = None,
+    factory_startup: bool | None = None,
+):
+    params = {
+        "material": material,
+        "shape": shape,
+        "views": views,
+        "resolution": resolution or (COMPACT_RESOLUTION if mcp.exposure.compact_output else DEFAULT_RESOLUTION),
+        "include_images": include_images,
+        "save_directory": save_directory,
+    }
+    if transport == "headless":
+        executor = await headless_executor(ctx, "material.preview")
+        report = await executor.execute_command(
+            "material.preview", params, blend_file=blend_file, factory_startup=factory_startup
+        )
+    else:
+        report = await bridge_result(ctx, "material.preview", **params)
     return image_content(report)

@@ -18,15 +18,20 @@ from . import (
     color_management,
     lighting,
     lighting_report,
+    material_diagnostics,
+    material_preview,
     material_slots,
     materials,
     mesh,
     models,
     modifiers,
     objects,
+    pbr,
     project,
     rendering,
+    rigs,
     scene,
+    shader_graph,
     world,
 )
 from .execution import ScriptExecutor
@@ -92,12 +97,26 @@ class CommandHandler:
             "material.set_texture": Command(
                 partial(materials.set_texture, policy=self.policy), models.MaterialSetTextureParams, mutates=True
             ),
+            "material.set_texture_set": Command(
+                partial(pbr.set_texture_set, policy=self.policy), models.MaterialTextureSetParams, mutates=True
+            ),
+            "shader.inspect_graph": Command(shader_graph.inspect, models.ShaderGraphInspectParams),
+            "shader.edit_graph": Command(shader_graph.edit, models.ShaderGraphEditParams, mutates=True),
+            "material.diagnose": Command(
+                partial(material_diagnostics.diagnose, policy=self.policy), models.MaterialDiagnoseParams
+            ),
+            "material.preview": Command(
+                partial(material_preview.preview, policy=self.policy), models.MaterialPreviewParams
+            ),
             "camera.create": Command(camera.create, models.CameraCreateParams, mutates=True),
             "camera.update": Command(camera.update, models.CameraUpdateParams, mutates=True),
             "lighting.inspect": Command(lighting_report.inspect, models.LightingInspectParams),
             "render.set_color_management": Command(color_management.update, models.ColorManagementParams, mutates=True),
             "world.get": Command(world.get),
             "world.set": Command(partial(world.update, policy=self.policy), models.WorldSetParams, mutates=True),
+            "lighting.rig_apply": Command(rigs.apply_rig, models.LightingRigApplyParams, mutates=True),
+            "lighting.rig_remove": Command(rigs.remove_rig, models.LightingRigRemoveParams, mutates=True),
+            "camera.frame": Command(rigs.frame_camera, models.CameraFrameParams, mutates=True),
             "light.create": Command(lighting.create, models.LightCreateParams, mutates=True),
             "light.update": Command(lighting.update, models.LightUpdateParams, mutates=True),
             "timeline.get": Command(animation.timeline_get),
