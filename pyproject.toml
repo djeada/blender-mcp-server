@@ -26,6 +26,7 @@ classifiers = [
     "Topic :: Software Development :: Libraries",
 ]
 dependencies = [
+    "jsonschema>=4.18",
     "mcp>=1.20.0,<2",
 ]
 
@@ -44,8 +45,20 @@ dev = [
 ]
 
 [tool.hatch.build.targets.wheel]
-only-include = ["src/blender_mcp_server", "addon"]
-sources = {"src" = "", "addon" = "blender_mcp_server/_addon"}
+only-include = [
+    "src/blender_mcp_server",
+    "addon",
+    # Reviewed recipes listed in src/blender_mcp_server/recipes.json.
+    "examples/library/apply_transforms.py",
+    "examples/library/camera.py",
+    "examples/library/create_emissive_material.py",
+    "examples/library/create_mesh.py",
+    "examples/library/create_tree.py",
+    "examples/library/effector.py",
+    "examples/library/rigid_body.py",
+    "examples/library/scatter_objects.py",
+]
+sources = {"src" = "", "addon" = "blender_mcp_server/_addon", "examples/library" = "blender_mcp_server/_recipes"}
 dev-mode-dirs = [".", "src"]
 
 [tool.hatch.build.targets.sdist]

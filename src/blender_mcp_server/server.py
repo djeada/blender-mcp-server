@@ -1,6 +1,10 @@
 """Assemble the feature tools and expose the stdio server entrypoint."""
 
+import sys
+from collections.abc import Sequence
+
 from blender_mcp_server.app import blender_status, mcp
+from blender_mcp_server.capabilities import parse_exposure
 from blender_mcp_server.tools.animation import (
     keyframe_add,
     keyframe_list,
@@ -11,6 +15,13 @@ from blender_mcp_server.tools.animation import (
 from blender_mcp_server.tools.camera import (
     camera_create,
     camera_update,
+)
+from blender_mcp_server.tools.capture import view_capture
+from blender_mcp_server.tools.discovery import (
+    capability_describe,
+    capability_invoke,
+    capability_reset,
+    capability_search,
 )
 from blender_mcp_server.tools.execution import (
     job_cancel,
@@ -24,17 +35,28 @@ from blender_mcp_server.tools.exports import (
     export_gltf,
     export_obj,
 )
+from blender_mcp_server.tools.knowledge import guide_get, guide_search, workflow
 from blender_mcp_server.tools.lighting import (
+    color_management_set,
     light_create,
     light_update,
+    lighting_inspect,
+    world_get,
+    world_set,
 )
 from blender_mcp_server.tools.materials import (
     material_assign,
+    material_assign_faces,
     material_create,
     material_list,
     material_set_color,
     material_set_texture,
+    material_slot_append,
+    material_slot_remove,
+    material_slot_replace,
+    material_slots,
 )
+from blender_mcp_server.tools.mesh import mesh_inspect
 from blender_mcp_server.tools.objects import (
     history_redo,
     history_undo,
@@ -54,7 +76,9 @@ from blender_mcp_server.tools.objects import (
     object_unparent,
     object_update_modifier,
 )
+from blender_mcp_server.tools.output import output_read
 from blender_mcp_server.tools.project import project_get_info, project_open, project_revert, project_save
+from blender_mcp_server.tools.recipes import recipe_get, recipe_run, recipe_search
 from blender_mcp_server.tools.rendering import (
     render_animation,
     render_still,
@@ -74,6 +98,17 @@ __all__ = [
     "main",
     "mcp",
     "blender_status",
+    "capability_search",
+    "capability_describe",
+    "capability_invoke",
+    "capability_reset",
+    "output_read",
+    "workflow",
+    "guide_search",
+    "guide_get",
+    "recipe_search",
+    "recipe_get",
+    "recipe_run",
     "scene_get_info",
     "scene_execute_batch",
     "project_get_info",
@@ -108,8 +143,18 @@ __all__ = [
     "material_assign",
     "material_set_color",
     "material_set_texture",
+    "material_slots",
+    "material_slot_append",
+    "material_slot_replace",
+    "material_slot_remove",
+    "material_assign_faces",
+    "mesh_inspect",
     "camera_create",
     "camera_update",
+    "lighting_inspect",
+    "world_get",
+    "world_set",
+    "color_management_set",
     "light_create",
     "light_update",
     "timeline_get",
@@ -117,6 +162,7 @@ __all__ = [
     "keyframe_add",
     "keyframe_list",
     "keyframe_remove",
+    "view_capture",
     "render_still",
     "render_animation",
     "export_gltf",
@@ -130,7 +176,8 @@ __all__ = [
 ]
 
 
-def main():
+def main(argv: Sequence[str] | None = None):
+    mcp.exposure = parse_exposure(sys.argv[1:] if argv is None else argv)
     mcp.run(transport="stdio")
 
 

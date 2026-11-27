@@ -6,6 +6,7 @@ Opt in with BLENDER_MCP_INTEGRATION=1 (and BLENDER_BIN if blender is not on PATH
 """
 
 import asyncio
+import base64
 import json
 import os
 import shutil
@@ -395,6 +396,779 @@ def test_project_persistence_and_recovery_across_multiple_loads(call, bridge):
         before = status
     call("project_revert", confirm=True)
     assert call("scene_get_info")["name"] == "Scene"
+
+
+_RECIPE_RUN_ORDER = (
+    # (recipe, arguments); later steps use objects the earlier ones create.
+    ("create-mesh", {"mesh_type": "sphere", "name": "RecipeOrb", "location": [0, 0, 5]}),
+    ("create-mesh", {"mesh_type": "plane", "name": "RecipeGround"}),
+    ("create-tree", {"name": "RecipeOak", "height": 2.5, "seed": 7}),
+    ("scatter-objects", {"source": "RecipeOak", "count": 3, "seed": 1}),
+    ("emissive-material", {"name": "RecipeGlow", "emission_color": [0, 1, 1]}),
+    ("setup-camera", {"name": "RecipeCam", "location": [6, -6, 4], "focal_length": 70}),
+    ("rigid-body", {"objects": ["RecipeOrb", "Missing"], "mass": 2.0}),
+    ("physics-effector", {"objects": ["RecipeGround"]}),
+    ("apply-transforms", {"objects": ["RecipeGround"], "location": True}),
+)
+
+
+def _check_recipe_result(recipe_id, result):
+    from jsonschema import validate
+
+    from blender_mcp_server.recipes import get_recipe
+
+    validate(result, get_recipe(recipe_id).output_schema)
+
+
+def test_every_recipe_runs_through_the_bridge_and_matches_its_contract(call):
+    from blender_mcp_server.recipes import catalog
+
+    assert {recipe for recipe, _ in _RECIPE_RUN_ORDER} == set(catalog())
+    results = {}
+    for recipe, arguments in _RECIPE_RUN_ORDER:
+        results[recipe] = call("recipe_run", recipe=recipe, arguments=arguments)  # the fixture unwraps "result"
+        _check_recipe_result(recipe, results[recipe])
+    assert results["rigid-body"] == {"configured": ["RecipeOrb"], "skipped": ["Missing"], "rb_type": "ACTIVE"}
+    assert results["setup-camera"]["is_active"] is True
+    state = call(
+        "python_exec",
+        code="""
+orb, ground = bpy.data.objects['RecipeOrb'], bpy.data.objects['RecipeGround']
+__result__ = [orb.rigid_body.mass, sorted(m.type for m in ground.modifiers), list(ground.location),
+              bpy.context.scene.camera.name]
+""",
+    )
+    assert state["error"] is None
+    assert state["result"] == [2.0, ["COLLISION", "FLUID"], [0, 0, 0], "RecipeCam"]
+    with pytest.raises(protocol.BridgeError, match="scatter-objects failed"):
+        call("recipe_run", recipe="scatter-objects", arguments={"source": "NoSuchObject"})
+
+
+def test_a_recipe_runs_headless(call, headless_policy):
+    context = MagicMock()
+    context.request_context.lifespan_context.policy = headless_policy
+    outcome = asyncio.run(
+        server.recipe_run(context, "create-tree", {"seed": 3}, transport="headless", timeout_seconds=120)
+    )
+    _check_recipe_result("create-tree", outcome["result"])
+
+
+def test_every_guide_pattern_runs_and_builds_clean_meshes(call):
+    """Guide examples are instructions to a model, so they must work and must not teach broken topology."""
+    from blender_mcp_server import knowledge
+
+    def mesh_names():
+        return {obj["name"] for obj in call("scene_list_objects", type="MESH")["objects"]}
+
+    def run_python(code):
+        result = call("python_exec", code=code)
+        assert result["error"] is None, (result["error"], result["stderr"])
+        return result["result"]
+
+    for guide in knowledge.guides().values():
+        for block in guide.python_blocks():
+            before = mesh_names()
+            run_python(block)
+            for name in sorted(mesh_names() - before):
+                for source in ("raw", "evaluated"):
+                    report = call("mesh_inspect", name=name, source=source, check_duplicates=True)
+                    assert report["summary"]["status"] == "ok", (guide.id, name, source, report["findings"])
+            if guide.id == "geometry-nodes":
+                assert (
+                    run_python(
+                        "__result__ = sum(i.is_instance for i in bpy.context.evaluated_depsgraph_get().object_instances)"
+                    )
+                    > 10
+                )
+            if guide.id == "rigging":
+                moved = run_python(
+                    """
+import math
+arm = next(o for o in bpy.context.scene.objects if o.name.startswith('GuideArm'))
+rig = arm.modifiers['Skeleton'].object
+def points():
+    evaluated = arm.evaluated_get(bpy.context.evaluated_depsgraph_get())
+    mesh = evaluated.to_mesh()
+    found = (mesh.vertices[-1].co.copy(), mesh.vertices[0].co.copy())
+    evaluated.to_mesh_clear()
+    return found
+tip, base = points()
+bone = rig.pose.bones['lower']
+bone.rotation_mode = 'XYZ'
+bone.rotation_euler.x = math.radians(60)
+bpy.context.view_layer.update()
+posed_tip, posed_base = points()
+bone.rotation_euler.x = 0
+__result__ = [(posed_tip - tip).length, (posed_base - base).length, bpy.context.mode]
+"""
+                )
+                assert moved[0] > 0.5 and moved[1] < 1e-5 and moved[2] == "OBJECT"
+
+
+_BUILD_MESH_FIXTURES = """
+def add(name, vertices, edges=(), faces=()):
+    mesh = bpy.data.meshes.new(name)
+    mesh.from_pydata(vertices, list(edges), list(faces))
+    mesh.update()
+    obj = bpy.data.objects.new(name, mesh)
+    bpy.context.scene.collection.objects.link(obj)
+    return obj
+
+square = [(0, 0, 0), (1, 0, 0), (1, 1, 0), (0, 1, 0)]
+cube = [(x, y, z) for x in (0, 1) for y in (0, 1) for z in (0, 1)]
+sides = [(0, 1, 3, 2), (4, 6, 7, 5), (0, 4, 5, 1), (2, 3, 7, 6), (0, 2, 6, 4), (1, 5, 7, 3)]
+modified = add('MeshCube', cube, faces=sides)
+modified.modifiers.new('Smooth', 'SUBSURF').levels = 1
+modified.location = (10, 0, 0)
+modified.vertex_groups.new(name='corner').add([0], 1.0, 'REPLACE')
+add('MeshPlane', square, faces=[(0, 1, 2, 3)])
+add('MeshParts', square + [(x + 5, y, z) for x, y, z in square], faces=[(0, 1, 2, 3), (4, 5, 6, 7)])
+add(
+    'MeshDefects',
+    [(0, 0, 0), (1, 0, 0), (0, 1, 0), (0, -1, 0), (0, 0, 1), (2, 0, 0), (3, 3, 3), (4, 4, 4), (5, 4, 4), (1, 0, 0)],
+    edges=[(7, 8)],
+    faces=[(0, 1, 2), (0, 1, 3), (1, 0, 4), (0, 1, 5)],
+)
+hidden = add('MeshHidden', cube, faces=sides)
+hidden.modifiers.new('Smooth', 'SUBSURF').levels = 1
+hidden.hide_viewport = True
+for obj in bpy.context.selected_objects:
+    obj.select_set(False)
+bpy.data.objects['MeshPlane'].select_set(True)
+bpy.context.view_layer.objects.active = bpy.data.objects['MeshParts']
+bpy.context.view_layer.update()
+__result__ = True
+"""
+
+_SNAPSHOT_STATE = """
+__result__ = {
+    'active': bpy.context.view_layer.objects.active.name,
+    'mode': bpy.context.mode,
+    'datablocks': [len(bpy.data.meshes), len(bpy.data.objects), len(bpy.data.materials)],
+    'objects': {
+        obj.name: [
+            obj.select_get(),
+            [list(row) for row in obj.matrix_world],
+            [(m.name, m.show_viewport) for m in obj.modifiers],
+            [list(v.co) + [v.select] for v in obj.data.vertices],
+            [list(e.vertices) for e in obj.data.edges],
+            [list(p.vertices) for p in obj.data.polygons],
+        ]
+        for obj in bpy.context.scene.objects
+        if obj.name.startswith('Mesh')
+    },
+}
+"""
+
+
+def test_mesh_inspection_diagnoses_fixtures_without_changing_state(call):
+    def run_python(code):
+        result = call("python_exec", code=code)
+        assert result["error"] is None, result["error"]
+        return result["result"]
+
+    run_python(_BUILD_MESH_FIXTURES)
+    before = run_python(_SNAPSHOT_STATE)
+
+    def inspect(name, **params):
+        return call("mesh_inspect", name=name, check_duplicates=True, **params)
+
+    raw = inspect("MeshCube", include_regions=True)
+    assert raw["counts"]["raw"] == {"vertices": 8, "edges": 12, "faces": 6, "triangles": 12}
+    assert raw["counts"]["evaluated"] == {"vertices": 26, "edges": 48, "faces": 24, "triangles": 48}
+    assert raw["findings"] == [] and raw["summary"]["closed_edge_manifold"]
+    assert raw["bounds"]["world"] == {"min": [10, 0, 0], "max": [11, 1, 1], "size": [1, 1, 1]}
+    assert raw["regions"]["vertex_groups"]["items"][0]["vertices"] == 1
+    evaluated = inspect("MeshCube", source="evaluated", include_regions=True)
+    assert evaluated["bounds"]["local"]["size"][0] < 1
+    assert evaluated["regions"]["vertex_groups"]["items"][0]["vertices"] > 1
+    assert inspect("MeshCube", source="evaluated", include_regions=True) == evaluated
+
+    plane = inspect("MeshPlane")
+    assert plane["summary"]["status"] == "ok"
+    assert [(f["check"], f["severity"], f["count"]) for f in plane["findings"]] == [("boundary_edges", "info", 4)]
+    assert inspect("MeshParts")["components"]["count"] == 2
+
+    defects = {finding["check"]: finding["count"] for finding in inspect("MeshDefects")["findings"]}
+    assert defects == {
+        "non_manifold_edges": 1,
+        "zero_area_faces": 1,
+        "loose_vertices": 2,
+        "loose_edges": 1,
+        "duplicate_vertices": 1,
+        "boundary_edges": 8,  # two unshared edges on each of the four faces
+    }
+
+    hidden = inspect("MeshHidden")
+    assert hidden["counts"]["evaluated"] is None and hidden["world_transform_current"] is False
+
+    for kwargs, code in (
+        ({"name": "MeshHidden", "source": "evaluated"}, "unsupported"),
+        ({"name": "MeshCube", "element_budget": 10}, "budget_exceeded"),
+        ({"name": "Missing"}, "not_found"),
+    ):
+        with pytest.raises(protocol.BridgeError) as failure:
+            call("mesh_inspect", **kwargs)
+        assert failure.value.code == code
+
+    assert run_python(_SNAPSHOT_STATE) == before
+
+    run_python("bpy.ops.object.mode_set(mode='EDIT')")
+    with pytest.raises(protocol.BridgeError, match="Edit Mode"):
+        call("mesh_inspect", name="MeshParts")
+    assert run_python("__result__ = bpy.context.mode") == "EDIT_MESH"
+    run_python("bpy.ops.object.mode_set(mode='OBJECT')")
+
+
+_BUILD_CAPTURE_FIXTURE = """
+root = bpy.data.objects.new('CaptureRoot', None)
+bpy.context.scene.collection.objects.link(root)
+group = bpy.data.collections.new('CaptureParts')
+bpy.context.scene.collection.children.link(group)
+for name, location, hidden in (('CaptureBox', (20, 0, 0), False), ('CaptureTall.001', (23, 0, 2), False),
+                               ('CaptureSecret', (60, 0, 0), True)):
+    mesh = bpy.data.meshes.new(name)
+    cube = [(x, y, z) for x in (-1, 1) for y in (-1, 1) for z in (-1, 1)]
+    mesh.from_pydata(cube, [], [(0, 1, 3, 2), (4, 6, 7, 5), (0, 4, 5, 1), (2, 3, 7, 6), (0, 2, 6, 4), (1, 5, 7, 3)])
+    obj = bpy.data.objects.new(name, mesh)
+    group.objects.link(obj)
+    obj.location = location
+    obj.parent = root
+    obj.hide_render = hidden
+instancer = bpy.data.objects.new('CaptureInstancer', None)
+bpy.context.scene.collection.objects.link(instancer)
+instancer.instance_type = 'COLLECTION'
+instancer.instance_collection = group
+instancer.location = (0, 40, 0)
+moving = bpy.data.objects['CaptureBox']
+moving.keyframe_insert('location', frame=1)
+bpy.context.view_layer.update()
+__result__ = True
+"""
+
+_SNAPSHOT_CAPTURE = """
+scene = bpy.context.scene
+render = scene.render
+__result__ = {
+    'scene': scene.name,
+    'camera': scene.camera.name if scene.camera else None,
+    'frame': scene.frame_current,
+    'render': [render.engine, render.resolution_x, render.resolution_y, render.resolution_percentage,
+               render.filepath, render.use_compositing, render.film_transparent, render.image_settings.file_format],
+    'view_transform': scene.view_settings.view_transform,
+    'datablocks': {kind: sorted(block.name for block in getattr(bpy.data, kind))
+                   for kind in ('scenes', 'objects', 'meshes', 'materials', 'cameras', 'lights', 'worlds',
+                                'collections')},
+    'objects': {o.name: [o.select_get(), o.hide_render, o.hide_viewport, list(o.color),
+                         [list(row) for row in o.matrix_world], [m.name for m in o.modifiers],
+                         len(o.users_collection)]
+                for o in scene.objects},
+}
+"""
+
+
+def _png_size(data: bytes) -> tuple[int, int]:
+    assert data.startswith(b"\x89PNG\r\n\x1a\n")
+    return struct.unpack(">II", data[16:24])
+
+
+def test_view_capture_returns_images_and_leaves_the_project_unchanged(bridge, call):
+    """Background Blender captures with Cycles on the CPU, so no GPU or display is needed."""
+
+    def run_python(code):
+        result = call("python_exec", code=code)
+        assert result["error"] is None, result["error"]
+        return result["result"]
+
+    if not run_python(_USE_FAST_CYCLES):
+        pytest.skip("Cycles is not available in this Blender build")
+    run_python(_BUILD_CAPTURE_FIXTURE)
+    before = run_python(_SNAPSHOT_CAPTURE)
+
+    loop = asyncio.new_event_loop()
+    connection = BlenderConnection(port=bridge["port"])
+    context = MagicMock()
+    context.request_context.lifespan_context = connection
+
+    def capture(**arguments):
+        blocks = loop.run_until_complete(server.view_capture(context, resolution=96, **arguments))
+        return json.loads(blocks[0].text), [base64.b64decode(b.data) for b in blocks if b.type == "image"]
+
+    try:
+        saved = bridge["tmp"] / "captures"
+        report, images = capture(object="CaptureRoot", views=["front", "top"], save_directory=str(saved))
+        assert report["engine"] == "CYCLES"
+        assert [_png_size(image) for image in images] == [(96, 96), (96, 96)]
+        assert images[0] != images[1]
+        assert (saved / "capture_front.png").read_bytes() == images[0]
+        assert report["bounds_world"] == {"min": [19, -1, -1], "max": [24, 1, 3], "size": [5, 2, 4]}
+        assert {item["object"] for item in report["excluded"]["items"]} == {"CaptureRoot", "CaptureSecret"}
+
+        # Instanced collections are framed from their instances.
+        instanced, images = capture(object="CaptureInstancer", projection="perspective", mode="material")
+        assert instanced["bounds_world"]["min"][1] == 39 and len(images) == 1
+        wire, images = capture(collection="CaptureParts", mode="wireframe")
+        assert wire["objects_shown"] == 2 and wire["notes"] == [] and len(images) == 1
+        run_python("bpy.data.objects['CaptureBox'].modifiers.new('s', 'SUBSURF').render_levels = 3")
+        assert "render modifier settings" in capture(object="CaptureBox", include_images=False)[0]["notes"][0]
+        run_python("box = bpy.data.objects['CaptureBox']; box.modifiers.remove(box.modifiers['s'])")
+        metadata, images = capture(object="CaptureBox", include_images=False)
+        assert images == [] and metadata["engine"] is None and metadata["views"][0]["ortho_scale"] > 2
+
+        for arguments, code in (
+            ({"object": "CaptureSecret"}, "unsupported"),
+            ({"object": "Missing"}, "not_found"),
+            ({"object": "CaptureBox", "collection": "CaptureParts"}, "invalid_arguments"),
+        ):
+            with pytest.raises(protocol.BridgeError) as failure:
+                capture(**arguments)
+            assert failure.value.code == code
+        # Fails after rendering has started, with temporary scene, mesh copies and materials in place.
+        with pytest.raises(protocol.BridgeError) as failure:
+            loop.run_until_complete(
+                server.view_capture(
+                    context,
+                    object="CaptureBox",
+                    views=["front", "back"],
+                    mode="wireframe",
+                    resolution=512,
+                    max_bytes=10_000,
+                )
+            )
+        assert failure.value.code == "budget_exceeded"
+    finally:
+        loop.run_until_complete(connection.disconnect())
+        loop.close()
+
+    assert run_python(_SNAPSHOT_CAPTURE) == before
+
+
+def test_headless_view_capture_of_a_saved_project(call, bridge, headless_policy):
+    path = bridge["tmp"] / "capture-source.blend"
+    call("object_create", name="HeadlessShot")
+    saved = call("python_exec", code=f"bpy.ops.wm.save_as_mainfile(filepath={str(path)!r}, copy=True)")
+    assert saved["error"] is None
+    report = asyncio.run(
+        HeadlessBlenderExecutor(BLENDER, headless_policy).execute_command(
+            "view.capture",
+            {"object": "HeadlessShot", "resolution": 64, "views": ["front"]},
+            blend_file=str(path),
+            factory_startup=True,
+            timeout_seconds=120,
+        )
+    )
+    assert _png_size(base64.b64decode(report["views"][0]["png_base64"])) == (64, 64)
+
+
+def _python(call, code):
+    result = call("python_exec", code=code)
+    assert result["error"] is None, (result["error"], result["stderr"])
+    return result["result"]
+
+
+_LIGHT_IDS = "__result__ = [sorted(o.name for o in bpy.data.objects), sorted(l.name for l in bpy.data.lights)]"
+
+
+def test_lighting_validation_inspection_and_shared_data(call):
+    before = _python(call, _LIGHT_IDS)
+    with pytest.raises(protocol.BridgeError, match="does not apply to SUN"):
+        call("light_create", name="ITRejected", light_type="SUN", size=2.0)
+    assert _python(call, _LIGHT_IDS) == before  # no orphan object or light data
+
+    call("light_create", name="ITInsPoint", light_type="POINT", size=0.4, energy=50)
+    call("light_create", name="ITInsSun", light_type="SUN", angle=3, location=[0, 0, 5])
+    call("light_create", name="ITInsSpot", light_type="SPOT", spot_angle=40, spot_blend=0.5)
+    area = call(
+        "light_create",
+        name="ITInsArea",
+        light_type="AREA",
+        shape="ELLIPSE",
+        size=2,
+        size_y=0.5,
+        location=[3, 0, 0],
+        look_at=[0, 0, 0],
+        temperature=3000,
+    )
+    assert area["shape"] == "ELLIPSE" and area["color"][0] == pytest.approx(1) and area["color"][2] < 0.5
+
+    with pytest.raises(protocol.BridgeError, match="does not apply to SUN"):
+        call("light_update", name="ITInsPoint", light_type="SUN", size=2.0)
+    report = call("lighting_inspect")
+    found = {light["name"]: light for light in report["lights"] if light["name"].startswith("ITIns")}
+    assert found["ITInsPoint"]["light_type"] == "POINT" and found["ITInsPoint"]["size"] == pytest.approx(0.4)
+    assert found["ITInsSun"]["angle"] == pytest.approx(3) and found["ITInsSun"]["world_direction"] == [0, 0, -1]
+    assert found["ITInsSpot"]["spot_angle"] == pytest.approx(40) and found["ITInsSpot"]["spot_blend"] == 0.5
+    assert found["ITInsArea"]["size_y"] == pytest.approx(0.5)
+    assert found["ITInsArea"]["world_direction"] == pytest.approx([-1, 0, 0], abs=1e-5)
+    # Changing the type really changes the settings Blender exposes.
+    assert call("light_update", name="ITInsPoint", light_type="SPOT", spot_angle=30)["spot_angle"] == 30
+
+    _python(
+        call,
+        "o = bpy.data.objects['ITInsSun'].copy(); o.name = 'ITInsSunCopy'; bpy.context.scene.collection.objects.link(o)",
+    )
+    with pytest.raises(protocol.BridgeError, match="shared by 2 objects"):
+        call("light_update", name="ITInsSun", energy=9)
+    call("light_update", name="ITInsSun", energy=9, shared_data="make_single_user")
+    energies = _python(call, "__result__ = [bpy.data.objects[n].data.energy for n in ('ITInsSun', 'ITInsSunCopy')]")
+    assert energies[0] == 9 and energies[1] != 9
+
+
+_MEAN_BRIGHTNESS = """
+image = bpy.data.images.load(args['path'], check_existing=False)
+pixels = list(image.pixels)
+bpy.data.images.remove(image)
+values = [v for i, v in enumerate(pixels) if i % 4 != 3]
+__result__ = sum(values) / len(values)
+"""
+
+
+def test_color_management_changes_rendered_brightness_and_rejects_invalid_looks(call, bridge):
+    if not _python(call, _USE_FAST_CYCLES):
+        pytest.skip("Cycles is not available in this Blender build")
+    _python(
+        call,
+        """
+scene = bpy.context.scene
+camera = bpy.data.objects.new('ITColorCam', bpy.data.cameras.new('ITColorCam'))
+scene.collection.objects.link(camera)
+camera.location = (100, 100, 10)
+scene.camera = camera
+mesh = bpy.data.meshes.new('ITColorPlane')
+mesh.from_pydata([(95, 95, 0), (105, 95, 0), (105, 105, 0), (95, 105, 0)], [], [(0, 1, 2, 3)])
+scene.collection.objects.link(bpy.data.objects.new('ITColorPlane', mesh))
+""",
+    )
+    call("light_create", name="ITColorSun", light_type="SUN", energy=1, location=[100, 100, 20])
+    # Lights left by other tests would clip the picture to white, hiding any exposure change.
+    hidden = _python(
+        call,
+        """
+__result__ = [o.name for o in bpy.context.scene.objects
+              if o.type == 'LIGHT' and o.name != 'ITColorSun' and not o.hide_render]
+for name in __result__:
+    bpy.data.objects[name].hide_render = True
+""",
+    )
+    options = call("lighting_inspect", include_options=True)["color_management_options"]
+    assert "Standard" in options["view_transforms"] and options["looks"] and options["display_devices"]
+    original = call("lighting_inspect")["color_management"]
+
+    def brightness(name):
+        path = bridge["tmp"] / f"color-{name}.png"
+        call("render_still", output_path=str(path), resolution_x=16, resolution_y=16)
+        return call("python_exec", code=_MEAN_BRIGHTNESS, args={"path": str(path)})["result"]
+
+    result = call("color_management_set", view_transform="Standard", exposure=0, gamma=1)
+    assert result["color_management"]["view_transform"] == "Standard"
+    base = brightness("base")
+    call("color_management_set", exposure=1)
+    brighter = brightness("brighter")
+    assert 0.05 < base < 0.9, base  # not black or clipped, so the comparison means something
+    assert brighter > base * 1.15, (base, brighter)
+
+    state = call("lighting_inspect")["color_management"]
+    for settings, message in (
+        ({"view_transform": "NoSuchTransform"}, "Choose from"),
+        ({"view_transform": "Raw", "look": "NoSuchLook", "exposure": 3}, "Choose from"),
+    ):
+        with pytest.raises(protocol.BridgeError, match=message):
+            call("color_management_set", **settings)
+        assert call("lighting_inspect")["color_management"] == state
+    call(
+        "color_management_set",
+        view_transform=original["view_transform"],
+        look=original["look"],
+        exposure=original["exposure"],
+        gamma=original["gamma"],
+    )
+    call("python_exec", code="for n in args['names']: bpy.data.objects[n].hide_render = False", args={"names": hidden})
+
+
+# A generated test environment (no external assets): the equirectangular width is split into red, green,
+# blue and yellow quarters, so the color seen in a direction identifies the part of the image facing it.
+_MAKE_QUADRANT_ENVIRONMENT = """
+image = bpy.data.images.new('ITQuadrants', 64, 32, alpha=True, float_buffer=True)
+colors = [(1, 0, 0, 1), (0, 1, 0, 1), (0, 0, 1, 1), (1, 1, 0, 1)]
+image.pixels = [c for y in range(32) for x in range(64) for c in colors[x * 4 // 64]]
+image.filepath_raw = args['path']
+image.file_format = 'OPEN_EXR'
+image.save()
+bpy.data.images.remove(image)
+"""
+
+_SAMPLE_WORLD = """
+from mathutils import Vector
+scene = bpy.context.scene
+camera = scene.camera
+samples = {}
+for label, direction in args['directions'].items():
+    camera.rotation_euler = Vector(direction).to_track_quat('-Z', 'Y').to_euler()
+    scene.render.resolution_x = scene.render.resolution_y = 8
+    scene.render.filepath = args['path']
+    bpy.ops.render.render(write_still=True)
+    image = bpy.data.images.load(args['path'], check_existing=False)
+    pixels = list(image.pixels)
+    bpy.data.images.remove(image)
+    samples[label] = pixels[(4 * 8 + 4) * 4:(4 * 8 + 4) * 4 + 3]
+__result__ = samples
+"""
+
+_WORLD_SCENE = """
+original = bpy.context.scene
+scene = bpy.data.scenes.new('ITWorld')
+camera = bpy.data.objects.new('ITWorldCam', bpy.data.cameras.new('ITWorldCam'))
+camera.data.lens = 120
+scene.collection.objects.link(camera)
+scene.camera = camera
+scene.render.engine = 'CYCLES'
+scene.cycles.samples = 4
+scene.cycles.use_denoising = False
+scene.view_settings.view_transform = 'Standard'
+"""
+
+
+def _color_name(rgb):
+    table = {"red": (1, 0, 0), "green": (0, 1, 0), "blue": (0, 0, 1), "yellow": (1, 1, 0)}
+    return min(table, key=lambda name: sum((a - b) ** 2 for a, b in zip(table[name], rgb, strict=True)))
+
+
+def test_world_orientation_sky_and_preview_renders(call, bridge):
+    if not _python(call, _USE_FAST_CYCLES):
+        pytest.skip("Cycles is not available in this Blender build")
+    environment = bridge["tmp"] / "quadrants.exr"
+    assert call("python_exec", code=_MAKE_QUADRANT_ENVIRONMENT, args={"path": str(environment)})["error"] is None
+    call("object_create", mesh_type="sphere", name="ITWorldBall", location=[300, 0, 0])
+
+    # Plain color and strength on the scene's existing world.
+    color = call("world_set", mode="color", color=[0.4, 0.4, 0.4], strength=1.5, on_conflict="new_world")
+    assert color["settings"] == {"mode": "color", "color": [0.4, 0.4, 0.4], "strength": 1.5}
+    ball = {"object": "ITWorldBall", "mode": "material", "lighting": "world", "resolution": 64, "views": ["front"]}
+
+    def preview_center():
+        loop = asyncio.new_event_loop()
+        connection = BlenderConnection(port=bridge["port"])
+        context = MagicMock()
+        context.request_context.lifespan_context = connection
+        try:
+            blocks = loop.run_until_complete(server.view_capture(context, **ball))
+        finally:
+            loop.run_until_complete(connection.disconnect())
+            loop.close()
+        path = bridge["tmp"] / "ball.png"
+        path.write_bytes(base64.b64decode(blocks[-1].data))
+        return _python(
+            call,
+            f"""
+image = bpy.data.images.load({str(path)!r}, check_existing=False)
+pixels = list(image.pixels)
+bpy.data.images.remove(image)
+__result__ = pixels[(32 * 64 + 32) * 4:(32 * 64 + 32) * 4 + 3]
+""",
+        )
+
+    neutral = preview_center()
+    assert 0.1 < neutral[0] < 0.95 and max(neutral) - min(neutral) < 0.02  # neutral grey environment light
+
+    # A missing image must not change anything.
+    before = call("world_get")["settings"]
+    with pytest.raises(protocol.BridgeError, match="not found"):
+        call("world_set", mode="environment", filepath=str(bridge["tmp"] / "missing.hdr"))
+    assert call("world_get")["settings"] == before
+
+    environment_result = call("world_set", mode="environment", filepath=str(environment), strength=1)
+    assert environment_result["settings"]["image"]["size"] == [64, 32]
+    _python(call, _WORLD_SCENE + "scene.world = original.world\nbpy.app.driver_namespace['it_scene'] = original.name")
+    # Render the shared world from a scene of its own, so other tests' objects stay out of the picture.
+    diagonals = {"+X+Y": (1, 1, 0), "-X+Y": (-1, 1, 0), "-X-Y": (-1, -1, 0), "+X-Y": (1, -1, 0)}
+
+    def seen():
+        switch = "scene = bpy.data.scenes['ITWorld']\nscene.world = bpy.data.scenes[bpy.app.driver_namespace['it_scene']].world\n"
+        render = _SAMPLE_WORLD.replace("scene = bpy.context.scene", switch).replace(
+            "bpy.ops.render.render(write_still=True)", "bpy.ops.render.render(write_still=True, scene=scene.name)"
+        )
+        result = call(
+            "python_exec", code=render, args={"directions": diagonals, "path": str(bridge["tmp"] / "world.png")}
+        )
+        assert result["error"] is None, result
+        return {label: _color_name(rgb) for label, rgb in result["result"].items()}
+
+    # Another scene now uses this world, so changing it needs an explicit choice.
+    with pytest.raises(protocol.BridgeError, match="shared with scene"):
+        call("world_set", rotation=90)
+    call("world_set", rotation=0, on_conflict="replace")
+    # The middle of the image faces +X, and moving right across the image turns clockwise seen from above.
+    assert seen() == {"+X+Y": "green", "-X+Y": "red", "-X-Y": "yellow", "+X-Y": "blue"}
+    call("world_set", rotation=90, on_conflict="replace")
+    # Positive rotation turns the environment counterclockwise: blue moved from +X-Y to +X+Y.
+    assert seen() == {"+X+Y": "blue", "-X+Y": "green", "-X-Y": "red", "+X-Y": "yellow"}
+    _python(call, "bpy.data.scenes.remove(bpy.data.scenes['ITWorld'])")
+
+    # A custom node setup is protected, and new_world keeps it intact.
+    _python(
+        call,
+        """
+world = bpy.data.worlds.new('ITCustomWorld')
+world.use_nodes = True
+tree = world.node_tree
+noise = tree.nodes.new('ShaderNodeTexNoise')
+background = next(n for n in tree.nodes if n.type == 'BACKGROUND')
+tree.links.new(noise.outputs[0], background.inputs['Color'])
+bpy.context.scene.world = world
+""",
+    )
+    count = "__result__ = [len(bpy.data.worlds['ITCustomWorld'].node_tree.nodes), len(bpy.data.worlds['ITCustomWorld'].node_tree.links)]"
+    graph = _python(call, count)
+    with pytest.raises(protocol.BridgeError) as conflict:
+        call("world_set", mode="sky")
+    assert conflict.value.code == "conflict" and _python(call, count) == graph
+
+    sky = call("world_set", mode="sky", sun_elevation=35, sun_rotation=90, strength=0.1, on_conflict="new_world")
+    assert sky["kept_world"] == "ITCustomWorld" and _python(call, count) == graph
+    assert sky["settings"]["sun_rotation"] == pytest.approx(90) and sky["settings"]["sun_elevation"] == pytest.approx(
+        35
+    )
+    call("color_management_set", view_transform="Standard", exposure=-3)
+    outdoor = preview_center()
+    call("color_management_set", exposure=0)
+    assert 0.02 < max(outdoor) < 0.999 and outdoor[2] != pytest.approx(neutral[2])
+    for sky_type in call("world_get")["sky_types"]:
+        assert call("world_set", sky_type=sky_type)["settings"]["sky_type"] == sky_type
+    call("world_set", mode="color", color=[0.05, 0.05, 0.05], strength=1)
+
+
+# Four faces in four slots on a mesh shared by two objects, each with one object-linked slot. This is
+# the layout where Blender's own slot removal drops one object's material and misaligns the other's.
+_SLOT_FIXTURE = """
+suffix = args['suffix']
+mesh = bpy.data.meshes.new('ITSlotMesh' + suffix)
+mesh.from_pydata([(i, j, 0) for i in range(5) for j in range(2)], [],
+                 [(i * 2, i * 2 + 2, i * 2 + 3, i * 2 + 1) for i in range(4)])
+names = [f'ITSlot{i}{suffix}' for i in range(4)]
+for name in names:
+    mesh.materials.append(bpy.data.materials.new(name))
+for index, polygon in enumerate(mesh.polygons):
+    polygon.material_index = index
+objects = []
+for letter, slot in (('A', 2), ('B', 3)):
+    obj = bpy.data.objects.new('ITSlot' + letter + suffix, mesh)
+    bpy.context.scene.collection.objects.link(obj)
+    obj.material_slots[slot].link = 'OBJECT'
+    obj.material_slots[slot].material = bpy.data.materials.new('ITOwn' + letter + suffix)
+    obj.vertex_groups.new(name='strip').add([0, 1, 2, 3], 1.0, 'REPLACE') if letter == 'A' else None
+    objects.append(obj.name)
+__result__ = objects
+"""
+
+_FACE_MATERIALS = """
+__result__ = {
+    name: [bpy.data.objects[name].material_slots[p.material_index].material.name
+           for p in bpy.data.objects[name].data.polygons]
+    for name in args['names']
+}
+"""
+
+
+def test_material_slots_preserve_what_other_objects_show(call):
+    def fixture(suffix):
+        result = call("python_exec", code=_SLOT_FIXTURE, args={"suffix": suffix})
+        assert result["error"] is None, result
+        return result["result"]
+
+    def shown(names):
+        result = call("python_exec", code=_FACE_MATERIALS, args={"names": names})
+        assert result["error"] is None, result
+        return result["result"]
+
+    for removed in range(4):
+        suffix = f"_r{removed}"
+        first, second = fixture(suffix)
+        before = shown([first, second])
+        keep = 0 if removed else 1
+        slots = call("material_slots", object=first)["slots"]
+        assert [slot["faces"] for slot in slots] == [1, 1, 1, 1]
+        replacement = {}
+        for name in (first, second):
+            code = f"__result__ = bpy.data.objects[{name!r}].material_slots[{keep}].material.name"
+            replacement[name] = _python(call, code)
+        with pytest.raises(protocol.BridgeError, match="pass 'remap_to'"):
+            call("material_slot_remove", object=first, index=removed, shared_data="update_all")
+        with pytest.raises(protocol.BridgeError, match="shared by 2 objects"):
+            call("material_slot_remove", object=first, index=removed, remap_to=keep)
+        assert shown([first, second]) == before
+        call("material_slot_remove", object=first, index=removed, remap_to=keep, shared_data="update_all")
+        after = shown([first, second])
+        for name in (first, second):
+            expected = [replacement[name] if face == removed else m for face, m in enumerate(before[name])]
+            assert after[name] == expected, (removed, name)
+
+    # Making a single user must carry object-linked materials over and leave the other object alone.
+    first, second = fixture("_single")
+    before = shown([first, second])
+    added = call("material_slot_append", object=first, material="ITSlot0_single", shared_data="make_single_user")
+    assert "mesh_shared_by" not in added and added["added_index"] == 4
+    assert shown([first, second]) == before
+
+    # Three independent regions on one mesh, using each selector, with exact counts.
+    call("object_create", name="ITRegions")
+    for name in ("ITSkin", "ITTeeth", "ITArmor"):
+        call("material_create", name=name)
+        call("material_slot_append", object="ITRegions", material=name)
+    _python(
+        call,
+        """
+obj = bpy.data.objects['ITRegions']
+top = max(v.co.z for v in obj.data.vertices)
+obj.vertex_groups.new(name='top').add([v.index for v in obj.data.vertices if v.co.z == top], 1.0, 'REPLACE')
+""",
+    )
+    call("material_assign_faces", object="ITRegions", material="ITTeeth", vertex_group="top")
+    result = call("material_assign_faces", object="ITRegions", material="ITArmor", face_indices=[0, 2])
+    counts = {slot["material"]: slot["faces"] for slot in result["slots"]}
+    assert counts["ITTeeth"] == 1 and counts["ITArmor"] == 2 and counts["ITSkin"] == 3
+    assert call("material_assign_faces", object="ITRegions", slot=1, from_slot=2)["selected_faces"] == 2
+    linked = call("material_slot_replace", object="ITRegions", index=0, material="ITArmor", link="OBJECT")
+    assert linked["slots"][0]["link"] == "OBJECT" and linked["slots"][0]["data_material"] == "ITSkin"
+    # The original single-material assign keeps its behaviour: it sets the mesh's slot 0 only.
+    before_assign = call("material_slots", object="ITRegions")["slots"]
+    assert before_assign[0]["data_material"] == "ITSkin"
+    call("material_assign", object="ITRegions", material="ITTeeth")
+    after_assign = call("material_slots", object="ITRegions")["slots"]
+    assert after_assign[0]["data_material"] == "ITTeeth"
+    assert after_assign[0]["material"] == "ITArmor" and after_assign[1:] == before_assign[1:]
+
+
+@pytest.mark.asyncio
+async def test_mcp_stdio_compact_profile_discovers_and_invokes(bridge):
+    async with (
+        stdio_client(
+            StdioServerParameters(
+                command=sys.executable,
+                args=["-m", "blender_mcp_server", "--profile", "compact"],
+                env={
+                    **os.environ,
+                    "BLENDER_MCP_PORT": str(bridge["port"]),
+                    "BLENDER_MCP_TOKEN_FILE": str(bridge["token_file"]),
+                    "BLENDER_MCP_TOKEN": "",
+                },
+            )
+        ) as (read, write),
+        ClientSession(read, write) as session,
+    ):
+        await session.initialize()
+        assert len((await session.list_tools()).tools) == 15
+
+        async def call(tool, **arguments):
+            result = await session.call_tool(tool, arguments)
+            assert not result.isError, result.content[0].text
+            return json.loads(result.content[0].text)
+
+        await call("blender_object_create", name="ITCompact")
+        found = await call("blender_capability_search", query="check mesh topology")
+        assert found["actions"][0]["action"] == "blender_mesh_inspect"
+        await call("blender_capability_describe", actions=["blender_mesh_inspect"])
+        report = await call("blender_capability_invoke", action="blender_mesh_inspect", arguments={"name": "ITCompact"})
+        assert report["result"]["counts"]["raw"]["faces"] == 6
 
 
 @pytest.mark.asyncio

@@ -7,7 +7,49 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Changed
+- `light.update` now refuses to change light data shared by several objects unless `shared_data` is `update_all`
+  or `make_single_user`. Moving or rotating such a light works as before.
+
 ### Added
+- Material slot tools: `blender_material_slots`, `blender_material_slot_append` / `replace` / `remove` and
+  `blender_material_assign_faces` (by face index, vertex group or current slot). Shared meshes need an explicit
+  choice, and removing a slot keeps what every other face and object showed, which Blender's own removal does not.
+- `blender_world_get` and `blender_world_set` control environment light: plain color, HDRI with rotation, and
+  procedural sky, with an optional camera-only background. Custom or shared worlds are never changed without an
+  explicit `on_conflict` choice. `blender_view_capture` can preview with `lighting="world"` or `"scene"`.
+- `blender_lighting_inspect` reports every light, the camera, world, render settings and color management.
+  `blender_color_management_set` changes view transform, look, exposure, gamma and display device with all-or-nothing
+  validation. Light tools accept area `shape` and color `temperature`, and report the effective type settings.
+- `scripts/context_benchmark.py` measures tool list sizes, replays task traces and can score a local model against
+  the Blender scene. CI enforces context limits from `tests/context_budgets.json`. Results and trade-offs are in
+  `docs/benchmarks.md`.
+- Workflow stages name relevant recipe IDs. Guide search reports matching section IDs and related recipes and
+  filters by stage, style and target; recipe search filters by Blender version.
+- A recipe catalog (`blender_recipe_search`, `blender_recipe_get`, `blender_recipe_run`) that packages eight
+  reviewed library scripts in the wheel and runs them by ID with schema-validated arguments, under the same policy as
+  Python execution. `jsonschema` is now a declared dependency.
+- Fifteen packaged modeling, surfacing and rigging guides with tested `bpy` examples, plus staged workflows chosen
+  from the task, style and target: `blender_workflow`, `blender_guide_search`, `blender_guide_get`, the
+  `blender://guides` resources and the `blender_modeling_workflow` prompt.
+- `blender_view_capture` returns labelled PNG views of an object or collection as MCP image content, in solid,
+  material or wireframe mode, framed from evaluated bounds in a temporary scene that leaves the project unchanged.
+  Also works headless.
+- Tool profiles (`--profile compact|standard|full`, `--enable-groups`, `--allow-groups`, or the matching
+  environment variables). `compact` advertises 15 tools in 5.8 KB instead of every schema (54.8 KB). The default
+  stays `full`.
+- Compact output (`--output compact`, on by default in the compact profile) pages listings, keeps log tails and
+  turns oversized responses into previews that `blender_output_read` can finish without rerunning anything. Budgets
+  are set with `--max-response-bytes`, `--page-size` and `--log-tail-chars`.
+- Material, collection, keyframe and job listings accept `limit` and `offset`; the hierarchy accepts `max_nodes`,
+  `max_depth` and `offset`. Omitting them keeps the previous complete results in full output.
+- On-demand discovery: `blender_capability_search` / `describe` / `invoke` / `reset` reach unadvertised actions
+  with the same validation, handlers and policy checks as direct calls.
+- `blender_status` reports the active profile and accepts `detail` (`auto`, `summary`, `full`).
+- `blender_mesh_inspect` reports raw and evaluated mesh counts, local and world bounds, material slots, vertex
+  groups, modifiers, connected components and topology findings with sample element IDs, without changing the
+  scene. Duplicate-vertex and per-region checks are opt-in, and meshes over `element_budget` fail with
+  `budget_exceeded`. Also available as `mesh.inspect` in batches.
 - Typed timeline and keyframe tools: `blender_timeline_get` / `blender_timeline_set` and
   `blender_keyframe_add` / `blender_keyframe_list` / `blender_keyframe_remove` over a small allowlist of
   object transforms (`location`, `rotation` in degrees, `scale`) with explicit interpolation modes,
@@ -27,6 +69,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   renders: absolute path returned, missing folders created, extensions appended only when absent).
 
 ### Fixed
+- A rejected `light.create` (for example `size` on a SUN light) left a light object and its data in the scene, and a
+  rejected type-changing `light.update` left the new type applied. Requests are now validated before any change.
 - Rejected mutation requests no longer add undo entries, and the bridge also rejects oversized
   requests when their terminating newline has already arrived.
 - Parenting and unparenting with `keep_transform=true` restore a copy of the world matrix after

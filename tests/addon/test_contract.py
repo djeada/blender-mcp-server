@@ -17,9 +17,11 @@ class TestServerAddonContract:
         ("object_add_modifier", {"name": "Cube", "modifier_type": "BEVEL", "properties": {"segments": 2}}),
         ("object_update_modifier", {"name": "Cube", "modifier_name": "Edge", "properties": {"width": 0.1}}),
         ("object_remove_modifier", {"name": "Cube", "modifier_name": "Edge"}),
-        ("scene_list_objects", {"type": "MESH"}),
+        ("scene_list_objects", {"type": "MESH", "limit": 5, "offset": 5}),
+        ("material_list", {"limit": 5, "offset": 5}),
+        ("collection_list", {"limit": 5, "offset": 5}),
         ("object_get_transform", {"name": "Cube"}),
-        ("object_get_hierarchy", {"name": "Cube"}),
+        ("object_get_hierarchy", {"name": "Cube", "max_nodes": 5, "max_depth": 2, "offset": 1}),
         ("object_create", {"mesh_type": "sphere", "name": "S", "location": [1, 2, 3], "size": 1.0}),
         ("object_delete", {"name": "Cube"}),
         ("object_translate", {"name": "Cube", "offset": [1, 0, 0]}),
@@ -32,19 +34,53 @@ class TestServerAddonContract:
         ("camera_create", {"name": "Camera", "location": [3, -4, 5], "look_at": [0, 0, 0], "lens": 50}),
         ("camera_update", {"name": "Camera", "projection": "ORTHO", "ortho_scale": 4}),
         ("light_create", {"name": "Key", "light_type": "AREA", "energy": 100, "size": 2}),
-        ("light_update", {"name": "Key", "color": [1, 0.5, 0.25]}),
+        ("light_update", {"name": "Key", "color": [1, 0.5, 0.25], "shared_data": "update_all"}),
+        ("light_create", {"light_type": "AREA", "shape": "DISK", "temperature": 3200}),
+        ("lighting_inspect", {"include_options": True, "limit": 5, "offset": 1}),
+        (
+            "world_set",
+            {
+                "mode": "sky",
+                "color": [0, 0, 0],
+                "strength": 1,
+                "filepath": "/tmp/a.hdr",
+                "rotation": 1,
+                "sky_type": "PREETHAM",
+                "sun_elevation": 1,
+                "sun_rotation": 1,
+                "sun_intensity": 1,
+                "sun_disc": True,
+                "turbidity": 2,
+                "camera_background": [0, 0, 0],
+                "clear_camera_background": True,
+                "on_conflict": "replace",
+            },
+        ),
+        ("color_management_set", {"view_transform": "Standard", "look": "None", "exposure": 1, "gamma": 1}),
         ("timeline_set", {"frame_current": 1, "frame_start": 1, "frame_end": 120}),
         ("keyframe_add", {"name": "Cube", "property": "location", "frame": 1, "value": [0, 0, 0]}),
-        ("keyframe_list", {"name": "Cube", "property": "location"}),
+        ("keyframe_list", {"name": "Cube", "property": "location", "limit": 5, "offset": 5}),
         ("keyframe_remove", {"name": "Cube", "property": "location", "frame": 1}),
         ("collection_create", {"name": "Props", "parent": "Scene"}),
         ("collection_rename", {"name": "Props", "new_name": "Assets"}),
         ("collection_add_object", {"collection": "Props", "object": "Cube"}),
         ("collection_remove_object", {"collection": "Props", "object": "Cube"}),
         ("material_create", {"name": "M", "color": [1, 0, 0]}),
+        ("material_slots", {"object": "Cube", "limit": 2, "offset": 1}),
+        ("material_slot_append", {"object": "Cube", "material": "M", "link": "OBJECT", "shared_data": "update_all"}),
+        ("material_slot_replace", {"object": "Cube", "index": 0, "material": "M", "link": "DATA"}),
+        ("material_slot_remove", {"object": "Cube", "index": 1, "remap_to": 0}),
+        (
+            "material_assign_faces",
+            {"object": "Cube", "slot": 0, "face_indices": [0, 1], "match": "any", "min_weight": 0.5},
+        ),
         ("material_assign", {"object": "Cube", "material": "M"}),
         ("material_set_color", {"name": "M", "color": [1, 0, 0]}),
         ("material_set_texture", {"name": "M", "filepath": "/tmp/t.png"}),
+        (
+            "mesh_inspect",
+            {"name": "Cube", "source": "evaluated", "check_duplicates": True, "include_regions": True},
+        ),
         ("render_still", {"output_path": "/tmp/r.png", "resolution_x": 64, "resolution_y": 64, "engine": "CYCLES"}),
         ("render_animation", {"output_path": "/tmp/r_", "frame_start": 1, "frame_end": 2}),
         ("export_gltf", {"filepath": "/tmp/x.glb"}),
@@ -86,6 +122,13 @@ class TestServerAddonContract:
             commands.update(re.findall(r'bridge(?:_result)?\(\s*ctx,\s*"([a-z_.]+)"', source))
             commands.update(re.findall(r'send_command\("([a-z_.]+)"', source))
         assert commands == set(runtime.handler.commands)
+
+
+def test_capability_registry_covers_every_bridge_command(runtime):
+    from blender_mcp_server.capabilities import GROUPS
+
+    registered = {command for group in GROUPS.values() for commands in group.tools.values() for command in commands}
+    assert registered == set(runtime.handler.commands)
 
 
 class TestVersionConsistency:

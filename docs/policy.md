@@ -10,7 +10,7 @@ Set `BLENDER_MCP_POLICY_FILE` to the same JSON configuration for the MCP process
 {
   "transports": ["bridge", "headless"],
   "allow_python": false,
-  "allowed_commands": ["scene.get_info", "project.get_info", "project.save", "render.still", "export.gltf"],
+  "allowed_commands": ["scene.get_info", "project.get_info", "project.save", "render.still", "view.capture", "export.gltf"],
   "output_roots": ["/home/me/blender-work"],
   "queue_capacity": 16,
   "queue_timeout": 10,
@@ -23,7 +23,7 @@ Without a file, the bridge keeps its add-on preferences and existing Python work
 
 File checks resolve symlinks before the operation. `//` resolves against the active .blend folder, and bare relative paths use the Blender process's working directory. Use absolute paths when the two processes have different working directories. The legacy bridge uses a temporary folder for `//` render and export paths in an unsaved session. With a restricted policy, supply an authorized absolute path until you save a project. Restricted renders disable compositing, since File Output nodes can write additional files. Checked render and export files are published from a temporary staging directory.
 
-The default bridge limits are 16 queued commands, 10 seconds waiting to start, 60 seconds for an interactive command, and one hour for a render, export, or synchronous script response. The shared policy also accepts `max_script_seconds` (3600), `max_jobs` (8), `max_render_pixels` (33554432), and `max_render_frames` (2500). The bridge enforces its shorter synchronous script cap of 300 seconds. Render limits apply to each frame and the total requested frame range. The policy reports limits through `blender_status`.
+The default bridge limits are 16 queued commands, 10 seconds waiting to start, 60 seconds for an interactive command, and one hour for a render, capture, export, or synchronous script response. The shared policy also accepts `max_script_seconds` (3600), `max_jobs` (8), `max_render_pixels` (33554432), and `max_render_frames` (2500). The bridge enforces its shorter synchronous script cap of 300 seconds. Render limits apply to each frame and the total requested frame range. The policy reports limits through `blender_status`.
 
 ## Headless migration and trusted Python
 
@@ -50,4 +50,4 @@ With MCP SDK 1.20 or later, clients receive `isError: true` plus `structuredCont
 }
 ```
 
-Other codes include `invalid_arguments`, `not_found`, `unsupported`, `permission_denied`, `policy_mismatch`, `busy`, `session_changed`, `execution_timeout`, `response_timeout`, `disconnected`, `response_too_large`, and `command_failed`. `retryable` refers to whether the command could be attempted after resolving the reported condition. Existing tools keep their JSON text success payloads. New project, batch and modifier tools return structured `result` payloads. `blender_status` returns diagnostics directly. TCP protocol 2 keeps the original `error` string and adds `error_details`. Legacy add-ons produce less specific errors, and shared policy requires a protocol 2 add-on.
+Other codes include `invalid_arguments`, `not_found`, `unsupported`, `permission_denied`, `policy_mismatch`, `busy`, `session_changed`, `execution_timeout`, `response_timeout`, `disconnected`, `response_too_large`, `budget_exceeded`, `conflict`, `tool_not_enabled`, `discovery_required`, and `command_failed`. `retryable` refers to whether the command could be attempted after resolving the reported condition. Existing tools keep their JSON text success payloads. New project, batch and modifier tools return structured `result` payloads. `blender_status` returns diagnostics directly. TCP protocol 2 keeps the original `error` string and adds `error_details`. Legacy add-ons produce less specific errors, and shared policy requires a protocol 2 add-on.

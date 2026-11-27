@@ -2,10 +2,20 @@
 
 import json
 import logging
+from typing import Annotated
 
 from mcp.server.fastmcp import Context
+from pydantic import Field
 
-from blender_mcp_server.app import HEADLESS_JOB_MANAGER, Transport, bridge, get_connection, headless_executor, mcp
+from blender_mcp_server.app import (
+    HEADLESS_JOB_MANAGER,
+    Transport,
+    bridge,
+    get_connection,
+    headless_executor,
+    mcp,
+    page_limit,
+)
 from blender_mcp_server.headless import validate_source
 
 logger = logging.getLogger(__name__)
@@ -134,7 +144,11 @@ async def job_cancel(ctx: Context, job_id: str) -> str:
     name="blender_job_list",
     description="List known async Blender jobs with their IDs, statuses, and creation timestamps.",
 )
-async def job_list(ctx: Context) -> str:
+async def job_list(
+    ctx: Context,
+    limit: Annotated[int | None, Field(ge=1)] = None,
+    offset: Annotated[int | None, Field(ge=0)] = None,
+) -> str:
     connection = get_connection(ctx)
     connection.policy.require_command("job.list")
     headless = "headless" in connection.policy.transports
@@ -147,4 +161,15 @@ async def job_list(ctx: Context) -> str:
             if not headless:
                 raise
             logger.info("Bridge job list unavailable: %s", exc)
-    return json.dumps({"jobs": jobs}, indent=2)
+    limit = page_limit(limit)
+    if limit is None and offset is None:
+        return json.dumps({"jobs": jobs}, indent=2)
+    # Newest first, so the first page holds the jobs a client is most likely polling.
+    jobs = sorted(jobs, key=lambda job: (-(job.get("created_at") or 0), job["job_id"]))
+    start = offset or 0
+    page = jobs[start:] if limit is None else jobs[start : start + limit]
+    end = start + len(page)
+    return json.dumps(
+        {"jobs": page, "total": len(jobs), "offset": start, "next_offset": end if end < len(jobs) else None},
+        indent=2,
+    )

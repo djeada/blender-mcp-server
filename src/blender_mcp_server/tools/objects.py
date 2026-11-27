@@ -4,7 +4,7 @@ from typing import Literal
 
 from mcp.server.fastmcp import Context
 
-from blender_mcp_server.app import bridge, bridge_result, mcp
+from blender_mcp_server.app import bridge, bridge_result, mcp, page_limit
 
 
 @mcp.tool(
@@ -17,15 +17,34 @@ async def object_get_transform(ctx: Context, name: str) -> str:
 
 @mcp.tool(
     name="blender_object_get_hierarchy",
-    description="Get the parent/child hierarchy of objects. If name is provided, returns the subtree for that object. Otherwise returns the full scene hierarchy.",
+    description=(
+        "Get the parent/child hierarchy of objects: the subtree of 'name', or the whole scene. Limit it with "
+        "max_nodes and max_depth; offset pages the top level. Request a node with children_omitted by name for more."
+    ),
 )
-async def object_get_hierarchy(ctx: Context, name: str | None = None) -> str:
-    return await bridge(ctx, "object.get_hierarchy", name=name or None)
+async def object_get_hierarchy(
+    ctx: Context,
+    name: str | None = None,
+    max_nodes: int | None = None,
+    max_depth: int | None = None,
+    offset: int | None = None,
+) -> str:
+    return await bridge(
+        ctx,
+        "object.get_hierarchy",
+        name=name or None,
+        max_nodes=page_limit(max_nodes),
+        max_depth=max_depth,
+        offset=offset,
+    )
 
 
 @mcp.tool(
     name="blender_object_create",
-    description="Create a new mesh object in Blender. Supported types: cube, sphere, cylinder, plane, cone, torus.",
+    description=(
+        "Create a new mesh object in Blender. Supported types: cube, sphere, cylinder, plane, cone, torus. "
+        "Meshes only: lights and cameras are created by other actions."
+    ),
 )
 async def object_create(
     ctx: Context,

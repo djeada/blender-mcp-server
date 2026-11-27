@@ -97,7 +97,8 @@ Keep core tools general-purpose: scene inspection, primitive operations, materia
 rendering, exports, script execution, and jobs. Put scene generators, asset recipes
 (such as trees), scattering, and specialized physics workflows in `examples/`.
 These scripts use the existing Python execution tools and should not require new
-bridge commands, validators, or MCP registrations.
+bridge commands, validators, or MCP registrations. A broadly useful, reviewed script can join the
+[recipe catalog](docs/recipes.md#add-a-recipe).
 
 1. Add a handler function to the appropriate feature module in `addon/`, such as
    `camera.py`, `animation.py`, or `objects.py`.
@@ -106,10 +107,12 @@ bridge commands, validators, or MCP registrations.
    worker-thread eligibility. Only job queries/cancellation may run off the main thread.
 3. Add the MCP function with `@mcp.tool(...)` to the corresponding module in
    `src/blender_mcp_server/tools/`, then export it from `server.py`.
-4. Add tests under `tests/addon/` and `tests/server/`. Extend
+4. Add the tool to one capability group in `src/blender_mcp_server/capabilities.py` with the commands it
+   sends. A new tool in `core` grows every compact client's context, so avoid it.
+5. Add tests under `tests/addon/` and `tests/server/`. Extend
    `TestServerAddonContract.CALLS` in `tests/addon/test_contract.py` so the tool's
    parameters are checked against the add-on validator.
-5. Document the tool in `README.md` under the appropriate namespace.
+6. Document the tool in `README.md` under the appropriate namespace.
 
 Keep runtime state in `BridgeRuntime` and its settings, executor, and job manager.
 Feature handlers should not import the entrypoint, transport, or UI. Tests load a

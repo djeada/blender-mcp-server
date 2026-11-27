@@ -6,6 +6,7 @@ from typing import TYPE_CHECKING
 
 import bpy
 
+from .paging import paginate
 from .policy import resolve_path
 from .protocol import MissingResourceError, UnsupportedError
 
@@ -14,16 +15,9 @@ if TYPE_CHECKING:
 
 
 def list_materials(params: dict) -> dict:
-    materials = []
-    for mat in bpy.data.materials:
-        materials.append(
-            {
-                "name": mat.name,
-                "use_nodes": mat.use_nodes,
-                "user_count": mat.users,
-            }
-        )
-    return {"materials": materials}
+    page, metadata = paginate(list(bpy.data.materials), params)
+    materials = [{"name": mat.name, "use_nodes": mat.use_nodes, "user_count": mat.users} for mat in page]
+    return {"materials": materials, **metadata}
 
 
 def create(params: dict) -> dict:

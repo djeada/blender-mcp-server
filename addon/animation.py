@@ -4,6 +4,7 @@ import math
 
 import bpy
 
+from .paging import paginate
 from .protocol import MissingResourceError
 
 KEYFRAME_DATA_PATHS = {
@@ -158,7 +159,8 @@ def keyframe_list(params: dict) -> dict:
         for key in fc.keyframe_points:
             keys.append({"channel": getattr(fc, "array_index", 0), "frame": key.co[0], "value": key.co[1]})
     keys.sort(key=lambda k: (k["channel"], k["frame"]))
-    return {"name": obj.name, "property": property_name, "keys": keys, "keyframe_count": len(keys)}
+    page, metadata = paginate(keys, params)
+    return {"name": obj.name, "property": property_name, "keys": page, "keyframe_count": len(keys), **metadata}
 
 
 def keyframe_remove(params: dict) -> dict:

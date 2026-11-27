@@ -2,7 +2,7 @@
 
 from mcp.server.fastmcp import Context
 
-from blender_mcp_server.app import bridge, mcp
+from blender_mcp_server.app import bridge, mcp, page_limit
 
 
 @mcp.tool(
@@ -65,8 +65,10 @@ async def keyframe_add(
         "object has no animation data."
     ),
 )
-async def keyframe_list(ctx: Context, name: str, property: str | None = None) -> str:
-    return await bridge(ctx, "keyframe.list", name=name, property=property)
+async def keyframe_list(
+    ctx: Context, name: str, property: str | None = None, limit: int | None = None, offset: int | None = None
+) -> str:
+    return await bridge(ctx, "keyframe.list", name=name, property=property, limit=page_limit(limit), offset=offset)
 
 
 @mcp.tool(

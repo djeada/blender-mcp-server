@@ -1,5 +1,17 @@
 # Tool Reference
 
+The server advertises all of these by default. [Tool profiles](profiles.md) explains how to advertise fewer and discover the rest on demand.
+
+Object, material, collection, keyframe and job listings accept `limit` and `offset`, and then report `total` and `next_offset`. Without them they return everything, except in [compact output](profiles.md#compact-output).
+
+### Recipes
+
+`blender_recipe_search`, `blender_recipe_get` and `blender_recipe_run` run reviewed scripts by ID. See [Recipe catalog](recipes.md).
+
+### Modeling Knowledge
+
+`blender_workflow`, `blender_guide_search` and `blender_guide_get` give staged plans and short technique guides offline. See [Modeling knowledge](knowledge.md).
+
 ### Scene Inspection
 
 | Tool | Description |
@@ -7,7 +19,38 @@
 | `blender_scene_get_info` | Scene metadata — name, frame range, render engine, resolution, object count |
 | `blender_scene_list_objects` | List objects with stable name sorting, optional filters (`type`, `name` substring, `collection`, `visibility`) and pagination (`limit`, `offset`); returns total matches |
 | `blender_object_get_transform` | Get position, rotation, and scale of an object by name |
-| `blender_object_get_hierarchy` | Parent/child hierarchy tree (full scene or subtree) |
+| `blender_object_get_hierarchy` | Parent/child hierarchy tree (full scene or subtree), optionally limited by `max_nodes` and `max_depth`, with `offset` paging the top level |
+
+### Mesh Diagnostics
+
+`blender_mesh_inspect` checks one mesh object by `name` without changing the scene, selection, mode or geometry. It works through the live bridge and in ordered batches (as `mesh.inspect`).
+
+| Parameter | Default | Meaning |
+|---|---|---|
+| `source` | `raw` | Mesh described by bounds, vertex groups, components, material face counts, findings and element IDs: `raw` (the object's mesh data) or `evaluated` (after modifiers and shape keys) |
+| `check_duplicates` | `false` | Also look for vertices within `tolerance` of each other |
+| `include_regions` | `false` | Add local bounds for each vertex group and each used material index |
+| `tolerance` | `1e-5` | Distance in local units (0–1,000) for duplicate vertices and zero-area faces |
+| `max_ids` | `10` | Sample element IDs per finding, and the number of components listed (0–100) |
+| `element_budget` | `500000` | Largest mesh to analyze, counted as vertices + edges + face corners (up to 2,000,000) |
+
+`counts.raw` and `counts.evaluated` are always reported. `evaluated` uses **viewport** settings, so a modifier hidden in the viewport is left out and Subdivision uses its viewport level, not its render level. Blender does not evaluate objects that are disabled in viewports or excluded from the view layer. For those, `counts.evaluated` is `null`, `world_transform_current` is `false` (world bounds may be out of date), and `source="evaluated"` fails. Element IDs from an evaluated mesh do not index the raw mesh.
+
+Coordinates are Blender's right-handed, Z-up system. `bounds.local` is in object space, before the object's transform. `bounds.world` is the axis-aligned box around the transformed vertices. Both use Blender units, as `[x, y, z]` rounded to six decimals. Component and region bounds are local. `tolerance` ignores object scale.
+
+| Check | Severity | Reports |
+|---|---|---|
+| `non_finite_vertices` | error | NaN or infinite coordinates (left out of bounds) |
+| `non_manifold_edges` | error | Edges with more than two faces |
+| `zero_area_faces` | error | Faces whose width (twice the area over the longest side) is within `tolerance` |
+| `inconsistent_winding` | error | Two adjacent faces whose normals disagree |
+| `loose_vertices`, `loose_edges` | warning | Geometry that is not part of an edge or a face |
+| `duplicate_vertices` | warning | Opt-in. Vertices within `tolerance` of an earlier one; chains are not merged transitively |
+| `boundary_edges` | info | Edges with one face: a hole, or an intentionally open surface |
+
+`summary.status` is `errors`, `warnings` or `ok`. It only covers `checks_run`; `checks_skipped` lists the rest. Boundary edges and separate components are often intentional and do not change the status. `summary.closed_edge_manifold` means every edge has exactly two faces. Faces that meet only at a vertex, self-intersections and inward-facing normals on a consistently wound mesh are not detected.
+
+Lists of material slots, vertex groups, modifiers and regions stop at 64 entries and set `truncated`. A mesh over `element_budget` fails with `budget_exceeded`, and the error details include the element counts. Meshes in Edit Mode are rejected because their stored data is stale.
 
 ### Scene Organization
 
@@ -54,9 +97,39 @@ available through `blender_python_exec` and the script library (e.g. `examples/l
 | `blender_camera_update` | Update an existing camera by `name` with any of the camera settings above |
 | `blender_light_create` | Create a light — `light_type` (`POINT`, `SUN`, `SPOT`, `AREA`), `color` `[r, g, b]` (0–1), `energy`, `size`, `size_y` (AREA), `angle` (SUN, degrees), `spot_angle`/`spot_blend` (SPOT), `look_at` |
 | `blender_light_update` | Update an existing light by `name` with any of the light settings above |
+| `blender_lighting_inspect` | Read-only report of the scene's lights, active camera, world, render engine and color management |
+| `blender_color_management_set` | Change `view_transform`, `look`, `exposure`, `gamma` or `display_device` |
 
-Parameters that do not apply to the chosen type (e.g. `spot_angle` on a `POINT` light) return an explicit error
-instead of being silently ignored. For advanced camera rigging, see [`examples/library/camera.py`](../examples/library/camera.py).
+Both light tools also accept `shape` (`SQUARE`, `RECTANGLE`, `DISK`, `ELLIPSE`; AREA only; `size_y` needs
+`RECTANGLE` or `ELLIPSE`) and `temperature` in kelvin (1667–25000) instead of `color`.
+
+`energy` is in watts, except for `SUN` lights, where it is irradiance in W/m². `size` is a radius for `POINT` and
+`SPOT` and a width for `AREA`, in Blender units. `angle`, `spot_angle` and `rotation` are in degrees.
+`temperature` sets the light's linear color to an approximation of a black body at that temperature, scaled so the
+strongest channel is 1. It changes color, not energy. On Blender 4.5+ it also turns off the light's own
+`use_temperature` option, which would otherwise apply a second time.
+
+A request is checked against the light's final type before anything changes: a rejected create makes nothing, and a
+rejected update leaves the light as it was. Parameters that do not apply to the chosen type (e.g. `spot_angle` on
+a `POINT` light) return an explicit error instead of being silently ignored.
+
+If several objects share a light's data (linked duplicates), changing anything except the transform fails and names
+them. Pass `shared_data="update_all"` to change every user, or `"make_single_user"` to give this object its own copy
+first.
+
+#### Inspect and color management
+
+`blender_lighting_inspect` lists lights in name order (`limit`, `offset`; paged automatically in compact output).
+Each has its world position, the direction it shines (except `POINT`), energy and unit, linear color, settings for
+its type, shadow and visibility flags, its data name, and `data_shared_by` when shared. The report also has the
+active camera, a world summary (`color`, `environment`, `sky`, `custom` or `none`), engine, resolution and samples,
+and the color management settings. `include_options=true` adds the valid view transforms, looks and display devices.
+
+Valid names come from Blender's color configuration and differ between versions; the `look` list also depends on the
+view transform. `blender_color_management_set` changes only the settings you pass, in the order display, view
+transform, look, exposure (stops, −32 to 32), gamma (0–5). If any is invalid, nothing changes and the error lists
+the valid values. When Blender adjusts a setting you did not pass, such as resetting an incompatible look,
+`adjusted_by_blender` reports it. Color management affects renders and image output, not light energy. For advanced camera rigging, see [`examples/library/camera.py`](../examples/library/camera.py).
 
 Example — frame and light a product shot:
 
@@ -68,6 +141,33 @@ blender_light_create(light_type="AREA", name="KeyLight", location=[2, -2, 3],
                      size=2, size_y=3)
 ```
 
+### World and Environment
+
+`blender_world_get` describes the scene's world: its settings, whether it can be edited in place (and why not), the sky models this Blender offers, and whether the film is transparent. `blender_world_set` changes it. Only the settings you pass change, and the mode is kept unless you pass `mode`.
+
+| Mode | Settings |
+|---|---|
+| `color` | `color`: linear RGB, may exceed 1 |
+| `environment` | `filepath` to a local `.hdr`, `.exr`, `.png`, `.jpg`, `.tif` or `.webp`; `rotation` in degrees |
+| `sky` | `sun_elevation` and `sun_rotation` in degrees; `sky_type`. Physical models also take `sun_intensity` and `sun_disc`; `PREETHAM` and `HOSEK_WILKIE` take `turbidity` (1–10) |
+
+`strength` (0–10,000) multiplies the light in every mode. `camera_background` (linear RGB) shows a plain color to the camera while the environment still lights and reflects in the scene; `clear_camera_background` removes it. To make the background transparent in the output instead, enable the scene's *Film > Transparent* setting; these tools report it but do not change it.
+
+**Orientation.** For an equirectangular image at `rotation=0`, the **horizontal center of the image faces +X**, +Y is a quarter of the width from the left edge, and −X is at the left and right edges. Moving right across the image turns clockwise seen from above. A positive `rotation` turns the environment **counterclockwise** seen from above (about +Z). `sun_rotation` is Blender's compass heading and turns the **other** way: at 0 the sun is toward +Y, and at 90 toward +X. Both were checked from rendered pixels.
+
+**Sky models** differ between versions: `physical` (the default) picks the newest physical model available, such as Multiple Scattering on Blender 5 or Nishita before it. Physical skies are very bright. Reduce `strength` or lower `exposure` with `blender_color_management_set`. They are dark below the horizon, so add ground geometry if the camera looks down. EEVEE support for physical skies depends on the Blender version; compare with Cycles if a sky renders black.
+
+**Color space.** `.hdr` and `.exr` hold linear light; other formats are treated as sRGB by Blender and cannot represent a bright sun. The tools never change an image's color space, because the image may be used elsewhere.
+
+**Your work is protected.** A plain color world, such as Blender's default, or a world these tools built is edited in place. Nodes you added that do not feed the output are left alone. If the world has a custom node setup, is used by another scene, or is linked from a library, the call fails with `conflict` and changes nothing. Choose:
+
+- `on_conflict="new_world"`: give this scene a new world. The old one is kept unchanged, with a fake user so that saving does not discard it.
+- `on_conflict="replace"`: replace what feeds the world's output, **for every scene that uses it**. Linked worlds cannot be replaced.
+
+All inputs are validated, and an image is loaded and checked (at most 256 MB and 16384×8192 pixels), before anything changes. Only local files are read, under the [policy's](policy.md) path rules. Each change is one undo step.
+
+**Preview.** `blender_view_capture(..., mode="material", lighting="world")` shows a subject lit only by this world, using the scene's color management; `lighting="scene"` adds the scene's lights. Neither changes the project. The default `lighting="rig"` ignores both, so it cannot judge environment lighting.
+
 ### Materials
 
 | Tool | Description |
@@ -77,6 +177,30 @@ blender_light_create(light_type="AREA", name="KeyLight", location=[2, -2, 3],
 | `blender_material_assign` | Assign a material to an object |
 | `blender_material_set_color` | Set the Principled BSDF base color |
 | `blender_material_set_texture` | Set an image texture as base color |
+
+#### Material slots and face regions
+
+One mesh can use several materials, such as skin, eyes and armor. `blender_material_assign` still sets the mesh's first slot (or adds one). These tools manage the others. They work on mesh objects outside Edit Mode.
+
+| Tool | Does |
+|---|---|
+| `blender_material_slots` | Read-only: each slot's `index`, `material`, `link` (`DATA` or `OBJECT`) and face count; `faces_without_slot`; other objects sharing the mesh (`limit`, `offset`) |
+| `blender_material_slot_append` | Add a slot, empty or with a material |
+| `blender_material_slot_replace` | Set or empty one slot's material, optionally changing its link |
+| `blender_material_slot_remove` | Remove a slot; `remap_to` names the slot that takes its faces |
+| `blender_material_assign_faces` | Move faces to a slot, given by `slot` or by a `material` already in a slot |
+
+`blender_material_assign_faces` takes exactly one selector:
+
+- `face_indices`: raw mesh face indices (up to 100,000), such as those reported by `blender_mesh_inspect` with `source="raw"`.
+- `vertex_group`: faces whose vertices are in the group with weight above `min_weight` (default 0). `match="all"` (default) needs every vertex of a face; `match="any"` needs one.
+- `from_slot`: every face now using that slot.
+
+**Shared meshes.** Linked duplicates share a mesh, including its slots, data-linked materials and face assignments. Changing any of those fails and names the objects unless you pass `shared_data="update_all"` or `"make_single_user"`, which gives this object its own copy first. Replacing a material with `link="OBJECT"` affects only one object and needs no choice. Appending an object-linked slot still adds a slot to the shared mesh.
+
+**Removal.** If faces use the slot, `remap_to` is required, using the slot numbers from before the removal. Every other face, and every object's object-linked materials, show the same material afterwards. These tools restore that explicitly, because Blender's own slot removal can drop or misplace object-linked materials.
+
+Each change is checked completely before anything is modified and is one undo step.
 
 ### Rendering & Export
 
@@ -91,6 +215,35 @@ blender_light_create(light_type="AREA", name="KeyLight", location=[2, -2, 3],
 Render and export tools return the absolute path they wrote. A path starting with `//` is relative to the
 `.blend` file; while the file is unsaved it goes to `blender-mcp/` in the system temp directory. Missing
 folders are created.
+
+### Visual Inspection
+
+`blender_view_capture` lets the model see its work. It returns one metadata text block, then a `view: <name>` text block and a PNG image for each requested view. The client and model must accept MCP image content.
+
+| Parameter | Default | Meaning |
+|---|---|---|
+| `object` or `collection` | | The subject. Give exactly one. An object includes its children unless `include_children=false` |
+| `views` | `["three_quarter"]` | Up to six of `front`, `back`, `right`, `left`, `top`, `bottom`, `three_quarter`. `front` looks along +Y, as in Blender |
+| `mode` | `solid` | `solid` (neutral shading for shape), `material`, or `wireframe` (edges of the evaluated mesh over a shaded surface; meshes only) |
+| `lighting` | `rig` | With `mode="material"`: `rig` (fixed, comparable lights), `world` (the scene's environment and color management) or `scene` (also the scene's lights) |
+| `projection` | `orthographic` | Or `perspective` (70 mm lens) |
+| `resolution` | 512, or 384 in compact output | Square image size, 64–1024 pixels |
+| `include_images` | `true` | `false` returns framing metadata only |
+| `save_directory` | | Also write `capture_<view>.png` files there and report their paths. Existing files are replaced. With `include_images=false`, this is the fallback for text-only clients |
+| `max_bytes` | 4,000,000 | Limit on the PNG bytes returned (10,000–5,000,000). Over it, the call fails with `budget_exceeded` and returns no images |
+
+The metadata lists the engine, world bounds, each camera's direction and position, `ortho_scale` or `lens`, and any objects left out with the reason: hidden from render, disabled in viewports, without a renderable surface, or not a mesh in wireframe mode. Framing uses the bounding boxes of evaluated geometry and instances, so every subject is in the picture; a rotated view of a round shape can have extra space around it.
+
+**Your project is not changed.** The subject is linked into a temporary scene with its own camera, lights, background and render settings, and that scene and everything made for it are removed afterwards, also when rendering fails. Wireframe draws on private copies. The active camera, your lights, selection, visibility and render settings are not touched. Like any render, a capture updates Blender's *Render Result* image and runs registered render handlers. It adds no undo step. Objects are shown at the current frame. Images are renders, so in every mode modifiers use their **render** settings (Subdivision uses its render level). Framing and `blender_mesh_inspect` use viewport settings. When the two differ, `notes` says so, because geometry added only at render time can fall outside the frame.
+
+| Where Blender runs | `solid` and `wireframe` | `material` |
+|---|---|---|
+| With its window open | Workbench | EEVEE |
+| In the background, including `transport="headless"` | Cycles, CPU | Cycles, CPU |
+
+Background captures use Cycles so that they do not need a GPU. If a build lacks Cycles, they fail with `unsupported`. By default lighting is a fixed rig that follows the camera, so material views compare shape and color. To judge your own lighting, use `lighting="world"` or `"scene"`, or `blender_render_still`.
+
+Captures follow the [policy](policy.md): the `view.capture` command, the render pixel and frame limits (one frame per view), output roots for `save_directory`, and the long command deadline. They run on Blender's main thread, so the interface is busy while rendering.
 
 ### History
 
@@ -128,7 +281,7 @@ folders are created.
 
 Allowlist and parameter-shape checks run before any step starts. State-dependent checks run in order. Each result has a zero-based `index` and a `status` of `succeeded`, `failed`, or `skipped`. Earlier changes persist after a failure. Each successful mutation records an undo checkpoint after the change, just like its standalone tool, when Blender's context supports undo. A timeout after execution begins can leave completed edits in the scene. The batch stops starting new steps at its command deadline.
 
-The batch supports ordinary scene, object, modifier, material, camera, light, timeline, keyframe, and collection operations. Use standalone tools for project files, textures, renders, exports, Python, jobs, and history. The entire input is capped at 64 KiB. Results larger than 16 KiB per step are marked with `result_omitted: "size_limit"`.
+The batch supports mesh inspection and ordinary scene, object, modifier, material, camera, light, timeline, keyframe, and collection operations. Use standalone tools for project files, textures, renders, exports, Python, jobs, and history. The entire input is capped at 64 KiB. Results larger than 16 KiB per step are marked with `result_omitted: "size_limit"`.
 
 ### Modifier stack
 

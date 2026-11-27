@@ -57,4 +57,7 @@ def list_objects(params: dict) -> dict:
         }
         for obj in page
     ]
-    return {"objects": objects, "total": total, "count": len(objects), "offset": offset}
+    result = {"objects": objects, "total": total, "count": len(objects), "offset": offset}
+    if limit is not None:
+        result["next_offset"] = offset + len(objects) if offset + len(objects) < total else None
+    return result

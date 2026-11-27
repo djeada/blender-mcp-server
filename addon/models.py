@@ -81,6 +81,10 @@ class BridgeParams:
 
         if spec.get("gt") is not None and value <= spec["gt"]:
             raise ValueError(f"Parameter '{name}' must be greater than {spec['gt']}")
+        if spec.get("ge") is not None and value < spec["ge"]:
+            raise ValueError(f"Parameter '{name}' must be at least {spec['ge']}")
+        if spec.get("le") is not None and value > spec["le"]:
+            raise ValueError(f"Parameter '{name}' must be at most {spec['le']}")
         return value
 
     def model_dump(self, exclude_none: bool = False) -> dict[str, Any]:
@@ -106,6 +110,8 @@ def field(
     min_length: int | None = None,
     max_length: int | None = None,
     gt: float | int | None = None,
+    ge: float | int | None = None,
+    le: float | int | None = None,
 ) -> dict[str, Any]:
     spec = {
         "type": field_type,
@@ -114,6 +120,8 @@ def field(
         "min_length": min_length,
         "max_length": max_length,
         "gt": gt,
+        "ge": ge,
+        "le": le,
     }
     if default_factory is not None:
         spec["default_factory"] = default_factory
@@ -131,7 +139,14 @@ class SceneListObjectsParams(BridgeParams):
         "collection": field("str", allow_none=True),
         "visible": field("bool", allow_none=True),
         "limit": field("int", allow_none=True, gt=0),
-        "offset": field("int", allow_none=True),
+        "offset": field("int", allow_none=True, ge=0),
+    }
+
+
+class PageParams(BridgeParams):
+    fields = {
+        "limit": field("int", allow_none=True, gt=0),
+        "offset": field("int", allow_none=True, ge=0),
     }
 
 
@@ -140,7 +155,12 @@ class ObjectGetTransformParams(BridgeParams):
 
 
 class ObjectGetHierarchyParams(BridgeParams):
-    fields = {"name": field("str", allow_none=True)}
+    fields = {
+        "name": field("str", allow_none=True),
+        "max_nodes": field("int", allow_none=True, gt=0),
+        "max_depth": field("int", allow_none=True, ge=0),
+        "offset": field("int", allow_none=True, ge=0),
+    }
 
 
 class ObjectCreateMeshParams(BridgeParams):
@@ -284,6 +304,8 @@ class LightCreateParams(BridgeParams):
         "angle": field("float", allow_none=True, gt=0),
         "spot_angle": field("float", allow_none=True, gt=0),
         "spot_blend": field("float", allow_none=True),
+        "shape": field("str", allow_none=True),
+        "temperature": field("float", allow_none=True, gt=0),
     }
 
 
@@ -301,6 +323,26 @@ class LightUpdateParams(BridgeParams):
         "angle": field("float", allow_none=True, gt=0),
         "spot_angle": field("float", allow_none=True, gt=0),
         "spot_blend": field("float", allow_none=True),
+        "shape": field("str", allow_none=True),
+        "temperature": field("float", allow_none=True, gt=0),
+        "shared_data": field("str", "error"),
+    }
+
+
+class LightingInspectParams(BridgeParams):
+    fields = {
+        "include_options": field("bool", False),
+        **PageParams.fields,
+    }
+
+
+class ColorManagementParams(BridgeParams):
+    fields = {
+        "display_device": field("str", allow_none=True),
+        "view_transform": field("str", allow_none=True),
+        "look": field("str", allow_none=True),
+        "exposure": field("float", allow_none=True, ge=-32, le=32),
+        "gamma": field("float", allow_none=True, ge=0, le=5),
     }
 
 
@@ -326,6 +368,7 @@ class KeyframeListParams(BridgeParams):
     fields = {
         "name": field("str", required=True),
         "property": field("str", allow_none=True),
+        **PageParams.fields,
     }
 
 
@@ -421,4 +464,100 @@ class ModifierRemoveParams(BridgeParams):
     fields = {
         "name": field("str", required=True),
         "modifier_name": field("str", required=True),
+    }
+
+
+class MeshInspectParams(BridgeParams):
+    fields = {
+        "name": field("str", required=True),
+        "source": field("str", "raw"),
+        "check_duplicates": field("bool", False),
+        "include_regions": field("bool", False),
+        "tolerance": field("float", 1e-5, ge=0, le=1000),
+        "max_ids": field("int", 10, ge=0, le=100),
+        "element_budget": field("int", 500_000, ge=1, le=2_000_000),
+    }
+
+
+class ViewCaptureParams(BridgeParams):
+    fields = {
+        "object": field("str", allow_none=True),
+        "collection": field("str", allow_none=True),
+        "include_children": field("bool", True),
+        "views": field("list", default_factory=lambda: ["three_quarter"]),
+        "projection": field("str", "orthographic"),
+        "mode": field("str", "solid"),
+        "lighting": field("str", "rig"),
+        "resolution": field("int", 512, ge=64, le=1024),
+        "include_images": field("bool", True),
+        "save_directory": field("str", allow_none=True),
+        "max_bytes": field("int", 4_000_000, ge=10_000, le=5_000_000),
+    }
+
+
+class WorldSetParams(BridgeParams):
+    fields = {
+        "mode": field("str", allow_none=True),
+        "color": field("number_list", allow_none=True, min_length=3, max_length=3),
+        "strength": field("float", allow_none=True, ge=0, le=10_000),
+        "filepath": field("str", allow_none=True),
+        "rotation": field("float", allow_none=True),
+        "sky_type": field("str", allow_none=True),
+        "sun_elevation": field("float", allow_none=True),
+        "sun_rotation": field("float", allow_none=True),
+        "sun_intensity": field("float", allow_none=True),
+        "sun_disc": field("bool", allow_none=True),
+        "turbidity": field("float", allow_none=True),
+        "camera_background": field("number_list", allow_none=True, min_length=3, max_length=3),
+        "clear_camera_background": field("bool", False),
+        "on_conflict": field("str", "error"),
+    }
+
+
+_SHARED_DATA = field("str", "error")
+
+
+class MaterialSlotsListParams(BridgeParams):
+    fields = {"object": field("str", required=True), **PageParams.fields}
+
+
+class MaterialSlotAppendParams(BridgeParams):
+    fields = {
+        "object": field("str", required=True),
+        "material": field("str", allow_none=True),
+        "link": field("str", "DATA"),
+        "shared_data": _SHARED_DATA,
+    }
+
+
+class MaterialSlotReplaceParams(BridgeParams):
+    fields = {
+        "object": field("str", required=True),
+        "index": field("int", required=True, ge=0),
+        "material": field("str", allow_none=True),
+        "link": field("str", allow_none=True),
+        "shared_data": _SHARED_DATA,
+    }
+
+
+class MaterialSlotRemoveParams(BridgeParams):
+    fields = {
+        "object": field("str", required=True),
+        "index": field("int", required=True, ge=0),
+        "remap_to": field("int", allow_none=True, ge=0),
+        "shared_data": _SHARED_DATA,
+    }
+
+
+class MaterialAssignFacesParams(BridgeParams):
+    fields = {
+        "object": field("str", required=True),
+        "slot": field("int", allow_none=True, ge=0),
+        "material": field("str", allow_none=True),
+        "face_indices": field("list", allow_none=True),
+        "vertex_group": field("str", allow_none=True),
+        "from_slot": field("int", allow_none=True, ge=0),
+        "match": field("str", "all"),
+        "min_weight": field("float", 0.0, ge=0, le=1),
+        "shared_data": _SHARED_DATA,
     }

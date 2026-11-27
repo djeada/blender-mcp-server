@@ -1,0 +1,25 @@
+{
+  "note": "CI limits for what a client must hold in context, in bytes. Raising one is a deliberate change: explain why in the pull request and update the sizes in docs/profiles.md. Exact current sizes: python scripts/context_benchmark.py sizes",
+  "tools_list": {
+    "compact": {"tools": 15, "bytes": 6200},
+    "standard": {"tools": 62, "bytes": 49000},
+    "full": {"tools": 71, "bytes": 57500}
+  },
+  "responses": {
+    "capability_overview": 1900,
+    "capability_search_page": 1600,
+    "capability_describe_one": 1800,
+    "guide_index": 1500,
+    "guide_card": 800,
+    "guide_section": 2500,
+    "workflow_stage": 900,
+    "recipe_card": 1800
+  },
+  "compact_trace_server_bytes": {
+    "basic-prop": 13500,
+    "orc-blockout": 17500,
+    "pbr-material": 13000,
+    "three-point-lighting": 10000,
+    "export": 9000
+  }
+}

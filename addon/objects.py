@@ -41,6 +41,16 @@ def get_transform(params: dict) -> dict:
 
 
 def get_hierarchy(params: dict) -> dict:
+    name = params.get("name")
+    obj = None
+    if name:
+        obj = bpy.data.objects.get(name)
+        if not obj:
+            raise MissingResourceError(f"Object '{name}' not found")
+
+    if any(params.get(key) is not None for key in ("max_nodes", "max_depth", "offset")):
+        return _bounded_hierarchy(obj, params)
+
     def build_tree(obj):
         return {
             "name": obj.name,
@@ -48,16 +58,66 @@ def get_hierarchy(params: dict) -> dict:
             "children": [build_tree(c) for c in obj.children],
         }
 
-    name = params.get("name")
-    if name:
-        obj = bpy.data.objects.get(name)
-        if not obj:
-            raise MissingResourceError(f"Object '{name}' not found")
+    if obj is not None:
         subtree: dict = build_tree(obj)
         return subtree
 
     roots = [o for o in bpy.context.scene.objects if o.parent is None]
     return {"roots": [build_tree(r) for r in roots]}
+
+
+def _bounded_hierarchy(obj, params: dict) -> dict:
+    """Name-ordered tree limited by node count and depth.
+
+    `offset` pages through the top level: the roots, or the named object's children. A node
+    with `children_omitted` continues by requesting it by name.
+    """
+    budget = params.get("max_nodes")
+    max_depth = params.get("max_depth")
+    offset = params.get("offset") or 0
+    used = 0
+
+    def ordered(objects):
+        return sorted(objects, key=lambda item: item.name)
+
+    def full():
+        return budget is not None and used >= budget
+
+    def build(node, depth):
+        nonlocal used
+        used += 1
+        entry = {"name": node.name, "type": node.type, "children": []}
+        children = ordered(node.children)
+        if max_depth is None or depth < max_depth:
+            for child in children:
+                if full():
+                    break
+                entry["children"].append(build(child, depth + 1))
+        if omitted := len(children) - len(entry["children"]):
+            entry["children_omitted"] = omitted
+        return entry
+
+    top = ordered(obj.children if obj is not None else [o for o in bpy.context.scene.objects if o.parent is None])
+    if obj is not None:
+        used = 1  # the named object itself
+    built = []
+    for node in top[offset:]:
+        if full() or (obj is not None and max_depth == 0):
+            break
+        built.append(build(node, 1 if obj is not None else 0))
+    end = offset + len(built)
+    metadata = {
+        "total": len(top),
+        "count": len(built),
+        "offset": offset,
+        "next_offset": end if end < len(top) and (obj is None or max_depth != 0) else None,
+    }
+    if obj is None:
+        return {"roots": built, **metadata}
+    result = {"name": obj.name, "type": obj.type, "children": built, **metadata}
+    if omitted := len(top) - len(built):
+        result["children_omitted"] = omitted
+    return result
 
 
 def create_mesh(params: dict) -> dict:
