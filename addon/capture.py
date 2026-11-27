@@ -26,6 +26,7 @@ MIN_RESOLUTION, MAX_RESOLUTION = 64, 1024
 MAX_VIEWS = 6
 MAX_MEMBERS = 5_000
 MAX_LISTED_EXCLUSIONS = 20
+MAX_PREVIEW_LIGHTS = 256
 MARGIN = 1.12
 PERSPECTIVE_LENS = 70.0
 SENSOR_WIDTH = 36.0
@@ -44,6 +45,8 @@ VIEWS: dict[str, tuple[tuple[float, float, float], tuple[float, float, float]]] 
 }
 PROJECTIONS = ("orthographic", "perspective")
 MODES = ("solid", "material", "wireframe")
+# 'rig' lights views identically; the others preview the project's own environment and lights.
+LIGHTING = ("rig", "world", "scene")
 RENDERABLE = frozenset(
     {"MESH", "CURVE", "SURFACE", "META", "FONT", "CURVES", "POINTCLOUD", "VOLUME", "GPENCIL", "GREASEPENCIL"}
 )
@@ -321,6 +324,29 @@ def _configure(scene, view_layer, temp: _Temporary, engine: str, mode: str, reso
             view_layer.material_override = _material(temp, "mcp-capture-clay", (0.5, 0.5, 0.5))
 
 
+def _use_project_lighting(temp: _Temporary, scene, source, lighting: str, members: list) -> list[str]:
+    """Light the temporary scene like the project: same world and color management, optionally the same lights."""
+    notes = []
+    if source.world is not None:
+        scene.world = source.world  # shared, only read
+    else:
+        world = temp.add("worlds", bpy.data.worlds.new("mcp-capture-black"))
+        world.color = (0.0, 0.0, 0.0)
+        world.use_nodes = False
+        scene.world = world
+        notes.append("The scene has no world, so there is no environment light")
+    scene.display_settings.display_device = source.display_settings.display_device
+    for name in ("view_transform", "look", "exposure", "gamma"):
+        setattr(scene.view_settings, name, getattr(source.view_settings, name))
+    if lighting == "scene":
+        lamps = [obj for obj in source.objects if obj.type == "LIGHT" and not obj.hide_render and obj not in members]
+        for lamp in lamps[:MAX_PREVIEW_LIGHTS]:
+            scene.collection.objects.link(lamp)
+        if len(lamps) > MAX_PREVIEW_LIGHTS:
+            notes.append(f"Only the first {MAX_PREVIEW_LIGHTS} of {len(lamps)} scene lights are included")
+    return notes
+
+
 def _add_lights(temp: _Temporary, scene) -> list:
     lights = []
     for name, energy in (("key", 2.5), ("fill", 1.0), ("rim", 1.5)):
@@ -358,6 +384,10 @@ def _validate(params: dict, policy: PathPolicy) -> list[str]:
         raise ValueError(f"'projection' must be one of: {', '.join(PROJECTIONS)}")
     if params["mode"] not in MODES:
         raise ValueError(f"'mode' must be one of: {', '.join(MODES)}")
+    if params["lighting"] not in LIGHTING:
+        raise ValueError(f"'lighting' must be one of: {', '.join(LIGHTING)}")
+    if params["lighting"] != "rig" and params["mode"] != "material":
+        raise ValueError("Scene and world lighting previews need mode='material'")
     limits = policy.settings.policy
     if params["resolution"] ** 2 > limits.max_render_pixels or len(views) > limits.max_render_frames:
         raise ValueError("Capture exceeds the configured render limits")
@@ -381,6 +411,8 @@ def capture(params: dict, *, policy: PathPolicy) -> dict:
     source = bpy.context.scene
     engine = _engine(mode)
 
+    lighting_choice = params["lighting"]
+    preview_notes: list[str] = []
     temp = _Temporary()
     results: list[dict] = []
     try:
@@ -403,7 +435,11 @@ def capture(params: dict, *, policy: PathPolicy) -> dict:
                 for member in members:
                     scene.collection.objects.unlink(member)
             _configure(scene, view_layer, temp, engine, mode, resolution, rendering)
-            lights = _add_lights(temp, scene) if engine != "WORKBENCH" else []
+            if lighting_choice == "rig":
+                lights = _add_lights(temp, scene) if engine != "WORKBENCH" else []
+            else:
+                lights = []
+                preview_notes = _use_project_lighting(temp, scene, source, lighting_choice, members)
             camera_data = temp.add("cameras", bpy.data.cameras.new("mcp-capture-camera"))
             camera = temp.add("objects", bpy.data.objects.new("mcp-capture-camera", camera_data))
             scene.collection.objects.link(camera)
@@ -462,6 +498,7 @@ def capture(params: dict, *, policy: PathPolicy) -> dict:
     return {
         "target": target,
         "mode": mode,
+        "lighting": lighting_choice,
         "projection": projection,
         "engine": engine if renders else None,
         "resolution": [resolution, resolution],
@@ -478,5 +515,5 @@ def capture(params: dict, *, policy: PathPolicy) -> dict:
             "truncated": len(excluded) > MAX_LISTED_EXCLUSIONS,
         },
         "views": results,
-        "notes": _notes(members, cleanup_failures),
+        "notes": preview_notes + _notes(members, cleanup_failures),
     }

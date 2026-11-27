@@ -155,3 +155,62 @@ async def light_update(
         temperature=temperature,
         shared_data=shared_data,
     )
+
+
+@mcp.tool(
+    name="blender_world_get",
+    description=(
+        "Inspect the world that provides environment light and background: its settings, whether it can be edited "
+        "safely, and the sky models this Blender supports."
+    ),
+)
+async def world_get(ctx: Context) -> dict:
+    return {"result": await bridge_result(ctx, "world.get")}
+
+
+@mcp.tool(
+    name="blender_world_set",
+    description=(
+        "Set environment light. mode='color' (linear color), 'environment' (local HDR or image filepath, rotation in "
+        "degrees about Z) or 'sky' (sun_elevation, sun_rotation). strength scales the light. camera_background shows "
+        "a different plain color to the camera while the environment still lights the scene. Only the given "
+        "settings change. A custom or shared world needs on_conflict='new_world' (keeps it) or 'replace'."
+    ),
+)
+async def world_set(
+    ctx: Context,
+    mode: Literal["color", "environment", "sky"] | None = None,
+    color: list[float] | None = None,
+    strength: Annotated[float | None, Field(ge=0, le=10_000)] = None,
+    filepath: str | None = None,
+    rotation: float | None = None,
+    sky_type: str | None = None,
+    sun_elevation: float | None = None,
+    sun_rotation: float | None = None,
+    sun_intensity: float | None = None,
+    sun_disc: bool | None = None,
+    turbidity: float | None = None,
+    camera_background: list[float] | None = None,
+    clear_camera_background: bool = False,
+    on_conflict: Literal["error", "new_world", "replace"] = "error",
+) -> dict:
+    return {
+        "result": await bridge_result(
+            ctx,
+            "world.set",
+            mode=mode,
+            color=color,
+            strength=strength,
+            filepath=filepath,
+            rotation=rotation,
+            sky_type=sky_type,
+            sun_elevation=sun_elevation,
+            sun_rotation=sun_rotation,
+            sun_intensity=sun_intensity,
+            sun_disc=sun_disc,
+            turbidity=turbidity,
+            camera_background=camera_background,
+            clear_camera_background=clear_camera_background,
+            on_conflict=on_conflict,
+        )
+    }

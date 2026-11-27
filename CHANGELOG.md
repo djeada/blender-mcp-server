@@ -12,6 +12,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   or `make_single_user`. Moving or rotating such a light works as before.
 
 ### Added
+- `blender_world_get` and `blender_world_set` control environment light: plain color, HDRI with rotation, and
+  procedural sky, with an optional camera-only background. Custom or shared worlds are never changed without an
+  explicit `on_conflict` choice. `blender_view_capture` can preview with `lighting="world"` or `"scene"`.
 - `blender_lighting_inspect` reports every light, the camera, world, render settings and color management.
   `blender_color_management_set` changes view transform, look, exposure, gamma and display device with all-or-nothing
   validation. Light tools accept area `shape` and color `temperature`, and report the effective type settings.
@@ -30,7 +33,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   material or wireframe mode, framed from evaluated bounds in a temporary scene that leaves the project unchanged.
   Also works headless.
 - Tool profiles (`--profile compact|standard|full`, `--enable-groups`, `--allow-groups`, or the matching
-  environment variables). `compact` advertises 15 tools in 5.8 KB instead of every schema (48.4 KB). The default
+  environment variables). `compact` advertises 15 tools in 5.8 KB instead of every schema (50.9 KB). The default
   stays `full`.
 - Compact output (`--output compact`, on by default in the compact profile) pages listings, keeps log tails and
   turns oversized responses into previews that `blender_output_read` can finish without rerunning anything. Budgets

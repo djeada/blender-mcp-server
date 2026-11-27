@@ -40,6 +40,7 @@ BATCH_COMMANDS = frozenset(
         "camera.update",
         "lighting.inspect",
         "render.set_color_management",
+        "world.get",
         "light.create",
         "light.update",
         "timeline.get",

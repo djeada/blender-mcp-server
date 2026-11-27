@@ -26,6 +26,7 @@ from . import (
     project,
     rendering,
     scene,
+    world,
 )
 from .execution import ScriptExecutor
 from .jobs import JobManager
@@ -87,6 +88,8 @@ class CommandHandler:
             "camera.update": Command(camera.update, models.CameraUpdateParams, mutates=True),
             "lighting.inspect": Command(lighting_report.inspect, models.LightingInspectParams),
             "render.set_color_management": Command(color_management.update, models.ColorManagementParams, mutates=True),
+            "world.get": Command(world.get),
+            "world.set": Command(partial(world.update, policy=self.policy), models.WorldSetParams, mutates=True),
             "light.create": Command(lighting.create, models.LightCreateParams, mutates=True),
             "light.update": Command(lighting.update, models.LightUpdateParams, mutates=True),
             "timeline.get": Command(animation.timeline_get),

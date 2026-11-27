@@ -41,6 +41,8 @@ from blender_mcp_server.tools.lighting import (
     light_create,
     light_update,
     lighting_inspect,
+    world_get,
+    world_set,
 )
 from blender_mcp_server.tools.materials import (
     material_assign,
@@ -140,6 +142,8 @@ __all__ = [
     "camera_create",
     "camera_update",
     "lighting_inspect",
+    "world_get",
+    "world_set",
     "color_management_set",
     "light_create",
     "light_update",

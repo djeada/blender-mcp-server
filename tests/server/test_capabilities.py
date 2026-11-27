@@ -80,6 +80,8 @@ LEGACY_TOOLS = [
     "view_capture",
     "color_management_set",
     "lighting_inspect",
+    "world_get",
+    "world_set",
     "recipe_get",
     "recipe_run",
     "recipe_search",

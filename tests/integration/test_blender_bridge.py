@@ -885,6 +885,158 @@ for name in __result__:
     call("python_exec", code="for n in args['names']: bpy.data.objects[n].hide_render = False", args={"names": hidden})
 
 
+# A generated test environment (no external assets): the equirectangular width is split into red, green,
+# blue and yellow quarters, so the color seen in a direction identifies the part of the image facing it.
+_MAKE_QUADRANT_ENVIRONMENT = """
+image = bpy.data.images.new('ITQuadrants', 64, 32, alpha=True, float_buffer=True)
+colors = [(1, 0, 0, 1), (0, 1, 0, 1), (0, 0, 1, 1), (1, 1, 0, 1)]
+image.pixels = [c for y in range(32) for x in range(64) for c in colors[x * 4 // 64]]
+image.filepath_raw = args['path']
+image.file_format = 'OPEN_EXR'
+image.save()
+bpy.data.images.remove(image)
+"""
+
+_SAMPLE_WORLD = """
+from mathutils import Vector
+scene = bpy.context.scene
+camera = scene.camera
+samples = {}
+for label, direction in args['directions'].items():
+    camera.rotation_euler = Vector(direction).to_track_quat('-Z', 'Y').to_euler()
+    scene.render.resolution_x = scene.render.resolution_y = 8
+    scene.render.filepath = args['path']
+    bpy.ops.render.render(write_still=True)
+    image = bpy.data.images.load(args['path'], check_existing=False)
+    pixels = list(image.pixels)
+    bpy.data.images.remove(image)
+    samples[label] = pixels[(4 * 8 + 4) * 4:(4 * 8 + 4) * 4 + 3]
+__result__ = samples
+"""
+
+_WORLD_SCENE = """
+original = bpy.context.scene
+scene = bpy.data.scenes.new('ITWorld')
+camera = bpy.data.objects.new('ITWorldCam', bpy.data.cameras.new('ITWorldCam'))
+camera.data.lens = 120
+scene.collection.objects.link(camera)
+scene.camera = camera
+scene.render.engine = 'CYCLES'
+scene.cycles.samples = 4
+scene.cycles.use_denoising = False
+scene.view_settings.view_transform = 'Standard'
+"""
+
+
+def _color_name(rgb):
+    table = {"red": (1, 0, 0), "green": (0, 1, 0), "blue": (0, 0, 1), "yellow": (1, 1, 0)}
+    return min(table, key=lambda name: sum((a - b) ** 2 for a, b in zip(table[name], rgb, strict=True)))
+
+
+def test_world_orientation_sky_and_preview_renders(call, bridge):
+    if not _python(call, _USE_FAST_CYCLES):
+        pytest.skip("Cycles is not available in this Blender build")
+    environment = bridge["tmp"] / "quadrants.exr"
+    assert call("python_exec", code=_MAKE_QUADRANT_ENVIRONMENT, args={"path": str(environment)})["error"] is None
+    call("object_create", mesh_type="sphere", name="ITWorldBall", location=[300, 0, 0])
+
+    # Plain color and strength on the scene's existing world.
+    color = call("world_set", mode="color", color=[0.4, 0.4, 0.4], strength=1.5, on_conflict="new_world")
+    assert color["settings"] == {"mode": "color", "color": [0.4, 0.4, 0.4], "strength": 1.5}
+    ball = {"object": "ITWorldBall", "mode": "material", "lighting": "world", "resolution": 64, "views": ["front"]}
+
+    def preview_center():
+        loop = asyncio.new_event_loop()
+        connection = BlenderConnection(port=bridge["port"])
+        context = MagicMock()
+        context.request_context.lifespan_context = connection
+        try:
+            blocks = loop.run_until_complete(server.view_capture(context, **ball))
+        finally:
+            loop.run_until_complete(connection.disconnect())
+            loop.close()
+        path = bridge["tmp"] / "ball.png"
+        path.write_bytes(base64.b64decode(blocks[-1].data))
+        return _python(
+            call,
+            f"""
+image = bpy.data.images.load({str(path)!r}, check_existing=False)
+pixels = list(image.pixels)
+bpy.data.images.remove(image)
+__result__ = pixels[(32 * 64 + 32) * 4:(32 * 64 + 32) * 4 + 3]
+""",
+        )
+
+    neutral = preview_center()
+    assert 0.1 < neutral[0] < 0.95 and max(neutral) - min(neutral) < 0.02  # neutral grey environment light
+
+    # A missing image must not change anything.
+    before = call("world_get")["settings"]
+    with pytest.raises(protocol.BridgeError, match="not found"):
+        call("world_set", mode="environment", filepath=str(bridge["tmp"] / "missing.hdr"))
+    assert call("world_get")["settings"] == before
+
+    environment_result = call("world_set", mode="environment", filepath=str(environment), strength=1)
+    assert environment_result["settings"]["image"]["size"] == [64, 32]
+    _python(call, _WORLD_SCENE + "scene.world = original.world\nbpy.app.driver_namespace['it_scene'] = original.name")
+    # Render the shared world from a scene of its own, so other tests' objects stay out of the picture.
+    diagonals = {"+X+Y": (1, 1, 0), "-X+Y": (-1, 1, 0), "-X-Y": (-1, -1, 0), "+X-Y": (1, -1, 0)}
+
+    def seen():
+        switch = "scene = bpy.data.scenes['ITWorld']\nscene.world = bpy.data.scenes[bpy.app.driver_namespace['it_scene']].world\n"
+        render = _SAMPLE_WORLD.replace("scene = bpy.context.scene", switch).replace(
+            "bpy.ops.render.render(write_still=True)", "bpy.ops.render.render(write_still=True, scene=scene.name)"
+        )
+        result = call(
+            "python_exec", code=render, args={"directions": diagonals, "path": str(bridge["tmp"] / "world.png")}
+        )
+        assert result["error"] is None, result
+        return {label: _color_name(rgb) for label, rgb in result["result"].items()}
+
+    # Another scene now uses this world, so changing it needs an explicit choice.
+    with pytest.raises(protocol.BridgeError, match="shared with scene"):
+        call("world_set", rotation=90)
+    call("world_set", rotation=0, on_conflict="replace")
+    # The middle of the image faces +X, and moving right across the image turns clockwise seen from above.
+    assert seen() == {"+X+Y": "green", "-X+Y": "red", "-X-Y": "yellow", "+X-Y": "blue"}
+    call("world_set", rotation=90, on_conflict="replace")
+    # Positive rotation turns the environment counterclockwise: blue moved from +X-Y to +X+Y.
+    assert seen() == {"+X+Y": "blue", "-X+Y": "green", "-X-Y": "red", "+X-Y": "yellow"}
+    _python(call, "bpy.data.scenes.remove(bpy.data.scenes['ITWorld'])")
+
+    # A custom node setup is protected, and new_world keeps it intact.
+    _python(
+        call,
+        """
+world = bpy.data.worlds.new('ITCustomWorld')
+world.use_nodes = True
+tree = world.node_tree
+noise = tree.nodes.new('ShaderNodeTexNoise')
+background = next(n for n in tree.nodes if n.type == 'BACKGROUND')
+tree.links.new(noise.outputs[0], background.inputs['Color'])
+bpy.context.scene.world = world
+""",
+    )
+    count = "__result__ = [len(bpy.data.worlds['ITCustomWorld'].node_tree.nodes), len(bpy.data.worlds['ITCustomWorld'].node_tree.links)]"
+    graph = _python(call, count)
+    with pytest.raises(protocol.BridgeError) as conflict:
+        call("world_set", mode="sky")
+    assert conflict.value.code == "conflict" and _python(call, count) == graph
+
+    sky = call("world_set", mode="sky", sun_elevation=35, sun_rotation=90, strength=0.1, on_conflict="new_world")
+    assert sky["kept_world"] == "ITCustomWorld" and _python(call, count) == graph
+    assert sky["settings"]["sun_rotation"] == pytest.approx(90) and sky["settings"]["sun_elevation"] == pytest.approx(
+        35
+    )
+    call("color_management_set", view_transform="Standard", exposure=-3)
+    outdoor = preview_center()
+    call("color_management_set", exposure=0)
+    assert 0.02 < max(outdoor) < 0.999 and outdoor[2] != pytest.approx(neutral[2])
+    for sky_type in call("world_get")["sky_types"]:
+        assert call("world_set", sky_type=sky_type)["settings"]["sky_type"] == sky_type
+    call("world_set", mode="color", color=[0.05, 0.05, 0.05], strength=1)
+
+
 @pytest.mark.asyncio
 async def test_mcp_stdio_compact_profile_discovers_and_invokes(bridge):
     async with (

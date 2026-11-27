@@ -29,8 +29,9 @@ def image_content(report: dict[str, Any]) -> list[types.TextContent | types.Imag
     description=(
         "See an object or collection: returns labelled PNG images from chosen directions, framed to fit, without "
         "changing the scene, camera or lights. Give 'object' or 'collection'. mode 'solid' shows shape, 'material' "
-        "shows materials, 'wireframe' shows topology. include_images=false returns only framing data, or file "
-        "paths when save_directory is set, for clients that cannot view images."
+        "shows materials, 'wireframe' shows topology. For material views, lighting='world' or 'scene' previews the "
+        "project's own environment and lights. include_images=false returns only framing data, or file paths when "
+        "save_directory is set, for clients that cannot view images."
     ),
     structured_output=False,
 )
@@ -40,6 +41,7 @@ async def view_capture(
     collection: str | None = None,
     views: Annotated[list[View] | None, Field(max_length=6)] = None,
     mode: Literal["solid", "material", "wireframe"] = "solid",
+    lighting: Literal["rig", "world", "scene"] = "rig",
     projection: Literal["orthographic", "perspective"] = "orthographic",
     resolution: Annotated[int | None, Field(ge=64, le=1024)] = None,
     include_children: bool = True,
@@ -55,6 +57,7 @@ async def view_capture(
         "collection": collection,
         "views": views,
         "mode": mode,
+        "lighting": lighting,
         "projection": projection,
         "resolution": resolution or (COMPACT_RESOLUTION if mcp.exposure.compact_output else DEFAULT_RESOLUTION),
         "include_children": include_children,

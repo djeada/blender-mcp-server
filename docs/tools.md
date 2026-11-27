@@ -141,6 +141,33 @@ blender_light_create(light_type="AREA", name="KeyLight", location=[2, -2, 3],
                      size=2, size_y=3)
 ```
 
+### World and Environment
+
+`blender_world_get` describes the scene's world: its settings, whether it can be edited in place (and why not), the sky models this Blender offers, and whether the film is transparent. `blender_world_set` changes it. Only the settings you pass change, and the mode is kept unless you pass `mode`.
+
+| Mode | Settings |
+|---|---|
+| `color` | `color`: linear RGB, may exceed 1 |
+| `environment` | `filepath` to a local `.hdr`, `.exr`, `.png`, `.jpg`, `.tif` or `.webp`; `rotation` in degrees |
+| `sky` | `sun_elevation` and `sun_rotation` in degrees; `sky_type`. Physical models also take `sun_intensity` and `sun_disc`; `PREETHAM` and `HOSEK_WILKIE` take `turbidity` (1–10) |
+
+`strength` (0–10,000) multiplies the light in every mode. `camera_background` (linear RGB) shows a plain color to the camera while the environment still lights and reflects in the scene; `clear_camera_background` removes it. To make the background transparent in the output instead, enable the scene's *Film > Transparent* setting; these tools report it but do not change it.
+
+**Orientation.** For an equirectangular image at `rotation=0`, the **horizontal center of the image faces +X**, +Y is a quarter of the width from the left edge, and −X is at the left and right edges. Moving right across the image turns clockwise seen from above. A positive `rotation` turns the environment **counterclockwise** seen from above (about +Z). `sun_rotation` is Blender's compass heading and turns the **other** way: at 0 the sun is toward +Y, and at 90 toward +X. Both were checked from rendered pixels.
+
+**Sky models** differ between versions: `physical` (the default) picks the newest physical model available, such as Multiple Scattering on Blender 5 or Nishita before it. Physical skies are very bright. Reduce `strength` or lower `exposure` with `blender_color_management_set`. They are dark below the horizon, so add ground geometry if the camera looks down. EEVEE support for physical skies depends on the Blender version; compare with Cycles if a sky renders black.
+
+**Color space.** `.hdr` and `.exr` hold linear light; other formats are treated as sRGB by Blender and cannot represent a bright sun. The tools never change an image's color space, because the image may be used elsewhere.
+
+**Your work is protected.** A plain color world, such as Blender's default, or a world these tools built is edited in place. Nodes you added that do not feed the output are left alone. If the world has a custom node setup, is used by another scene, or is linked from a library, the call fails with `conflict` and changes nothing. Choose:
+
+- `on_conflict="new_world"`: give this scene a new world. The old one is kept unchanged, with a fake user so that saving does not discard it.
+- `on_conflict="replace"`: replace what feeds the world's output, **for every scene that uses it**. Linked worlds cannot be replaced.
+
+All inputs are validated, and an image is loaded and checked (at most 256 MB and 16384×8192 pixels), before anything changes. Only local files are read, under the [policy's](policy.md) path rules. Each change is one undo step.
+
+**Preview.** `blender_view_capture(..., mode="material", lighting="world")` shows a subject lit only by this world, using the scene's color management; `lighting="scene"` adds the scene's lights. Neither changes the project. The default `lighting="rig"` ignores both, so it cannot judge environment lighting.
+
 ### Materials
 
 | Tool | Description |
@@ -174,6 +201,7 @@ folders are created.
 | `object` or `collection` | | The subject. Give exactly one. An object includes its children unless `include_children=false` |
 | `views` | `["three_quarter"]` | Up to six of `front`, `back`, `right`, `left`, `top`, `bottom`, `three_quarter`. `front` looks along +Y, as in Blender |
 | `mode` | `solid` | `solid` (neutral shading for shape), `material`, or `wireframe` (edges of the evaluated mesh over a shaded surface; meshes only) |
+| `lighting` | `rig` | With `mode="material"`: `rig` (fixed, comparable lights), `world` (the scene's environment and color management) or `scene` (also the scene's lights) |
 | `projection` | `orthographic` | Or `perspective` (70 mm lens) |
 | `resolution` | 512, or 384 in compact output | Square image size, 64–1024 pixels |
 | `include_images` | `true` | `false` returns framing metadata only |
@@ -189,7 +217,7 @@ The metadata lists the engine, world bounds, each camera's direction and positio
 | With its window open | Workbench | EEVEE |
 | In the background, including `transport="headless"` | Cycles, CPU | Cycles, CPU |
 
-Background captures use Cycles so that they do not need a GPU. If a build lacks Cycles, they fail with `unsupported`. Lighting is a fixed rig that follows the camera, so material views are for comparing shape and color, not for judging your scene's lighting; use `blender_render_still` for that.
+Background captures use Cycles so that they do not need a GPU. If a build lacks Cycles, they fail with `unsupported`. By default lighting is a fixed rig that follows the camera, so material views compare shape and color. To judge your own lighting, use `lighting="world"` or `"scene"`, or `blender_render_still`.
 
 Captures follow the [policy](policy.md): the `view.capture` command, the render pixel and frame limits (one frame per view), output roots for `save_directory`, and the long command deadline. They run on Blender's main thread, so the interface is busy while rendering.
 

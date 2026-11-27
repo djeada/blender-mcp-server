@@ -487,8 +487,28 @@ class ViewCaptureParams(BridgeParams):
         "views": field("list", default_factory=lambda: ["three_quarter"]),
         "projection": field("str", "orthographic"),
         "mode": field("str", "solid"),
+        "lighting": field("str", "rig"),
         "resolution": field("int", 512, ge=64, le=1024),
         "include_images": field("bool", True),
         "save_directory": field("str", allow_none=True),
         "max_bytes": field("int", 4_000_000, ge=10_000, le=5_000_000),
+    }
+
+
+class WorldSetParams(BridgeParams):
+    fields = {
+        "mode": field("str", allow_none=True),
+        "color": field("number_list", allow_none=True, min_length=3, max_length=3),
+        "strength": field("float", allow_none=True, ge=0, le=10_000),
+        "filepath": field("str", allow_none=True),
+        "rotation": field("float", allow_none=True),
+        "sky_type": field("str", allow_none=True),
+        "sun_elevation": field("float", allow_none=True),
+        "sun_rotation": field("float", allow_none=True),
+        "sun_intensity": field("float", allow_none=True),
+        "sun_disc": field("bool", allow_none=True),
+        "turbidity": field("float", allow_none=True),
+        "camera_background": field("number_list", allow_none=True, min_length=3, max_length=3),
+        "clear_camera_background": field("bool", False),
+        "on_conflict": field("str", "error"),
     }
