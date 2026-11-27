@@ -27,6 +27,11 @@ def words(text: str) -> set[str]:
     return found
 
 
+def matching_words(query: str, text: str) -> set[str]:
+    """The query's distinctive words that appear in the text."""
+    return (words(query) - _GENERIC) & words(text)
+
+
 def rank(query: str, documents: Mapping[str, Iterable[tuple[int, str]]]) -> list[tuple[str, int]]:
     """Score documents of (weight, text) fields. Each query word counts once, at its best weight."""
     terms = words(query)

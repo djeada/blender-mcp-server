@@ -13,6 +13,11 @@ from blender_mcp_server.shared import protocol
 MAX_RECIPE_RESULTS = 20
 
 
+def _version(text: str) -> tuple[int, int]:
+    major, minor = text.split(".")[:2]
+    return int(major), int(minor)
+
+
 def search_recipes(query: str, category: str | None = None) -> list[str]:
     documents = {
         recipe.id: [
@@ -29,13 +34,14 @@ def search_recipes(query: str, category: str | None = None) -> list[str]:
 @mcp.tool(
     name="blender_recipe_search",
     description=(
-        "List reviewed ready-made scripts (recipes), optionally by task words or category. Returns IDs with one-line "
-        "descriptions; use blender_recipe_get for arguments."
+        "List reviewed ready-made scripts (recipes), optionally by task words, category or Blender version. Returns "
+        "IDs with one-line descriptions; use blender_recipe_get for arguments."
     ),
 )
 async def recipe_search(
     query: str | None = None,
     category: str | None = None,
+    blender_version: Annotated[str | None, Field(pattern=r"^\d+\.\d+(\.\d+)?$")] = None,
     limit: Annotated[int, Field(ge=1, le=MAX_RECIPE_RESULTS)] = 8,
     offset: Annotated[int, Field(ge=0)] = 0,
 ) -> dict[str, Any]:
@@ -46,6 +52,8 @@ async def recipe_search(
         matches = [recipe.id for recipe in catalog().values() if category in (None, recipe.category)]
     else:
         matches = search_recipes(query, category)
+    if blender_version is not None:
+        matches = [key for key in matches if _version(get_recipe(key).blender_min) <= _version(blender_version)]
     page = matches[offset : offset + limit]
     return {
         "recipes": [

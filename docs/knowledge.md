@@ -12,6 +12,21 @@ The server ships short modeling, surfacing and rigging guides so that a model ca
 
 These tools form the `knowledge` group. `standard` and `full` advertise them. In the `compact` profile, reach them through [discovery](profiles.md#use-actions-that-are-not-advertised).
 
+`blender_guide_search` also accepts `domain`, a workflow `stage` such as `uvs`, `style` and `target`. The last three keep only guides that matching workflow stages use. Each result lists up to three `matched_sections` that mention your words, and the first page lists up to three `related_recipes` from the [recipe catalog](recipes.md). `blender_recipe_search` can filter by `blender_version`. There are no engine-specific (Unity, Unreal or Godot) guides yet, so there is no engine filter; use `target="game"`.
+
+### Small and full context
+
+Both use the same content. Only the amount retrieved differs.
+
+| | Small context (`compact` profile) | Full context |
+|---|---|---|
+| Start | `blender_workflow` through discovery: one stage, under 1 KB | `blender_workflow`, or the `blender_modeling_workflow` prompt |
+| Read | One section at a time with `blender_guide_get` | `section="all"` or `blender://guides/{id}` |
+| Act | The stage's `actions` and `recipes` | The same |
+| Move on | `blender_workflow(..., stage=next_stage)` | The same |
+
+Responses longer than the compact budget are paged like [any other response](profiles.md#compact-output).
+
 ## Resources and prompt
 
 | MCP item | Content |

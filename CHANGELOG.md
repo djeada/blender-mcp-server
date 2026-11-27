@@ -8,6 +8,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 ## [Unreleased]
 
 ### Added
+- Workflow stages name relevant recipe IDs. Guide search reports matching section IDs and related recipes and
+  filters by stage, style and target; recipe search filters by Blender version.
 - A recipe catalog (`blender_recipe_search`, `blender_recipe_get`, `blender_recipe_run`) that packages eight
   reviewed library scripts in the wheel and runs them by ID with schema-validated arguments, under the same policy as
   Python execution. `jsonschema` is now a declared dependency.

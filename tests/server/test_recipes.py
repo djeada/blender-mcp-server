@@ -91,6 +91,12 @@ async def test_search_is_bounded_and_get_is_one_card():
     send.assert_not_awaited()
 
 
+@pytest.mark.asyncio
+async def test_search_filters_by_blender_version():
+    assert (await recipe_search(blender_version="3.5"))["total"] == 0
+    assert (await recipe_search(blender_version="3.6.23"))["total"] == len(catalog())
+
+
 @pytest.mark.parametrize("bad_id", ["nope", "../create_tree", "create_tree.py", "/etc/passwd", "create-tree/../x", ""])
 @pytest.mark.asyncio
 async def test_ids_are_only_looked_up_in_the_manifest(bad_id):

@@ -7,12 +7,15 @@ from pydantic import Field
 
 from blender_mcp_server import knowledge
 from blender_mcp_server.app import mcp
-from blender_mcp_server.search import rank
+from blender_mcp_server.search import matching_words, rank
 from blender_mcp_server.shared import protocol
+from blender_mcp_server.tools.recipes import search_recipes
 
 Style = Literal["lowpoly", "stylized", "realistic"]
 Target = Literal["render", "game"]
 MAX_GUIDE_RESULTS = 10
+MAX_MATCHED_SECTIONS = 3
+MAX_RELATED_RECIPES = 3
 
 
 def _guide(guide_id: str) -> knowledge.Guide:
@@ -36,6 +39,32 @@ def _index() -> dict[str, Any]:
     return {"library_version": knowledge.workflows()["version"], "domains": domains}
 
 
+def _staged_guides(stage: str | None, style: str | None, target: str | None) -> set[str] | None:
+    """Guides that workflow stages use, after the filters. None means no filter was asked for."""
+    if stage is None and style is None and target is None:
+        return None
+    flows = knowledge.workflows()["workflows"]
+    stage_ids = sorted({item["id"] for flow in flows for item in flow["stages"]})
+    if stage is not None and stage not in stage_ids:
+        raise protocol.InvalidArgumentsError(f"Unknown stage. Choose from: {', '.join(stage_ids)}")
+    return {
+        link.split("#")[0]
+        for flow in flows
+        for item in flow["stages"]
+        if stage in (None, item["id"])
+        and (style is None or style in item.get("styles", [style]))
+        and (target is None or target in item.get("targets", [target]))
+        for link in item["guides"]
+    }
+
+
+def _matched_sections(guide: knowledge.Guide, query: str) -> list[str]:
+    """Sections that mention the query's words, so a client can fetch just those."""
+    counts = {section.id: len(matching_words(query, section.text)) for section in guide.sections.values()}
+    best = sorted((name for name, count in counts.items() if count), key=lambda name: -counts[name])
+    return best[:MAX_MATCHED_SECTIONS]
+
+
 def search_guides(query: str, domain: str | None = None) -> list[str]:
     documents = {
         guide.id: [
@@ -52,34 +81,48 @@ def search_guides(query: str, domain: str | None = None) -> list[str]:
 @mcp.tool(
     name="blender_guide_search",
     description=(
-        "Find modeling, surfacing and rigging guides. With no query, returns the index by domain. With task words "
-        "such as 'orc', 'sword blade' or 'house walls', returns the best guide IDs with one-line summaries."
+        "Find modeling, surfacing and rigging guides. With no arguments, returns the index by domain. With task words "
+        "such as 'orc', 'sword blade' or 'house walls', returns guide IDs, summaries, matching section IDs and related "
+        "recipe IDs. Filter by domain, workflow stage, style or target."
     ),
 )
 async def guide_search(
     query: str | None = None,
     domain: str | None = None,
+    stage: str | None = None,
+    style: Style | None = None,
+    target: Target | None = None,
     limit: Annotated[int, Field(ge=1, le=MAX_GUIDE_RESULTS)] = 5,
     offset: Annotated[int, Field(ge=0)] = 0,
 ) -> dict[str, Any]:
     known = sorted({guide.domain for guide in knowledge.guides().values()})
     if domain is not None and domain not in known:
         raise protocol.InvalidArgumentsError(f"Unknown domain. Choose from: {', '.join(known)}")
-    if query is None and domain is None:
+    staged = _staged_guides(stage, style, target)
+    if query is None and domain is None and staged is None:
         return _index()
-    matches = (
+    candidates = (
         search_guides(query, domain)
         if query is not None
-        else [guide.id for guide in knowledge.guides().values() if guide.domain == domain]
+        else [guide.id for guide in knowledge.guides().values() if domain in (None, guide.domain)]
     )
+    matches = [guide_id for guide_id in candidates if staged is None or guide_id in staged]
     page = matches[offset : offset + limit]
-    return {
-        "guides": [
-            {"id": guide_id, "title": _guide(guide_id).title, "summary": _guide(guide_id).summary} for guide_id in page
-        ],
+    cards = []
+    for guide_id in page:
+        guide = _guide(guide_id)
+        card: dict[str, Any] = {"id": guide.id, "title": guide.title, "summary": guide.summary}
+        if query is not None and (sections := _matched_sections(guide, query)):
+            card["matched_sections"] = sections
+        cards.append(card)
+    result: dict[str, Any] = {
+        "guides": cards,
         "total": len(matches),
         "next_offset": offset + len(page) if offset + len(page) < len(matches) else None,
     }
+    if query is not None and offset == 0 and (recipes := search_recipes(query)):
+        result["related_recipes"] = recipes[:MAX_RELATED_RECIPES]
+    return result
 
 
 @mcp.tool(

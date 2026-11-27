@@ -11,6 +11,7 @@ from blender_mcp_server import knowledge
 from blender_mcp_server.app import mcp
 from blender_mcp_server.capabilities import GROUPS, TOOL_GROUPS, Exposure
 from blender_mcp_server.connection import BlenderConnection
+from blender_mcp_server.recipes import catalog
 from blender_mcp_server.server import main  # noqa: F401  (importing registers every tool)
 from blender_mcp_server.tools.knowledge import search_guides
 
@@ -77,6 +78,7 @@ def test_workflow_links_resolve():
             for link in stage["guides"]:
                 guide, section = link.split("#")
                 assert section in knowledge.guides()[guide].sections, link
+            assert set(stage.get("recipes", [])) <= set(catalog()), (flow["id"], stage["id"])
         for style in data["styles"]:
             for target in data["targets"]:
                 assert knowledge.select_workflow(flow["title"], style, target)["stages"]
@@ -203,7 +205,7 @@ async def test_resources_and_prompt(serve):
             "blender://guides/{guide_id}/{section}",
         ]
         index = json.loads((await client.read_resource("blender://guides")).contents[0].text)
-        assert index["library_version"] == 1
+        assert index["library_version"] == knowledge.workflows()["version"] == 2
         whole = (await client.read_resource("blender://guides/rigging")).contents[0]
         assert whole.mimeType == "text/markdown" and whole.text == knowledge.guides()["rigging"].markdown
         section = (await client.read_resource("blender://guides/rigging/checks")).contents[0]
@@ -215,6 +217,59 @@ async def test_resources_and_prompt(serve):
         prompt = await client.get_prompt("blender_modeling_workflow", {"task": "a sword"})
     text = prompt.messages[0].content.text
     assert "Weapon or hand-held prop" in text and len(text) < 900
+
+
+@pytest.mark.asyncio
+async def test_search_points_to_exact_sections_and_recipes(serve):
+    async with serve("standard") as client:
+        found = await _text(client, "blender_guide_search", {"query": "voxel remesh", "limit": 2}, 1_200)
+        first = found["guides"][0]
+        assert first["id"] == "sculpting-remeshing" and "pattern" in first["matched_sections"]
+        assert len(first["matched_sections"]) <= 3
+        scatter = await _text(client, "blender_guide_search", {"query": "scatter trees"}, 2_000)
+        assert "scatter-objects" in scatter["related_recipes"] and len(scatter["related_recipes"]) <= 3
+
+
+@pytest.mark.asyncio
+async def test_search_filters_by_stage_style_and_target(serve):
+    async with serve("standard") as client:
+
+        async def ids(**arguments):
+            found = await _text(client, "blender_guide_search", {"limit": 10, **arguments})
+            return {guide["id"] for guide in found["guides"]}, found
+
+        uvs, _ = await ids(stage="uvs")
+        assert uvs == {"uv-unwrapping"}
+        lowpoly, _ = await ids(query="creature", style="lowpoly")
+        realistic, _ = await ids(query="creature", style="realistic")
+        assert "retopology" not in lowpoly and {"sculpting-remeshing", "retopology"} & realistic
+        first, found = await ids(style="stylized", limit=4)
+        assert found["total"] > 4 and found["next_offset"] == 4
+        second, _ = await ids(style="stylized", limit=4, offset=4)
+        assert not first & second
+        result = await client.call_tool("blender_guide_search", {"stage": "nope"})
+        assert result.structuredContent["error"]["code"] == "invalid_arguments"
+
+
+@pytest.mark.asyncio
+async def test_compact_orc_blockout_comes_with_recipe_ids_and_no_other_documents(serve):
+    async with serve("compact") as client:
+        await client.call_tool("blender_capability_describe", {"actions": ["blender_workflow"]})
+        result = await client.call_tool(
+            "blender_capability_invoke",
+            {"action": "blender_workflow", "arguments": {"task": "orc blockout", "stage": "blockout"}},
+        )
+    text = result.content[0].text
+    assert len(text) < 1_000 and json.loads(text)["current"]["recipes"] == ["create-mesh"]
+    for unrelated in ("anatomy-proportions", "uv-unwrapping", "rigging#", "light", "markdown"):
+        assert unrelated not in text
+
+
+def test_default_resources_and_prompts_are_small():
+    for flow in knowledge.workflows()["workflows"]:
+        from blender_mcp_server.tools.knowledge import modeling_workflow_prompt
+
+        assert len(modeling_workflow_prompt(flow["title"], target="game")) < 1_000
 
 
 def test_knowledge_group_needs_no_bridge_commands():
