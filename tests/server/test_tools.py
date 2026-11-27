@@ -116,7 +116,7 @@ class TestToolRegistration:
         assert "blender_job_list" in names
 
     def test_total_tool_count(self):
-        assert len(asyncio.run(mcp.list_tools())) == 76  # the default full profile
+        assert len(asyncio.run(mcp.list_tools())) == 79  # the default full profile
 
     @pytest.mark.parametrize(
         "name", ["blender_object_create_tree", "blender_object_scatter", "blender_material_create_emissive"]

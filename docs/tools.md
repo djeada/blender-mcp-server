@@ -141,6 +141,32 @@ blender_light_create(light_type="AREA", name="KeyLight", location=[2, -2, 3],
                      size=2, size_y=3)
 ```
 
+### Lighting rigs and framing
+
+![The five rigs on a character and a metal product: three-point, softbox, portrait, low-key and turntable](images/lighting-rigs.png)
+
+*Columns: `three_point`, `studio_softbox`, `portrait`, `low_key`, `turntable`. Reproduce with `blender -b --factory-startup --python scripts/render_lighting_examples.py -- sheet.png` (Cycles on the CPU, generated subjects, nearly black world).*
+
+`blender_lighting_rig_apply(rig=..., object=... | collection=...)` places area lights around a subject, sized from the evaluated bounds of its renderable geometry.
+
+| Rig | Lights (strength relative to key) | For |
+|---|---|---|
+| `three_point` | key 1, fill 0.35, rim 0.8 | General subjects |
+| `studio_softbox` | key 1, fill 0.6, top 0.5, all large | Products; broad, soft reflections |
+| `turntable` | four equal lights at 0.6 | Even inspection from any side |
+| `portrait` | warm key 1, fill 0.3, rim 0.6 | Faces and characters |
+| `low_key` | small side key 1, fill 0.05, rim 0.9 | Dramatic, mostly shadow |
+
+**Scale.** With R as half the diagonal of the subject's world bounding box, each light sits 3.5R to 4.5R from the center, its disk is a multiple of R across, and its power is `3 W/m² × strength × π × distance²`. A subject and rig scaled together are geometrically identical, so exposure does not change with size; the test suite renders a 2 cm and a 200 m subject and compares them. 3 W/m² suits a mid-grey surface in an otherwise dark scene under the Standard view. It is a starting point: **the world and other lights add to it**, and the result lists other lights that will. Brighten or darken with `exposure_stops`, which doubles the light per stop. Long, thin subjects get lights fitted to their length, so check them. Very small or large scenes can still reach render engine limits such as light clamping.
+
+**Orientation.** Light directions are measured from the camera (`camera`, else the scene camera; the front view if neither exists): positive angles toward the camera's right. `rotation` turns the whole rig. Elevations are relative to the horizon.
+
+**Controls.** `ratios`, `temperatures` and `colors` are keyed by role, such as `{"fill": 0.15}`; a ratio of 0 leaves that light out. `size_scale` makes shadows softer or harder. `distance_scale` moves lights while keeping the light reaching the subject. Rigs are deterministic and use no random seeds.
+
+**Isolation.** A rig's lights go into the collection `MCP Rig <name>` (the name defaults to the rig type). It never edits or deletes other lights, and never creates or switches cameras. Applying a name again fails with `conflict` unless `on_existing="replace"`, which builds the new lights before removing the old ones. `blender_lighting_rig_remove(name)` deletes only that rig's lights; anything you moved into its collection stays, along with the collection. A subject whose geometry is all at one point is rejected. Each call is one undo step.
+
+`blender_camera_frame(camera=..., object=... | collection=...)` places a camera so the subject fits. `azimuth` 0 looks from the front and 90 from the right; `elevation` tilts up. It sets `projection`, `lens` (perspective) or the orthographic scale, and clip distances, so that every bounding box corner is inside the frame with `margin` to spare, for the render's aspect ratio or the `aspect` you give. It does not change render settings and says when the aspects differ. A new name creates a camera in the `MCP Cameras` collection. The scene camera changes only with `set_active=true`. Parented, constrained or shared-data cameras are refused. Framing uses bounding boxes, so round shapes seen at an angle can have extra space.
+
 ### World and Environment
 
 `blender_world_get` describes the scene's world: its settings, whether it can be edited in place (and why not), the sky models this Blender offers, and whether the film is transparent. `blender_world_set` changes it. Only the settings you pass change, and the mode is kept unless you pass `mode`.

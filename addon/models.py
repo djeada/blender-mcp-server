@@ -618,3 +618,42 @@ class MaterialPreviewParams(BridgeParams):
         "save_directory": field("str", allow_none=True),
         "max_bytes": field("int", 4_000_000, ge=10_000, le=5_000_000),
     }
+
+
+class LightingRigApplyParams(BridgeParams):
+    fields = {
+        "rig": field("str", required=True),
+        "object": field("str", allow_none=True),
+        "collection": field("str", allow_none=True),
+        "include_children": field("bool", True),
+        "name": field("str", allow_none=True),
+        "camera": field("str", allow_none=True),
+        "rotation": field("float", 0.0, ge=-360, le=360),
+        "exposure_stops": field("float", 0.0, ge=-10, le=10),
+        "distance_scale": field("float", 1.0, ge=0.25, le=10),
+        "size_scale": field("float", 1.0, ge=0.05, le=10),
+        "ratios": field("dict", allow_none=True),
+        "temperatures": field("dict", allow_none=True),
+        "colors": field("dict", allow_none=True),
+        "on_existing": field("str", "error"),
+    }
+
+
+class LightingRigRemoveParams(BridgeParams):
+    fields = {"name": field("str", required=True)}
+
+
+class CameraFrameParams(BridgeParams):
+    fields = {
+        "camera": field("str", required=True),
+        "object": field("str", allow_none=True),
+        "collection": field("str", allow_none=True),
+        "include_children": field("bool", True),
+        "azimuth": field("float", 0.0, ge=-360, le=360),
+        "elevation": field("float", 10.0, ge=-90, le=90),
+        "projection": field("str", "PERSP"),
+        "lens": field("float", 70.0, ge=1, le=5000),
+        "margin": field("float", 1.15, ge=1, le=10),
+        "aspect": field("float", allow_none=True, ge=0.05, le=20),
+        "set_active": field("bool", False),
+    }

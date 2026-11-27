@@ -68,6 +68,38 @@ class TestServerAddonContract:
         ("material_create", {"name": "M", "color": [1, 0, 0]}),
         ("material_slots", {"object": "Cube", "limit": 2, "offset": 1}),
         (
+            "lighting_rig_apply",
+            {
+                "rig": "portrait",
+                "object": "Cube",
+                "name": "R",
+                "camera": "C",
+                "rotation": 5,
+                "exposure_stops": 1,
+                "distance_scale": 2,
+                "size_scale": 2,
+                "ratios": {"fill": 0.2},
+                "temperatures": {"key": 4000},
+                "colors": {"rim": [1, 0, 0]},
+                "on_existing": "replace",
+            },
+        ),
+        ("lighting_rig_remove", {"name": "R"}),
+        (
+            "camera_frame",
+            {
+                "camera": "C",
+                "collection": "Parts",
+                "azimuth": 10,
+                "elevation": 5,
+                "projection": "ORTHO",
+                "lens": 50,
+                "margin": 1.2,
+                "aspect": 1.5,
+                "set_active": True,
+            },
+        ),
+        (
             "material_diagnose",
             {
                 "object": "Cube",

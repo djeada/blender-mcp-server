@@ -1,8 +1,11 @@
 """MCP tools for camera."""
 
-from mcp.server.fastmcp import Context
+from typing import Annotated, Literal
 
-from blender_mcp_server.app import bridge, mcp
+from mcp.server.fastmcp import Context
+from pydantic import Field
+
+from blender_mcp_server.app import bridge, bridge_result, mcp
 
 
 @mcp.tool(
@@ -78,3 +81,44 @@ async def camera_update(
         clip_end=clip_end,
         set_active=set_active,
     )
+
+
+@mcp.tool(
+    name="blender_camera_frame",
+    description=(
+        "Move a camera (created if it does not exist) so an object or collection fits the frame with a margin. "
+        "azimuth 0 views from the front, 90 from the right; elevation tilts up. aspect defaults to the render "
+        "resolution. The subject is not changed and the active camera only changes with set_active."
+    ),
+)
+async def camera_frame(
+    ctx: Context,
+    camera: str,
+    object: str | None = None,
+    collection: str | None = None,
+    include_children: bool = True,
+    azimuth: Annotated[float, Field(ge=-360, le=360)] = 0.0,
+    elevation: Annotated[float, Field(ge=-90, le=90)] = 10.0,
+    projection: Literal["PERSP", "ORTHO"] = "PERSP",
+    lens: Annotated[float, Field(ge=1, le=5000)] = 70.0,
+    margin: Annotated[float, Field(ge=1, le=10)] = 1.15,
+    aspect: Annotated[float | None, Field(ge=0.05, le=20)] = None,
+    set_active: bool = False,
+) -> dict:
+    return {
+        "result": await bridge_result(
+            ctx,
+            "camera.frame",
+            camera=camera,
+            object=object,
+            collection=collection,
+            include_children=include_children,
+            azimuth=azimuth,
+            elevation=elevation,
+            projection=projection,
+            lens=lens,
+            margin=margin,
+            aspect=aspect,
+            set_active=set_active,
+        )
+    }

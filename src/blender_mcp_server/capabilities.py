@@ -95,9 +95,11 @@ GROUPS: dict[str, Group] = {
         },
     ),
     "lighting": Group(
-        "Inspect scene lighting, create and adjust point, sun, spot and area lights, set environment and sky "
-        "lighting, exposure and view transforms.",
+        "Lighting rigs fitted to a subject, lighting inspection, point, sun, spot and area lights, environment "
+        "and sky lighting, exposure and view transforms.",
         {
+            "blender_lighting_rig_apply": ("lighting.rig_apply",),
+            "blender_lighting_rig_remove": ("lighting.rig_remove",),
             "blender_world_get": ("world.get",),
             "blender_world_set": ("world.set",),
             "blender_lighting_inspect": ("lighting.inspect",),
@@ -119,6 +121,7 @@ GROUPS: dict[str, Group] = {
     "rendering": Group(
         "Inspection views returned as images, cameras, still and animation renders, and glTF, OBJ and FBX export.",
         {
+            "blender_camera_frame": ("camera.frame",),
             "blender_camera_create": ("camera.create",),
             "blender_camera_update": ("camera.update",),
             "blender_view_capture": ("view.capture",),
@@ -209,6 +212,9 @@ KEYWORDS: dict[str, str] = {
     "vertex group",
     "blender_light_create": "lamp illuminate illumination lighting brightness sun spot area key fill rim",
     "blender_light_update": "lamp illumination lighting brightness energy warm cool temperature kelvin softness",
+    "blender_lighting_rig_apply": "three point studio softbox turntable portrait dramatic low key setup light my "
+    "character product subject illuminate",
+    "blender_camera_frame": "fit subject center compose frame shot aim viewpoint margin aspect",
     "blender_lighting_inspect": "lights check review current setup report world exposure",
     "blender_world_get": "environment hdri sky background ambient",
     "blender_world_set": "environment hdri hdr sky sun outdoor daylight background ambient studio backdrop",

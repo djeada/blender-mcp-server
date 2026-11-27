@@ -1758,6 +1758,190 @@ tree.nodes.new('ShaderNodeTexNoise').name = 'leftover'
         assert python(_MATERIAL_SNAPSHOT) == before
 
 
+# A matte sphere of the requested radius, far from every other test object, in a scene of its own with a
+# black world, so only the rig lights it.
+_RIG_SCENE = """
+import bmesh
+name = args['name']
+scene = bpy.data.scenes.new(name)
+mesh = bpy.data.meshes.new(name)
+bm = bmesh.new()
+bmesh.ops.create_icosphere(bm, subdivisions=5, radius=args['radius'])
+for face in bm.faces:
+    face.smooth = True
+bm.to_mesh(mesh)
+bm.free()
+material = bpy.data.materials.new(name)
+material.use_nodes = True
+shader = next(n for n in material.node_tree.nodes if n.type == 'BSDF_PRINCIPLED')
+shader.inputs['Base Color'].default_value = (0.18, 0.18, 0.18, 1)
+shader.inputs['Roughness'].default_value = 1.0
+mesh.materials.append(material)
+obj = bpy.data.objects.new(name, mesh)
+scene.collection.objects.link(obj)
+obj.location = (args['radius'] * 3, 0, 0)
+"""
+
+_RENDER_SCENE = """
+scene = bpy.data.scenes[args['scene']]
+world = bpy.data.worlds.new(args['scene'])
+world.use_nodes = False
+world.color = (0, 0, 0)
+scene.world = world
+for obj in args['objects']:
+    scene.collection.objects.link(bpy.data.objects[obj])
+scene.camera = bpy.data.objects[args['camera']]
+scene.render.engine = 'CYCLES'
+scene.cycles.samples = 64
+scene.cycles.seed = 1
+scene.cycles.use_denoising = False
+scene.render.resolution_x = scene.render.resolution_y = 32
+scene.view_settings.view_transform = 'Standard'
+scene.render.filepath = args['path']
+bpy.ops.render.render(write_still=True, scene=scene.name)
+image = bpy.data.images.load(args['path'], check_existing=False)
+pixels = list(image.pixels)
+bpy.data.images.remove(image)
+__result__ = [pixels[i] for i in range(0, len(pixels), 4)]
+"""
+
+# Blender's own projection: where each bounding box corner lands in the camera frame (0-1).
+_PROJECT = """
+from bpy_extras.object_utils import world_to_camera_view
+from mathutils import Vector
+scene = bpy.context.scene
+scene.render.resolution_x, scene.render.resolution_y = args['resolution']
+bpy.context.view_layer.update()
+camera = bpy.data.objects[args['camera']]
+obj = bpy.data.objects[args['object']]
+corners = [world_to_camera_view(scene, camera, obj.matrix_world @ Vector(c)) for c in obj.bound_box]
+__result__ = [[min(c.x for c in corners), max(c.x for c in corners)],
+              [min(c.y for c in corners), max(c.y for c in corners)], min(c.z for c in corners)]
+"""
+
+_SCENE_LIGHTS_AND_CAMERAS = """
+__result__ = {
+    'active': bpy.context.scene.camera.name if bpy.context.scene.camera else None,
+    'objects': {o.name: [list(map(list, o.matrix_world)),
+                         [o.data.energy, list(o.data.color)] if o.type == 'LIGHT' else o.data.lens]
+                for o in bpy.context.scene.objects if o.type in {'LIGHT', 'CAMERA'} and not o.get('mcp_rig')
+                and not o.name.startswith('ITRigCam')},
+}
+"""
+
+
+def test_camera_framing_matches_blender_projection(call):
+    call("object_create", mesh_type="cube", name="ITFrameBox", location=[700, 0, 0])
+    call("object_scale", name="ITFrameBox", scale=[2.0, 0.5, 1.0])
+    original = _python(call, "r = bpy.context.scene.render\n__result__ = [r.resolution_x, r.resolution_y]")
+    for resolution, projection in (
+        ([1920, 1080], "PERSP"),
+        ([600, 900], "PERSP"),
+        ([800, 800], "ORTHO"),
+        ([600, 900], "ORTHO"),
+    ):
+        framed = call(
+            "camera_frame",
+            camera="ITRigCamFrame",
+            object="ITFrameBox",
+            azimuth=30,
+            elevation=25,
+            projection=projection,
+            margin=1.2,
+            aspect=resolution[0] / resolution[1],
+        )
+        assert framed["active"] is False
+        result = call(
+            "python_exec",
+            code=_PROJECT,
+            args={"camera": "ITRigCamFrame", "object": "ITFrameBox", "resolution": resolution},
+        )
+        assert result["error"] is None, result
+        (x_low, x_high), (y_low, y_high), depth = result["result"]
+        inside = (1 - 1 / 1.2) / 2
+        assert depth > 0
+        for low, high in ((x_low, x_high), (y_low, y_high)):
+            assert low >= inside - 0.01 and high <= 1 - inside + 0.01, (resolution, projection, result["result"])
+        # The subject fills the frame in at least one direction.
+        assert max(x_high - x_low, y_high - y_low) > 0.7, (resolution, projection)
+    _python(call, f"bpy.context.scene.render.resolution_x, bpy.context.scene.render.resolution_y = {original}")
+
+
+def test_lighting_rigs_keep_exposure_across_scales_and_leave_other_objects_alone(call, bridge):
+    if not _python(call, _USE_FAST_CYCLES):
+        pytest.skip("Cycles is not available in this Blender build")
+    call("light_create", name="ITRigBystander", light_type="POINT", energy=5, location=[900, 0, 0])
+    before = _python(call, _SCENE_LIGHTS_AND_CAMERAS)
+
+    renders = {}
+    for label, radius in (("small", 0.01), ("large", 100.0)):
+        name = f"ITRigSubject_{label}"
+        built = call(
+            "python_exec",
+            code=_RIG_SCENE + "bpy.context.scene.collection.objects.link(obj)",
+            args={"name": name, "radius": radius},
+        )
+        assert built["error"] is None, built
+        camera = f"ITRigCam_{label}"
+        call("camera_frame", camera=camera, object=name, azimuth=20, elevation=10, lens=85)
+        rig = call("lighting_rig_apply", rig="three_point", object=name, name=f"IT{label}", camera=camera)
+        assert rig["camera"] == camera and len(rig["lights"]) == 3
+        assert rig["subject_radius"] == pytest.approx(radius * 3**0.5, rel=0.02)
+        render = call(
+            "python_exec",
+            code=_RENDER_SCENE,
+            args={
+                "scene": name,
+                "objects": [light["name"] for light in rig["lights"]],
+                "camera": camera,
+                "path": str(bridge["tmp"] / f"rig-{label}.png"),
+            },
+        )
+        assert render["error"] is None, render
+        renders[label] = render["result"]
+    small, large = renders["small"], renders["large"]
+    lit = [value for value in small if value > 0.02]
+    assert len(lit) > 200 and 0.1 < sum(lit) / len(lit) < 0.9  # neither black nor clipped
+    # A 2 cm and a 200 m subject look the same.
+    assert sum(abs(a - b) for a, b in zip(small, large, strict=True)) / len(small) < 0.01
+
+    assert _python(call, _SCENE_LIGHTS_AND_CAMERAS) == before
+
+    with pytest.raises(protocol.BridgeError, match="already exists") as conflict:
+        call("lighting_rig_apply", rig="three_point", object="ITRigSubject_small", name="ITsmall")
+    assert conflict.value.code == "conflict"
+    replaced = call(
+        "lighting_rig_apply", rig="low_key", object="ITRigSubject_small", name="ITsmall", on_existing="replace"
+    )
+    assert len(replaced["replaced"]) == 3
+    assert sorted(light["name"] for light in replaced["lights"]) == ["ITsmall fill", "ITsmall key", "ITsmall rim"]
+    rig_lights = "__result__ = sorted(o.name for o in bpy.data.objects if o.get('mcp_rig') == 'ITsmall')"
+    assert len(_python(call, rig_lights)) == 3
+
+    # Removing a rig keeps anything the user put in its collection.
+    _python(
+        call, "o = bpy.data.objects.new('ITRigKeepsake', None)\nbpy.data.collections['MCP Rig ITsmall'].objects.link(o)"
+    )
+    removed = call("lighting_rig_remove", name="ITsmall")
+    assert len(removed["removed"]) == 3 and removed["kept_in_collection"] == ["ITRigKeepsake"]
+    assert call("lighting_rig_remove", name="ITlarge")["kept_in_collection"] == []
+    gone = "__result__ = [c.name for c in bpy.data.collections if c.name.startswith('MCP Rig IT')]"
+    assert _python(call, gone) == ["MCP Rig ITsmall"]
+
+    # A subject with no size creates nothing.
+    _python(
+        call,
+        "m = bpy.data.meshes.new('ITDot'); m.from_pydata([(0, 0, 0)], [], [])\n"
+        "bpy.context.scene.collection.objects.link(bpy.data.objects.new('ITDot', m))",
+    )
+    counts = "__result__ = [len(bpy.data.lights), len(bpy.data.collections), len(bpy.data.scenes)]"
+    existing = _python(call, counts)
+    with pytest.raises(protocol.BridgeError, match="no size|no geometry"):
+        call("lighting_rig_apply", rig="turntable", object="ITDot")
+    assert _python(call, counts) == existing
+    assert _python(call, _SCENE_LIGHTS_AND_CAMERAS) == before
+
+
 @pytest.mark.asyncio
 async def test_mcp_stdio_compact_profile_discovers_and_invokes(bridge):
     async with (

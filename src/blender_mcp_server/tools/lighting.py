@@ -214,3 +214,62 @@ async def world_set(
             on_conflict=on_conflict,
         )
     }
+
+
+RigName = Literal["three_point", "studio_softbox", "turntable", "portrait", "low_key"]
+
+
+@mcp.tool(
+    name="blender_lighting_rig_apply",
+    description=(
+        "Light a subject with a rig fitted to its size and arranged around the camera: three_point, studio_softbox, "
+        "turntable (even, for inspection), portrait or low_key. Give 'object' or 'collection'. ratios sets each "
+        "role's strength relative to the key; exposure_stops brightens or darkens the whole rig. Creates lights only "
+        "in its own collection; existing lights and cameras are untouched."
+    ),
+)
+async def lighting_rig_apply(
+    ctx: Context,
+    rig: RigName,
+    object: str | None = None,
+    collection: str | None = None,
+    include_children: bool = True,
+    name: str | None = None,
+    camera: str | None = None,
+    rotation: Annotated[float, Field(ge=-360, le=360)] = 0.0,
+    exposure_stops: Annotated[float, Field(ge=-10, le=10)] = 0.0,
+    distance_scale: Annotated[float, Field(ge=0.25, le=10)] = 1.0,
+    size_scale: Annotated[float, Field(ge=0.05, le=10)] = 1.0,
+    ratios: dict[str, float] | None = None,
+    temperatures: dict[str, float] | None = None,
+    colors: dict[str, list[float]] | None = None,
+    on_existing: Literal["error", "replace"] = "error",
+) -> dict:
+    return {
+        "result": await bridge_result(
+            ctx,
+            "lighting.rig_apply",
+            rig=rig,
+            object=object,
+            collection=collection,
+            include_children=include_children,
+            name=name,
+            camera=camera,
+            rotation=rotation,
+            exposure_stops=exposure_stops,
+            distance_scale=distance_scale,
+            size_scale=size_scale,
+            ratios=ratios,
+            temperatures=temperatures,
+            colors=colors,
+            on_existing=on_existing,
+        )
+    }
+
+
+@mcp.tool(
+    name="blender_lighting_rig_remove",
+    description="Remove a lighting rig's own lights by name. Other objects, including any moved into its collection, stay.",
+)
+async def lighting_rig_remove(ctx: Context, name: str) -> dict:
+    return {"result": await bridge_result(ctx, "lighting.rig_remove", name=name)}
