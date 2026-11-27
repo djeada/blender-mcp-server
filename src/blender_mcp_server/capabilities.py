@@ -74,8 +74,11 @@ GROUPS: dict[str, Group] = {
         },
     ),
     "materials": Group(
-        "Materials, PBR texture sets, material slots and face regions, and shader node graphs.",
+        "Materials, PBR texture sets, material slots and face regions, shader node graphs, and material "
+        "diagnostics and previews.",
         {
+            "blender_material_diagnose": ("material.diagnose",),
+            "blender_material_preview": ("material.preview",),
             "blender_shader_graph_inspect": ("shader.inspect_graph",),
             "blender_shader_graph_edit": ("shader.edit_graph",),
             "blender_material_slots": ("material.list_slots",),
@@ -191,6 +194,9 @@ KEYWORDS: dict[str, str] = {
     "blender_material_create": "shader surface color pbr",
     "blender_material_set_texture": "image map albedo basecolor pbr texturing uv",
     "blender_material_set_color": "paint tint albedo",
+    "blender_material_diagnose": "check validate missing texture color space broken budget memory resolution game "
+    "ready gltf export problems audit",
+    "blender_material_preview": "see look picture swatch sphere ball preview shader result",
     "blender_shader_graph_inspect": "node tree shader nodes links read material graph world",
     "blender_shader_graph_edit": "procedural noise color ramp bump voronoi nodes connect shader graph build material "
     "texture",

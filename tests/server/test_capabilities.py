@@ -90,6 +90,8 @@ LEGACY_TOOLS = [
     "material_set_texture_set",
     "shader_graph_inspect",
     "shader_graph_edit",
+    "material_diagnose",
+    "material_preview",
     "recipe_get",
     "recipe_run",
     "recipe_search",

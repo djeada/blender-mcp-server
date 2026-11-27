@@ -68,6 +68,19 @@ class TestServerAddonContract:
         ("material_create", {"name": "M", "color": [1, 0, 0]}),
         ("material_slots", {"object": "Cube", "limit": 2, "offset": 1}),
         (
+            "material_diagnose",
+            {
+                "object": "Cube",
+                "profile": "mobile",
+                "max_texture_size": 512,
+                "max_texture_memory_mb": 8,
+                "allow": ["unused_nodes"],
+                "limit": 4,
+                "offset": 1,
+            },
+        ),
+        ("material_preview", {"material": "M", "shape": "plane", "views": ["front"], "resolution": 64}),
+        (
             "shader_graph_inspect",
             {"material": "M", "group_path": ["G"], "nodes": ["a"], "sockets": True, "limit": 3, "offset": 1},
         ),

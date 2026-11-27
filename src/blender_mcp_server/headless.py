@@ -27,6 +27,8 @@ HEADLESS_COMMANDS = frozenset(
         "render.still",
         "render.animation",
         "view.capture",
+        "material.diagnose",
+        "material.preview",
         "export.gltf",
         "export.obj",
         "export.fbx",

@@ -594,3 +594,27 @@ class ShaderGraphEditParams(BridgeParams):
         "operations": field("list", required=True),
         "shared_data": field("str", "error"),
     }
+
+
+class MaterialDiagnoseParams(BridgeParams):
+    fields = {
+        "material": field("str", allow_none=True),
+        "object": field("str", allow_none=True),
+        "profile": field("str", "gltf"),
+        "max_texture_size": field("int", allow_none=True, ge=1, le=65_536),
+        "max_texture_memory_mb": field("int", allow_none=True, ge=1, le=1_000_000),
+        "allow": field("list", allow_none=True),
+        **PageParams.fields,
+    }
+
+
+class MaterialPreviewParams(BridgeParams):
+    fields = {
+        "material": field("str", required=True),
+        "shape": field("str", "sphere"),
+        "views": field("list", allow_none=True),
+        "resolution": field("int", 384, ge=64, le=1024),
+        "include_images": field("bool", True),
+        "save_directory": field("str", allow_none=True),
+        "max_bytes": field("int", 4_000_000, ge=10_000, le=5_000_000),
+    }

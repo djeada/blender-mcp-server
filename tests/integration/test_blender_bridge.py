@@ -1598,6 +1598,166 @@ for name in ('ITGroupA', 'ITGroupB'):
     assert call("world_get")["settings"]["strength"] == 2.5
 
 
+_MATERIAL_SNAPSHOT = """
+__result__ = {
+    'counts': [len(bpy.data.materials), len(bpy.data.images), len(bpy.data.meshes), len(bpy.data.objects),
+               len(bpy.data.scenes), len(bpy.data.node_groups)],
+    'images': sorted((i.name, i.colorspace_settings.name, i.filepath) for i in bpy.data.images
+                     if i.source != 'VIEWER'),
+    'graphs': {
+        m.name: [sorted(n.name for n in m.node_tree.nodes),
+                 sorted((l.from_node.name, l.from_socket.name, l.to_node.name, l.to_socket.name)
+                        for l in m.node_tree.links)]
+        for m in bpy.data.materials if m.name.startswith('ITDiag')
+    },
+    'selected': sorted(o.name for o in bpy.context.scene.objects if o.select_get()),
+}
+"""
+
+
+def test_material_diagnostics_find_planted_defects_without_changing_anything(call, bridge):
+    folder = bridge["tmp"] / "diagnostics"
+    folder.mkdir(exist_ok=True)
+
+    def python(code, **arguments):
+        result = call("python_exec", code=code, args=arguments)
+        assert result["error"] is None, (result["error"], result["stderr"])
+        return result["result"]
+
+    colors = {
+        "d_basecolor": (0.5, 0.4, 0.3, 1),
+        "d_orm": (1, 0.5, 0, 1),
+        "d_normal": (0.5, 0.5, 1, 1),
+        "d_leaf": (0.2, 0.6, 0.2, 0.5),
+        "d_gone": (1, 1, 1, 1),
+    }
+    python(_MAKE_TEXTURES, directory=str(folder), colors=colors)
+    path = {name: str(folder / f"{name}.png") for name in colors}
+    for name in ("ITDiagGood", "ITDiagBad", "ITDiagProcedural", "ITDiagCutout"):
+        call("material_create", name=name)
+
+    def bind(name, **arguments):
+        call("material_set_texture_set", name=name, **arguments)
+
+    bind(
+        "ITDiagGood",
+        orm=path["d_orm"],
+        maps={"base_color": path["d_basecolor"], "normal": {"path": path["d_normal"], "convention": "opengl"}},
+    )
+    # A cutout takes its alpha from the sRGB color image: alpha is linear, so this is correct.
+    bind("ITDiagCutout", maps={"base_color": path["d_leaf"]})
+    python(
+        """
+tree = bpy.data.materials['ITDiagCutout'].node_tree
+shader = next(n for n in tree.nodes if n.type == 'BSDF_PRINCIPLED')
+texture = next(n for n in tree.nodes if n.type == 'TEX_IMAGE')
+tree.links.new(texture.outputs['Alpha'], shader.inputs['Alpha'])
+"""
+    )
+    bind("ITDiagBad", maps={"roughness": path["d_gone"]})
+    os.remove(path["d_gone"])
+    python(
+        """
+tree = bpy.data.materials['ITDiagBad'].node_tree
+shader = next(n for n in tree.nodes if n.type == 'BSDF_PRINCIPLED')
+normal = tree.nodes.new('ShaderNodeTexImage')
+normal.name = 'raw normal'
+normal.image = bpy.data.images.load(args['normal'], check_existing=False)   # left as sRGB
+tree.links.new(normal.outputs['Color'], shader.inputs['Normal'])
+metal = tree.nodes.new('ShaderNodeTexImage')
+metal.name = 'metal map'
+metal.image = bpy.data.images.load(args['color'], check_existing=False)     # left as sRGB
+tree.links.new(metal.outputs['Color'], shader.inputs['Metallic'])
+empty = tree.nodes.new('ShaderNodeTexImage')
+empty.name = 'no image'
+tree.links.new(empty.outputs['Color'], shader.inputs['Base Color'])
+tree.nodes.new('ShaderNodeTexNoise').name = 'leftover'
+""",
+        normal=path["d_normal"],
+        color=path["d_basecolor"],
+    )
+    call(
+        "shader_graph_edit",
+        material="ITDiagProcedural",
+        operations=_noise_chain("Principled BSDF"),
+    )
+
+    before = python(_MATERIAL_SNAPSHOT)
+
+    def diagnose(**arguments):
+        return call("material_diagnose", **arguments)  # the fixture unwraps "result"
+
+    def checks(report):
+        return {(item["check"], item["severity"]) for item in report["findings"]}
+
+    good = diagnose(material="ITDiagGood")
+    assert good["summary"]["status"] == "ok", good["findings"]
+    assert good["materials"][0]["gltf_export"] == {"status": "supported", "reasons": []}
+    assert {b["semantic"] for b in good["materials"][0]["bindings"]} == {
+        "base_color",
+        "metallic",
+        "roughness",
+        "normal",
+        "occlusion",
+    }
+    assert good["estimated_texture_bytes"] == 3 * int(8 * 8 * 4 * 4 / 3)
+
+    cutout = diagnose(material="ITDiagCutout")
+    assert not [item for item in cutout["findings"] if item["check"] in {"color_space", "mixed_use"}], cutout
+
+    bad = diagnose(material="ITDiagBad")
+    assert {
+        ("missing_file", "error"),
+        ("normal_without_normal_map", "error"),
+        ("color_space", "error"),
+        ("no_image", "error"),
+        ("unused_nodes", "warning"),
+    } <= checks(bad)
+    assert bad["summary"]["status"] == "errors"
+    wrong_spaces = {item["subject"].split(".png")[0] for item in bad["findings"] if item["check"] == "color_space"}
+    assert wrong_spaces == {"d_basecolor", "d_normal"}  # the metallic and normal images left as sRGB
+    assert str(folder) not in json.dumps(bad)
+
+    procedural = diagnose(material="ITDiagProcedural")
+    verdict = procedural["materials"][0]["gltf_export"]
+    assert verdict["status"] == "unsupported" and any("ShaderNodeTexNoise" in reason for reason in verdict["reasons"])
+    assert diagnose(material="ITDiagProcedural", profile="render")["summary"]["errors"] == 0
+
+    budget = diagnose(material="ITDiagGood", max_texture_size=4)
+    assert ("texture_size", "error") in checks(budget)
+    excused = diagnose(material="ITDiagGood", max_texture_size=4, allow=["texture_size"])
+    assert excused["summary"]["status"] == "ok" and excused["summary"]["allowed"] == 3
+    assert python(_MATERIAL_SNAPSHOT) == before
+
+    # The export verdict matches what the exporter really does with the supported material.
+    call("object_create", mesh_type="cube", name="ITDiagCube")
+    python("bpy.data.objects['ITDiagCube'].data.uv_layers.new(name='UVMap')")
+    call("material_assign", object="ITDiagCube", material="ITDiagGood")
+    exported = python(_EXPORTED_MATERIAL, name="ITDiagGood", path=str(folder / "good.glb"))
+    assert exported["base"] and exported["normal"] and exported["occlusion"] is not None
+    assert exported["metallic_roughness"] is not None
+
+    # Previews return an image and leave no temporary data behind, also when they fail.
+    if python(_USE_FAST_CYCLES):
+        before = python(_MATERIAL_SNAPSHOT)
+        loop = asyncio.new_event_loop()
+        connection = BlenderConnection(port=bridge["port"])
+        context = MagicMock()
+        context.request_context.lifespan_context = connection
+        try:
+            for shape in ("sphere", "plane", "cube"):
+                blocks = loop.run_until_complete(
+                    server.material_preview(context, material="ITDiagGood", shape=shape, resolution=64)
+                )
+                assert _png_size(base64.b64decode(blocks[-1].data)) == (64, 64), shape
+            with pytest.raises(protocol.BridgeError, match="not found"):
+                loop.run_until_complete(server.material_preview(context, material="Nope"))
+        finally:
+            loop.run_until_complete(connection.disconnect())
+            loop.close()
+        assert python(_MATERIAL_SNAPSHOT) == before
+
+
 @pytest.mark.asyncio
 async def test_mcp_stdio_compact_profile_discovers_and_invokes(bridge):
     async with (

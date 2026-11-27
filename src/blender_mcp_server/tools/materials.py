@@ -265,3 +265,39 @@ async def shader_graph_edit(
             shared_data=shared_data,
         )
     }
+
+
+@mcp.tool(
+    name="blender_material_diagnose",
+    description=(
+        "Check materials and textures without changing them: missing files, wrong color spaces, broken shader or "
+        "normal-map chains, unused nodes, texture size and memory budgets, and what glTF can export. Give 'material' "
+        "or 'object', or neither for the scene's materials. profile: gltf, mobile or render. allow=['check' or "
+        "'check:subject'] excuses intentional exceptions."
+    ),
+)
+async def material_diagnose(
+    ctx: Context,
+    material: str | None = None,
+    object: str | None = None,
+    profile: Literal["gltf", "mobile", "render"] = "gltf",
+    max_texture_size: Annotated[int | None, Field(ge=1, le=65_536)] = None,
+    max_texture_memory_mb: Annotated[int | None, Field(ge=1, le=1_000_000)] = None,
+    allow: Annotated[list[str] | None, Field(max_length=100)] = None,
+    limit: Annotated[int | None, Field(ge=1, le=32)] = None,
+    offset: Slot | None = None,
+) -> dict:
+    return {
+        "result": await bridge_result(
+            ctx,
+            "material.diagnose",
+            material=material,
+            object=object,
+            profile=profile,
+            max_texture_size=max_texture_size,
+            max_texture_memory_mb=max_texture_memory_mb,
+            allow=allow,
+            limit=limit,
+            offset=offset,
+        )
+    }

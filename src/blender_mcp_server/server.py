@@ -16,7 +16,7 @@ from blender_mcp_server.tools.camera import (
     camera_create,
     camera_update,
 )
-from blender_mcp_server.tools.capture import view_capture
+from blender_mcp_server.tools.capture import material_preview, view_capture
 from blender_mcp_server.tools.discovery import (
     capability_describe,
     capability_invoke,
@@ -48,6 +48,7 @@ from blender_mcp_server.tools.materials import (
     material_assign,
     material_assign_faces,
     material_create,
+    material_diagnose,
     material_list,
     material_set_color,
     material_set_texture,
@@ -147,6 +148,8 @@ __all__ = [
     "material_set_color",
     "material_set_texture",
     "material_set_texture_set",
+    "material_diagnose",
+    "material_preview",
     "shader_graph_inspect",
     "shader_graph_edit",
     "material_slots",

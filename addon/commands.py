@@ -18,6 +18,8 @@ from . import (
     color_management,
     lighting,
     lighting_report,
+    material_diagnostics,
+    material_preview,
     material_slots,
     materials,
     mesh,
@@ -99,6 +101,12 @@ class CommandHandler:
             ),
             "shader.inspect_graph": Command(shader_graph.inspect, models.ShaderGraphInspectParams),
             "shader.edit_graph": Command(shader_graph.edit, models.ShaderGraphEditParams, mutates=True),
+            "material.diagnose": Command(
+                partial(material_diagnostics.diagnose, policy=self.policy), models.MaterialDiagnoseParams
+            ),
+            "material.preview": Command(
+                partial(material_preview.preview, policy=self.policy), models.MaterialPreviewParams
+            ),
             "camera.create": Command(camera.create, models.CameraCreateParams, mutates=True),
             "camera.update": Command(camera.update, models.CameraUpdateParams, mutates=True),
             "lighting.inspect": Command(lighting_report.inspect, models.LightingInspectParams),

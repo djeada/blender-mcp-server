@@ -268,6 +268,34 @@ Rejected: links between a shader and a value, links that would form a loop (Blen
 
 **Shared data.** Editing a material changes every object that uses it, as usual. A node group used more than once, or a world used by several scenes, needs `shared_data="update_all"`; groups also allow `"make_single_user"`.
 
+#### Diagnostics and preview
+
+`blender_material_diagnose` checks materials without changing anything. Give `material`, or `object` for the materials in its slots, or neither for every material used in the scene (32 per page).
+
+| Profile | Largest texture | Texture memory budget | glTF checks |
+|---|---:|---:|---|
+| `gltf` (default) | 4,096 | 256 MB | Yes |
+| `mobile` | 2,048 | 64 MB | Yes |
+| `render` | 16,384 | 4,096 MB | No |
+
+`max_texture_size` and `max_texture_memory_mb` override a profile. These are starting points, not platform requirements.
+
+| Severity | Meaning | Checks |
+|---|---|---|
+| `error` | Will look or export wrong | `missing_file`, `unreadable_image`, `no_image`, `broken_shader_chain`, `invalid_link`, `normal_without_normal_map`, `color_space` for data read as sRGB, `texture_size`, `texture_memory`, `gltf_unsupported` |
+| `warning` | Probably a problem | `color_space` for color read as linear, `mixed_use`, `unused_nodes`, `empty_normal_map`, `normal_space`, `empty_slot`, `no_material` |
+| `heuristic` | A guess from names or typical values | `name_mismatch`, `partial_metallic`, `non_power_of_two` |
+
+A channel read from an image's **alpha** is never a color-space error, because alpha is linear in any color space.
+
+**Intentional exceptions.** `allow` lists checks to excuse: `"unused_nodes"` everywhere, `"color_space:mask.png"` for one image or node, or `"texture_size:Hero"` for one material. Excused findings move to `allowed_findings` and do not affect the status.
+
+**What it does not know.** `unchecked` lists what was not judged: node groups (not traversed), surfaces other than Principled BSDF, other linked Principled inputs, image sequences and tiles, and files outside the [policy's](policy.md) approved roots, which are never opened. A status of `ok_with_unchecked_items` is not a clean bill of health. Each material's `gltf_export` verdict is `supported`, `unsupported` (a pattern known not to export, such as procedural nodes or non-UV coordinates) or `unknown`. `supported` means the graph uses only patterns known to export; verify the exported file for your target.
+
+The report lists each material's texture `bindings` (semantic, image, node, channel) and each image's color space, storage (`packed`, `external`, `generated`), size and estimated memory. Only file names are reported, not paths. `estimated_texture_bytes` is explained by `memory_assumption`: uncompressed memory with mipmaps, which real engines usually improve on with compression.
+
+`blender_material_preview(material, shape="sphere")` renders the material on a temporary `sphere`, `plane` or `cube` with UVs, under the same fixed lighting and settings as [view captures](#visual-inspection), then removes everything it made. To see it on a real asset, use `blender_view_capture(object=..., mode="material")`. Both tools also work with `transport="headless"`.
+
 #### Material slots and face regions
 
 One mesh can use several materials, such as skin, eyes and armor. `blender_material_assign` still sets the mesh's first slot (or adds one). These tools manage the others. They work on mesh objects outside Edit Mode.
