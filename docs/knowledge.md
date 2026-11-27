@@ -1,6 +1,6 @@
-# Modeling knowledge and workflows
+# Modeling, surfacing and lighting knowledge
 
-The server ships short modeling, surfacing and rigging guides so that a model can choose a technique instead of guessing. They are part of the installed package and work offline, without Blender and without calling any language model.
+The server ships short modeling, surfacing, lighting and rigging guides so that a model can choose a technique instead of guessing. They are part of the installed package and work offline, without Blender and without calling any language model.
 
 ## Get only what the task needs
 
@@ -12,7 +12,7 @@ The server ships short modeling, surfacing and rigging guides so that a model ca
 
 These tools form the `knowledge` group. `standard` and `full` advertise them. In the `compact` profile, reach them through [discovery](profiles.md#use-actions-that-are-not-advertised).
 
-`blender_guide_search` also accepts `domain`, a workflow `stage` such as `uvs`, `style` and `target`. The last three keep only guides that matching workflow stages use. Each result lists up to three `matched_sections` that mention your words, and the first page lists up to three `related_recipes` from the [recipe catalog](recipes.md). `blender_recipe_search` can filter by `blender_version`. There are no engine-specific (Unity, Unreal or Godot) guides yet, so there is no engine filter; use `target="game"`.
+`blender_guide_search` also accepts a guide `domain` (`foundations`, `modeling`, `art-direction`, `surfacing`, `lighting`, `animation` or `delivery`), a workflow `stage` such as `uvs`, `style` and `target`. The last three keep only guides that matching workflow stages use. Each result lists up to three `matched_sections` that mention your words, and the first page lists up to three `related_recipes` from the [recipe catalog](recipes.md). `blender_recipe_search` can filter by `blender_version`. There are no engine-specific (Unity, Unreal or Godot) guides yet, so there is no engine filter; use `target="game"`.
 
 ### Small and full context
 
@@ -40,7 +40,23 @@ Nothing is loaded automatically. Clients that ignore resources can use the tools
 
 ## How a workflow is chosen
 
-Selection is keyword matching with fixed rules, so the same words give the same plan. The task picks `creature`, `weapon-prop`, `building` or `hard-surface-prop`; anything else gets `general`, and `matched` is `false`. Style (`lowpoly`, `stylized`, `realistic`) and target (`render`, `game`) come from the arguments, then from words in the task, then from defaults. They decide which stages apply. For example, only a realistic creature gets the high-detail and retopology stages, high detail is marked optional, and only game targets get a delivery stage. Treat a plan as a suggestion.
+Selection is keyword matching with fixed rules, so the same words give the same plan. First a **domain** is chosen, unless you pass `domain`:
+
+1. A modeling verb (`model`, `sculpt`, `rig`, `blockout`) means `modeling`.
+2. Otherwise lighting words (`light`, `lighting`, `exposure`, `hdri`, `product shot`) mean `lighting`.
+3. Otherwise surfacing words (`texture`, `material`, `shader`, `paint`, `rusty`, `weathered`) mean `surfacing`.
+4. A bare material such as `wood` or `metal` means `surfacing` only if no modeling subject matches, so "realistic wood" is a surface and "wood cabin" is a building.
+5. Anything else is `modeling`.
+
+| Domain | Workflows (each domain has a general fallback) |
+|---|---|
+| `modeling` | `creature`, `weapon-prop`, `building`, `hard-surface-prop` |
+| `surfacing` | `character-surfacing`, `metal-surfacing`, `wood-surfacing` |
+| `lighting` | `inspection-lighting`, `portrait-lighting`, `product-lighting`, `night-lighting`, `exterior-lighting`, `interior-lighting` |
+
+Within the domain, the subject words pick the workflow; if none match, the domain's general plan is returned and `matched` is `false`. When two match equally, the one listed first in that row wins, so a night interior gets the night plan. Style (`lowpoly`, `stylized`, `realistic`) and target (`render`, `game`) come from the arguments, then words in the task, then defaults. They decide which stages apply. For example, only a realistic creature gets high-detail and retopology stages, high detail is optional, and only game targets get delivery stages. Treat a plan as a suggestion.
+
+Lighting guides give light levels as ratios, stops and irradiance, and compute power from distance, because no power value suits every scale. The light-unit statements in them were checked against Cycles renders on Blender 5.1. The art direction advice is a starting point and has not been reviewed by a specialist.
 
 ## Writing guides
 

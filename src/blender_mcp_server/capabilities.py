@@ -135,8 +135,8 @@ GROUPS: dict[str, Group] = {
         "renders and exports. Still and animation renders need a scene camera; captures bring their own.",
     ),
     "knowledge": Group(
-        "Offline modeling, texturing and rigging guides, and staged workflows for tasks such as characters, props "
-        "and buildings.",
+        "Offline modeling, texturing, lighting and rigging guides, and staged workflows for tasks such as "
+        "characters, materials and lighting setups.",
         {
             "blender_workflow": (),
             "blender_guide_search": (),
@@ -169,7 +169,8 @@ GROUPS: dict[str, Group] = {
 
 # Task words that a tool's name and description may not contain.
 KEYWORDS: dict[str, str] = {
-    "blender_workflow": "plan how to start approach steps stage guidance orc sword house character prop building",
+    "blender_workflow": "plan how to start approach steps stage guidance orc sword house character prop building "
+    "texture material lighting portrait product interior night",
     "blender_guide_search": "how to technique learn tutorial help advice best practice",
     "blender_guide_get": "read documentation tutorial technique",
     "blender_recipe_search": "ready-made template tree scatter glow emissive physics rigid camera",

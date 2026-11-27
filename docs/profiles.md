@@ -5,8 +5,8 @@ Many clients put every tool's schema into the model's context. A profile chooses
 | Profile | Advertised groups | Tools | Serialized `tools/list` |
 |---|---|---:|---:|
 | `compact` | `core` | 15 | 5.8 KB |
-| `standard` | `core`, `scene`, `modeling`, `materials`, `lighting`, `rendering`, `knowledge` | 70 | 56.8 KB |
-| `full` (default) | all | 79 | 64.8 KB |
+| `standard` | `core`, `scene`, `modeling`, `materials`, `lighting`, `rendering`, `knowledge` | 70 | 57.0 KB |
+| `full` (default) | all | 79 | 65.0 KB |
 
 Sizes are the bytes of the JSON `tools/list` result. A client may reformat schemas, and token counts depend on its tokenizer, so treat bytes as a way to compare profiles, not as a promise about a particular context window. A smaller list does not by itself make a model more capable; see the [benchmarks](benchmarks.md) before choosing. Reproduce them with `python scripts/context_benchmark.py sizes`.
 

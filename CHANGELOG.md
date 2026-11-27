@@ -12,6 +12,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   or `make_single_user`. Moving or rotating such a light works as before.
 
 ### Added
+- Fourteen texturing and lighting guides with tested examples, and surfacing and lighting workflows.
+  `blender_workflow` chooses a `domain` (modeling, surfacing or lighting) from the task, or takes it as an
+  argument. The guide index now lists IDs only.
 - `blender_lighting_rig_apply` / `remove` build three-point, softbox, turntable, portrait and low-key rigs fitted to
   a subject, with the same exposure at any scale, in their own collection. `blender_camera_frame` fits a camera to
   a subject for a given aspect ratio without changing the active camera unless asked.
@@ -47,7 +50,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   material or wireframe mode, framed from evaluated bounds in a temporary scene that leaves the project unchanged.
   Also works headless.
 - Tool profiles (`--profile compact|standard|full`, `--enable-groups`, `--allow-groups`, or the matching
-  environment variables). `compact` advertises 15 tools in 5.8 KB instead of every schema (64.8 KB). The default
+  environment variables). `compact` advertises 15 tools in 5.8 KB instead of every schema (65.0 KB). The default
   stays `full`.
 - Compact output (`--output compact`, on by default in the compact profile) pages listings, keeps log tails and
   turns oversized responses into previews that `blender_output_read` can finish without rerunning anything. Budgets

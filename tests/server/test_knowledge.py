@@ -205,7 +205,7 @@ async def test_resources_and_prompt(serve):
             "blender://guides/{guide_id}/{section}",
         ]
         index = json.loads((await client.read_resource("blender://guides")).contents[0].text)
-        assert index["library_version"] == knowledge.workflows()["version"] == 2
+        assert index["library_version"] == knowledge.workflows()["version"] == 3
         whole = (await client.read_resource("blender://guides/rigging")).contents[0]
         assert whole.mimeType == "text/markdown" and whole.text == knowledge.guides()["rigging"].markdown
         section = (await client.read_resource("blender://guides/rigging/checks")).contents[0]
@@ -270,6 +270,105 @@ def test_default_resources_and_prompts_are_small():
         from blender_mcp_server.tools.knowledge import modeling_workflow_prompt
 
         assert len(modeling_workflow_prompt(flow["title"], target="game")) < 1_000
+
+
+TEXTURING_TOPICS = {
+    "stylized-texturing",
+    "procedural-materials",
+    "texture-mapping",
+    "material-layering",
+    "organic-surfaces",
+    "hard-materials",
+    "texture-pipeline",
+}
+LIGHTING_TOPICS = {
+    "lighting-fundamentals",
+    "lighting-mood",
+    "environment-lighting",
+    "lighting-exposure",
+    "lighting-composition",
+    "lighting-diagnosis",
+    "render-engines",
+}
+
+
+def test_texturing_and_lighting_topics_are_packaged():
+    assert set(knowledge.guides()) >= TEXTURING_TOPICS | LIGHTING_TOPICS
+    assert {knowledge.guides()[name].domain for name in LIGHTING_TOPICS} == {"lighting"}
+
+
+@pytest.mark.parametrize(
+    ("task", "workflow", "unrelated"),
+    [
+        ("texture a stylized orc", "character-surfacing", ("hard-materials", "lighting-", "anatomy-proportions")),
+        ("rusty metal prop", "metal-surfacing", ("organic-surfaces", "lighting-mood", "rigging")),
+        ("realistic wood", "wood-surfacing", ("organic-surfaces", "material-layering", "rigging")),
+        ("light an orc portrait", "portrait-lighting", ("hard-materials", "interior", "uv-unwrapping")),
+        ("light a metal prop", "product-lighting", ("organic-surfaces", "uv-unwrapping", "rigging")),
+        ("light a night interior", "night-lighting", ("organic-surfaces", "uv-unwrapping", "rigging")),
+    ],
+)
+def test_surfacing_and_lighting_tasks_get_distinct_small_stages(task, workflow, unrelated):
+    plan = knowledge.select_workflow(task)
+    assert plan["workflow"] == workflow and plan["matched"]
+    first = json.dumps(plan["stages"][0])
+    assert len(first) < 700
+    assert not [name for name in unrelated if name in first]
+
+
+def test_domains_keep_modeling_requests_unchanged():
+    for task, workflow in [
+        ("model a wooden chair", "hard-surface-prop"),
+        ("wood cabin", "building"),
+        ("sword", "weapon-prop"),
+        ("rig a creature", "creature"),
+    ]:
+        assert knowledge.select_workflow(task)["workflow"] == workflow, task
+    assert knowledge.select_workflow("sword", domain="surfacing")["workflow"] == "general-surfacing"
+    assert knowledge.select_workflow("sword", domain="lighting")["workflow"] == "general-lighting"
+    with pytest.raises(ValueError, match="Unknown domain"):
+        knowledge.select_workflow("sword", domain="animation")
+
+
+@pytest.mark.parametrize(
+    ("symptom", "expected"),
+    [
+        ("flat lighting", "lighting-diagnosis"),
+        ("crushed shadows", "lighting-diagnosis"),
+        ("blown highlights", "lighting-diagnosis"),
+        ("noisy render", "render-engines"),
+        ("glare on glossy surface", "lighting-diagnosis"),
+    ],
+)
+def test_symptoms_find_corrective_guidance(symptom, expected):
+    assert expected in search_guides(symptom)[:2]
+
+
+def test_every_lighting_symptom_has_a_first_change():
+    table = knowledge.guides()["lighting-diagnosis"].sections["tradeoffs"].text.lower()
+    for symptom in ("flat", "crushed shadows", "blown highlights", "noisy", "washed out", "glare", "scale"):
+        assert symptom in table, symptom
+    assert "one variable at a time" in table
+
+
+def test_lighting_examples_never_hardcode_power():
+    """Light power depends on distance and scale, so examples must compute it."""
+    import re
+
+    for guide in knowledge.guides().values():
+        for block in guide.python_blocks():
+            assert not re.search(r"\.energy\s*=\s*[0-9.]+\s*(#.*)?$", block, re.MULTILINE), guide.id
+    units = knowledge.guides()["lighting-fundamentals"].sections["tradeoffs"].text
+    assert "P / (4πd²)" in units and "P / (πd²)" in units and "W/m²" in units
+
+
+def test_procedural_texturing_guides_state_the_gltf_limit():
+    for name in sorted(TEXTURING_TOPICS | {"pbr-materials"}):
+        guide = knowledge.guides()[name]
+        if any("ShaderNodeTex" in block for block in guide.python_blocks()):
+            assert "glTF" in guide.markdown and ("not export" in guide.markdown or "do not export" in guide.markdown), (
+                name
+            )
 
 
 def test_knowledge_group_needs_no_bridge_commands():

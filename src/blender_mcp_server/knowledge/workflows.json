@@ -1,8 +1,9 @@
 {
-  "version": 2,
+  "version": 3,
   "note": "Stages apply to every style and target unless they list some. 'optional' stages may be skipped.",
   "styles": ["lowpoly", "stylized", "realistic"],
   "targets": ["render", "game"],
+  "domains": ["modeling", "surfacing", "lighting"],
   "style_words": {
     "lowpoly": ["low poly", "lowpoly", "low-poly", "retro", "ps1", "flat shaded"],
     "stylized": ["stylized", "stylised", "cartoon", "toon", "chibi", "hand painted"],
@@ -12,9 +13,16 @@
     "game": ["game", "unity", "unreal", "godot", "real-time", "realtime", "web", "mobile"],
     "render": ["render", "film", "still", "poster", "illustration"]
   },
+  "domain_words": {
+    "modeling_verbs": ["model", "modeling", "modelling", "sculpt", "rig", "rigging", "retopology", "build a mesh", "blockout", "block out"],
+    "lighting": ["light", "lighting", "lights", "lit", "illuminate", "illumination", "relight", "product shot", "hdri", "exposure"],
+    "surfacing": ["texture", "textures", "texturing", "textured", "material", "materials", "surfacing", "shader", "shaders", "paint", "painted", "painting", "pbr", "weathered", "weathering", "rusty"],
+    "material_nouns": ["wood", "metal", "rust", "steel", "iron", "stone", "marble", "leather", "fabric", "cloth", "skin", "gold", "copper"]
+  },
   "workflows": [
     {
       "id": "creature",
+      "domain": "modeling",
       "title": "Creature or character",
       "summary": "Proportions first, a lofted blockout, then only the detail the style and target need.",
       "keywords": ["orc", "creature", "character", "monster", "goblin", "troll", "dragon", "animal", "human", "humanoid", "person", "hero", "villain", "alien", "zombie", "robot character", "beast"],
@@ -33,6 +41,7 @@
     },
     {
       "id": "weapon-prop",
+      "domain": "modeling",
       "title": "Weapon or hand-held prop",
       "summary": "Blockout from reference proportions, hard-surface shaping, then materials.",
       "keywords": ["sword", "weapon", "blade", "axe", "dagger", "hammer", "shield", "gun", "bow", "staff", "knife", "spear", "tool"],
@@ -48,6 +57,7 @@
     },
     {
       "id": "building",
+      "domain": "modeling",
       "title": "House, building or environment",
       "summary": "Fix a grid, build a small kit, assemble it, then vary and optimise.",
       "keywords": ["house", "building", "cabin", "hut", "castle", "tower", "village", "city", "room", "interior", "dungeon", "street", "environment", "scene", "wall", "architecture"],
@@ -63,6 +73,7 @@
     },
     {
       "id": "hard-surface-prop",
+      "domain": "modeling",
       "title": "Mechanical or manufactured object",
       "summary": "Primitive blockout, boolean and bevel shaping, then materials.",
       "keywords": ["machine", "vehicle", "car", "ship", "robot", "device", "furniture", "chair", "table", "crate", "barrel", "lamp", "mechanical", "product", "gadget", "armor"],
@@ -77,6 +88,7 @@
     },
     {
       "id": "general",
+      "domain": "modeling",
       "title": "General modeling",
       "summary": "Choose a technique, block out, refine, then surface.",
       "keywords": [],
@@ -87,6 +99,169 @@
         {"id": "refine", "goal": "Add detail only where it changes the result.", "guides": ["hard-surface#pattern", "base-mesh-deformation#pattern"], "actions": ["blender_mesh_inspect", "blender_view_capture"], "checkpoint": "No mesh errors."},
         {"id": "materials", "goal": "Assign materials.", "guides": ["pbr-materials#pattern"], "actions": ["blender_material_create", "blender_material_assign"], "checkpoint": "Material capture looks as intended."},
         {"id": "delivery", "goal": "Optimise and export.", "guides": ["game-optimization#checks"], "targets": ["game"], "actions": ["blender_export_gltf"], "checkpoint": "The export opens correctly."}
+      ]
+    },
+    {
+      "id": "character-surfacing",
+      "domain": "surfacing",
+      "title": "Character or creature surfacing",
+      "summary": "Zones by anatomy and use, then roughness and fine detail, previewed under fixed light.",
+      "keywords": ["orc", "creature", "character", "skin", "leather", "cloth", "fabric", "monster", "goblin", "human", "face", "hide"],
+      "default_style": "stylized",
+      "stages": [
+        {"id": "plan", "goal": "Choose the style, the material regions and where each lives.", "guides": ["stylized-texturing#use-when", "organic-surfaces#tradeoffs"], "actions": ["blender_material_slots", "blender_material_slot_append"], "checkpoint": "Skin, cloth, leather and metal regions each have a material slot."},
+        {"id": "regions", "goal": "Assign faces to their materials.", "guides": ["organic-surfaces#use-when"], "actions": ["blender_material_assign_faces", "blender_view_capture"], "checkpoint": "A material view shows the regions in the right places."},
+        {"id": "color", "goal": "Set broad color zones with clear value separation.", "guides": ["stylized-texturing#pattern", "stylized-texturing#pitfalls"], "actions": ["blender_shader_graph_edit", "blender_material_preview"], "checkpoint": "Main forms separate even when desaturated.", "styles": ["stylized", "lowpoly"]},
+        {"id": "skin", "goal": "Vary color by anatomy: blood, bone, folds and oil.", "guides": ["organic-surfaces#pattern", "organic-surfaces#pitfalls"], "actions": ["blender_shader_graph_edit", "blender_material_preview"], "checkpoint": "Zones are visible but quiet.", "styles": ["realistic"]},
+        {"id": "roughness", "goal": "Vary roughness so highlights describe each material.", "guides": ["organic-surfaces#tradeoffs", "pbr-materials#values"], "actions": ["blender_shader_graph_edit", "blender_lighting_rig_apply", "blender_view_capture"], "checkpoint": "Highlights differ between skin, leather and cloth."},
+        {"id": "delivery", "goal": "Bake procedural work to images, pack channels, check export support.", "guides": ["texture-pipeline#checks", "texture-pipeline#tradeoffs"], "actions": ["blender_material_diagnose", "blender_material_set_texture_set", "blender_export_gltf"], "checkpoint": "Diagnostics report glTF export as supported and the exported file looks right.", "targets": ["game"]},
+        {"id": "review", "goal": "Review on the asset under the portrait rig.", "guides": ["organic-surfaces#checks"], "actions": ["blender_lighting_rig_apply", "blender_view_capture"], "checkpoint": "Reads at final viewing distance."}
+      ]
+    },
+    {
+      "id": "metal-surfacing",
+      "domain": "surfacing",
+      "title": "Metal, rust and weathering",
+      "summary": "Real metal reflectance first, then wear placed by cause, masked consistently across channels.",
+      "keywords": ["metal", "rust", "rusty", "steel", "iron", "weathered", "weathering", "worn", "gold", "copper", "brass", "aluminium", "chrome", "armor", "armour"],
+      "default_style": "realistic",
+      "stages": [
+        {"id": "base", "goal": "Create the clean metal with its real reflectance and finish.", "guides": ["hard-materials#tradeoffs", "pbr-materials#pattern"], "actions": ["blender_material_create", "blender_shader_graph_edit", "blender_material_preview"], "checkpoint": "It reads as metal on the preview sphere."},
+        {"id": "wear-plan", "goal": "Decide where water, hands and impacts act.", "guides": ["material-layering#tradeoffs", "material-layering#pitfalls"], "actions": ["blender_view_capture"], "checkpoint": "Each effect has a cause and most of the surface stays intact."},
+        {"id": "layers", "goal": "Add rust or grime with one mask driving color, metallic and roughness.", "guides": ["material-layering#pattern"], "actions": ["blender_shader_graph_edit", "blender_material_preview"], "checkpoint": "Rust is rough and non-metallic."},
+        {"id": "lighting-check", "goal": "Judge under softboxes or an environment, not one point light.", "guides": ["hard-materials#checks", "lighting-composition#pattern"], "actions": ["blender_lighting_rig_apply", "blender_view_capture"], "checkpoint": "Reflections describe the shape."},
+        {"id": "delivery", "goal": "Bake procedural work to images, pack channels, check export support.", "guides": ["texture-pipeline#checks", "texture-pipeline#tradeoffs"], "actions": ["blender_material_diagnose", "blender_material_set_texture_set", "blender_export_gltf"], "checkpoint": "Diagnostics report glTF export as supported and the exported file looks right.", "targets": ["game"]}
+      ]
+    },
+    {
+      "id": "wood-surfacing",
+      "domain": "surfacing",
+      "title": "Wood",
+      "summary": "Grain direction and scale first, then tone variation, finish and relief.",
+      "keywords": ["wood", "wooden", "plank", "timber", "oak", "pine", "grain", "log", "bark"],
+      "default_style": "realistic",
+      "stages": [
+        {"id": "scale", "goal": "Set grain direction and real-world scale.", "guides": ["texture-mapping#tradeoffs", "hard-materials#pitfalls"], "actions": ["blender_view_capture"], "checkpoint": "Grain follows each plank and has a believable size."},
+        {"id": "grain", "goal": "Build rings and grain color variation.", "guides": ["hard-materials#pattern"], "actions": ["blender_shader_graph_edit", "blender_material_preview"], "checkpoint": "It reads as wood at arm's length."},
+        {"id": "finish", "goal": "Set roughness for sealed or raw wood and add gentle relief.", "guides": ["hard-materials#tradeoffs", "texture-mapping#pitfalls"], "actions": ["blender_shader_graph_edit", "blender_material_preview"], "checkpoint": "The finish shows in the highlight without noisy bumps."},
+        {"id": "delivery", "goal": "Bake procedural work to images, pack channels, check export support.", "guides": ["texture-pipeline#checks", "texture-pipeline#tradeoffs"], "actions": ["blender_material_diagnose", "blender_material_set_texture_set", "blender_export_gltf"], "checkpoint": "Diagnostics report glTF export as supported and the exported file looks right.", "targets": ["game"]}
+      ]
+    },
+    {
+      "id": "general-surfacing",
+      "domain": "surfacing",
+      "title": "General surfacing",
+      "summary": "Choose procedural or image maps, map at scale, then check and preview.",
+      "keywords": [],
+      "default_style": "realistic",
+      "stages": [
+        {"id": "choose", "goal": "Choose images or procedural nodes for the target.", "guides": ["procedural-materials#tradeoffs", "texture-pipeline#tradeoffs"], "actions": ["blender_guide_search"], "checkpoint": "The choice fits the delivery target."},
+        {"id": "mapping", "goal": "Set coordinates, scale and color spaces.", "guides": ["texture-mapping#tradeoffs", "uv-unwrapping#pattern"], "actions": ["blender_material_set_texture_set", "blender_material_diagnose"], "checkpoint": "Diagnostics report no color-space errors."},
+        {"id": "material", "goal": "Build the material.", "guides": ["pbr-materials#pattern", "procedural-materials#pattern"], "actions": ["blender_shader_graph_edit", "blender_material_preview"], "checkpoint": "The preview matches the intent."},
+        {"id": "delivery", "goal": "Bake procedural work to images, pack channels, check export support.", "guides": ["texture-pipeline#checks", "texture-pipeline#tradeoffs"], "actions": ["blender_material_diagnose", "blender_material_set_texture_set", "blender_export_gltf"], "checkpoint": "Diagnostics report glTF export as supported and the exported file looks right.", "targets": ["game"]}
+      ]
+    },
+    {
+      "id": "inspection-lighting",
+      "domain": "lighting",
+      "title": "Neutral asset or material inspection",
+      "summary": "Even, repeatable light that hides nothing and favours no angle.",
+      "keywords": ["inspection", "inspect", "neutral", "asset", "preview", "review", "material", "turntable", "check"],
+      "default_style": "realistic",
+      "stages": [
+        {"id": "rig", "goal": "Use even light with fixed settings.", "guides": ["lighting-fundamentals#tradeoffs", "render-engines#pattern"], "actions": ["blender_lighting_rig_apply", "blender_color_management_set"], "checkpoint": "Turntable rig, Standard view, and the same settings for every asset."},
+        {"id": "views", "goal": "Capture fixed views.", "guides": ["lighting-diagnosis#checks"], "actions": ["blender_view_capture", "blender_material_preview"], "checkpoint": "Form, color and defects are visible from all sides."},
+        {"id": "refine", "goal": "Fix problems one variable at a time.", "guides": ["lighting-diagnosis#tradeoffs", "lighting-diagnosis#pattern"], "actions": ["blender_lighting_inspect", "blender_color_management_set", "blender_view_capture"], "checkpoint": "Each change was compared with identical settings."},
+        {"id": "realtime", "goal": "Plan what the engine will light and what is baked.", "guides": ["render-engines#tradeoffs"], "actions": ["blender_export_gltf"], "checkpoint": "The asset looks right in the target viewer.", "targets": ["game"]}
+      ]
+    },
+    {
+      "id": "portrait-lighting",
+      "domain": "lighting",
+      "title": "Character portrait",
+      "summary": "A motivated key, controlled fill and a rim that separates the subject.",
+      "keywords": ["portrait", "character", "orc", "creature", "face", "head", "hero", "villain", "monster", "person"],
+      "default_style": "realistic",
+      "stages": [
+        {"id": "camera", "goal": "Frame the face with a longer lens.", "guides": ["lighting-composition#tradeoffs"], "actions": ["blender_camera_frame"], "checkpoint": "Eyes sit where the viewer looks first."},
+        {"id": "key", "goal": "Apply the portrait or low-key rig and place the key to model the face.", "guides": ["lighting-mood#tradeoffs", "lighting-mood#pattern"], "actions": ["blender_lighting_rig_apply", "blender_view_capture"], "checkpoint": "One clear shadow direction; eyes are readable."},
+        {"id": "balance", "goal": "Set fill in stops and rim for separation.", "guides": ["lighting-mood#pitfalls", "lighting-mood#checks"], "actions": ["blender_lighting_rig_apply", "blender_view_capture"], "checkpoint": "The silhouette separates from the background."},
+        {"id": "refine", "goal": "Fix problems one variable at a time.", "guides": ["lighting-diagnosis#tradeoffs", "lighting-diagnosis#pattern"], "actions": ["blender_lighting_inspect", "blender_color_management_set", "blender_view_capture"], "checkpoint": "Each change was compared with identical settings."},
+        {"id": "realtime", "goal": "Plan what the engine will light and what is baked.", "guides": ["render-engines#tradeoffs"], "actions": ["blender_export_gltf"], "checkpoint": "The asset looks right in the target viewer.", "targets": ["game"]}
+      ]
+    },
+    {
+      "id": "product-lighting",
+      "domain": "lighting",
+      "title": "Product or reflective prop",
+      "summary": "Shape reflections with large sources and keep edges defined.",
+      "keywords": ["product", "shot", "prop", "reflective", "metal", "bottle", "glossy", "jewelry", "watch", "car", "gadget", "object"],
+      "default_style": "realistic",
+      "stages": [
+        {"id": "camera", "goal": "Frame with margin and a long lens.", "guides": ["lighting-composition#tradeoffs"], "actions": ["blender_camera_frame"], "checkpoint": "The product fills the frame comfortably."},
+        {"id": "reflections", "goal": "Use softboxes so reflections describe the form.", "guides": ["lighting-composition#pattern", "lighting-composition#pitfalls"], "actions": ["blender_lighting_rig_apply", "blender_light_create", "blender_view_capture"], "checkpoint": "Highlights follow the curves and edges stay defined."},
+        {"id": "background", "goal": "Choose a background and environment reflections.", "guides": ["environment-lighting#pitfalls"], "actions": ["blender_world_set", "blender_view_capture"], "checkpoint": "Subject and background separate."},
+        {"id": "refine", "goal": "Fix problems one variable at a time.", "guides": ["lighting-diagnosis#tradeoffs", "lighting-diagnosis#pattern"], "actions": ["blender_lighting_inspect", "blender_color_management_set", "blender_view_capture"], "checkpoint": "Each change was compared with identical settings."},
+        {"id": "realtime", "goal": "Plan what the engine will light and what is baked.", "guides": ["render-engines#tradeoffs"], "actions": ["blender_export_gltf"], "checkpoint": "The asset looks right in the target viewer.", "targets": ["game"]}
+      ]
+    },
+    {
+      "id": "night-lighting",
+      "domain": "lighting",
+      "title": "Night or cinematic scene",
+      "summary": "Cool, dim ambient with a few motivated pools of warm or colored light.",
+      "keywords": ["night", "cinematic", "moon", "moonlight", "dark", "noir", "evening", "candle", "neon", "dramatic"],
+      "default_style": "realistic",
+      "stages": [
+        {"id": "ambient", "goal": "Set a dim cool ambient so shadows stay readable.", "guides": ["environment-lighting#pattern", "lighting-mood#tradeoffs"], "actions": ["blender_world_set"], "checkpoint": "Shapes are faintly readable with every lamp off."},
+        {"id": "motivated", "goal": "Add moonlight, windows and practical pools.", "guides": ["lighting-mood#pattern", "lighting-mood#pitfalls"], "actions": ["blender_light_create", "blender_lighting_rig_apply", "blender_view_capture"], "checkpoint": "A few clear pools lead the eye."},
+        {"id": "exposure", "goal": "Set exposure and view transform without lifting the night into day.", "guides": ["lighting-exposure#tradeoffs"], "actions": ["blender_color_management_set", "blender_view_capture"], "checkpoint": "It reads as night yet the subject is clear."},
+        {"id": "refine", "goal": "Fix problems one variable at a time.", "guides": ["lighting-diagnosis#tradeoffs", "lighting-diagnosis#pattern"], "actions": ["blender_lighting_inspect", "blender_color_management_set", "blender_view_capture"], "checkpoint": "Each change was compared with identical settings."},
+        {"id": "realtime", "goal": "Plan what the engine will light and what is baked.", "guides": ["render-engines#tradeoffs"], "actions": ["blender_export_gltf"], "checkpoint": "The asset looks right in the target viewer.", "targets": ["game"]}
+      ]
+    },
+    {
+      "id": "exterior-lighting",
+      "domain": "lighting",
+      "title": "Exterior daylight",
+      "summary": "One sun for direction, the sky for ambient, exposure to match.",
+      "keywords": ["exterior", "outdoor", "outside", "daylight", "sun", "sunset", "landscape", "street", "garden", "village"],
+      "default_style": "realistic",
+      "stages": [
+        {"id": "sky", "goal": "Set a sky or HDRI and the sun direction.", "guides": ["environment-lighting#tradeoffs", "environment-lighting#pattern"], "actions": ["blender_world_set", "blender_view_capture"], "checkpoint": "Shadow direction matches the time of day."},
+        {"id": "exposure", "goal": "Lower exposure to suit the bright sky.", "guides": ["lighting-exposure#pattern"], "actions": ["blender_color_management_set"], "checkpoint": "Sky and shadows both keep detail."},
+        {"id": "refine", "goal": "Fix problems one variable at a time.", "guides": ["lighting-diagnosis#tradeoffs", "lighting-diagnosis#pattern"], "actions": ["blender_lighting_inspect", "blender_color_management_set", "blender_view_capture"], "checkpoint": "Each change was compared with identical settings."},
+        {"id": "realtime", "goal": "Plan what the engine will light and what is baked.", "guides": ["render-engines#tradeoffs"], "actions": ["blender_export_gltf"], "checkpoint": "The asset looks right in the target viewer.", "targets": ["game"]}
+      ]
+    },
+    {
+      "id": "interior-lighting",
+      "domain": "lighting",
+      "title": "Interior",
+      "summary": "Daylight through openings, practicals and enough indirect light.",
+      "keywords": ["interior", "room", "indoor", "kitchen", "office", "bedroom", "hall", "dungeon", "window"],
+      "default_style": "realistic",
+      "stages": [
+        {"id": "sources", "goal": "Decide the motivated sources: windows, lamps, screens.", "guides": ["environment-lighting#tradeoffs", "lighting-mood#tradeoffs"], "actions": ["blender_lighting_inspect"], "checkpoint": "Every light has a believable source."},
+        {"id": "daylight", "goal": "Light openings with large area lights and set the world.", "guides": ["environment-lighting#pattern", "lighting-fundamentals#pattern"], "actions": ["blender_light_create", "blender_world_set", "blender_view_capture"], "checkpoint": "The room reads without practicals."},
+        {"id": "practicals", "goal": "Add lamps and their hidden helper lights.", "guides": ["lighting-mood#pitfalls"], "actions": ["blender_light_create", "blender_view_capture"], "checkpoint": "Practicals look like they cause the light."},
+        {"id": "exposure", "goal": "Set exposure and check noise.", "guides": ["lighting-exposure#tradeoffs", "render-engines#tradeoffs"], "actions": ["blender_color_management_set"], "checkpoint": "No crushed corners or clipped windows by accident."},
+        {"id": "refine", "goal": "Fix problems one variable at a time.", "guides": ["lighting-diagnosis#tradeoffs", "lighting-diagnosis#pattern"], "actions": ["blender_lighting_inspect", "blender_color_management_set", "blender_view_capture"], "checkpoint": "Each change was compared with identical settings."},
+        {"id": "realtime", "goal": "Plan what the engine will light and what is baked.", "guides": ["render-engines#tradeoffs"], "actions": ["blender_export_gltf"], "checkpoint": "The asset looks right in the target viewer.", "targets": ["game"]}
+      ]
+    },
+    {
+      "id": "general-lighting",
+      "domain": "lighting",
+      "title": "General lighting",
+      "summary": "Start from the subject's size and purpose, then refine.",
+      "keywords": [],
+      "default_style": "realistic",
+      "stages": [
+        {"id": "purpose", "goal": "Decide what the light must show and the mood.", "guides": ["lighting-fundamentals#use-when", "lighting-mood#use-when"], "actions": ["blender_lighting_inspect"], "checkpoint": "The purpose picks the setup."},
+        {"id": "setup", "goal": "Apply a fitted rig or place lights.", "guides": ["lighting-fundamentals#pattern"], "actions": ["blender_lighting_rig_apply", "blender_camera_frame", "blender_view_capture"], "checkpoint": "The subject is clearly lit."},
+        {"id": "refine", "goal": "Fix problems one variable at a time.", "guides": ["lighting-diagnosis#tradeoffs", "lighting-diagnosis#pattern"], "actions": ["blender_lighting_inspect", "blender_color_management_set", "blender_view_capture"], "checkpoint": "Each change was compared with identical settings."},
+        {"id": "realtime", "goal": "Plan what the engine will light and what is baked.", "guides": ["render-engines#tradeoffs"], "actions": ["blender_export_gltf"], "checkpoint": "The asset looks right in the target viewer.", "targets": ["game"]}
       ]
     }
   ]

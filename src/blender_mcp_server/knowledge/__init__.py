@@ -106,23 +106,56 @@ def _detect(task: str, table: dict[str, list[str]]) -> str | None:
     return None
 
 
-def select_workflow(task: str, style: str | None = None, target: str | None = None) -> dict[str, Any]:
+# The workflow used when nothing in a domain matches the task.
+FALLBACKS = {"modeling": "general", "surfacing": "general-surfacing", "lighting": "general-lighting"}
+
+
+def _mentions(task: str, phrases: list[str]) -> bool:
+    return _detect(task, {"found": phrases}) is not None
+
+
+def _best(domain: str, terms: set[str]) -> tuple[int, dict]:
+    flows = [flow for flow in workflows()["workflows"] if flow["domain"] == domain]
+    scored = [
+        (sum(1 for keyword in flow["keywords"] if words(keyword) and words(keyword) <= terms), -index, flow)
+        for index, flow in enumerate(flows)
+    ]
+    score, _, flow = max(scored, key=lambda item: item[:2])
+    return score, flow
+
+
+def _choose_domain(task: str, terms: set[str]) -> str:
+    """Modeling verbs win; otherwise lighting or surfacing words; a bare material is surfacing."""
+    table = workflows()["domain_words"]
+    if _mentions(task, table["modeling_verbs"]):
+        return "modeling"
+    if _mentions(task, table["lighting"]):
+        return "lighting"
+    if _mentions(task, table["surfacing"]):
+        return "surfacing"
+    # 'realistic wood' is about a surface, while 'wood cabin' names something to model.
+    if _mentions(task, table["material_nouns"]) and _best("modeling", terms)[0] == 0:
+        return "surfacing"
+    return "modeling"
+
+
+def select_workflow(
+    task: str, style: str | None = None, target: str | None = None, domain: str | None = None
+) -> dict[str, Any]:
     """Choose a workflow by keyword and filter its stages for the style and target. Deterministic."""
     data = workflows()
-    for value, key in ((style, "styles"), (target, "targets")):
+    for value, key in ((style, "styles"), (target, "targets"), (domain, "domains")):
         if value is not None and value not in data[key]:
             raise ValueError(f"Unknown {key[:-1]} '{value}'. Choose from: {', '.join(data[key])}")
     terms = words(task)
-    scored = [
-        (sum(1 for keyword in flow["keywords"] if words(keyword) and words(keyword) <= terms), -index, flow)
-        for index, flow in enumerate(data["workflows"])
-    ]
-    score, _, flow = max(scored, key=lambda item: item[:2])
+    domain = domain or _choose_domain(task, terms)
+    score, flow = _best(domain, terms)
     if score == 0:
-        flow = next(item for item in data["workflows"] if item["id"] == "general")
+        flow = next(item for item in data["workflows"] if item["id"] == FALLBACKS[domain])
     style = style or _detect(task, data["style_words"]) or flow["default_style"]
     target = target or _detect(task, data["target_words"]) or "render"
     return {
+        "domain": domain,
         "workflow": flow["id"],
         "title": flow["title"],
         "summary": flow["summary"],

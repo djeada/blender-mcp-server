@@ -10,7 +10,7 @@ Object, material, collection, keyframe and job listings accept `limit` and `offs
 
 ### Modeling Knowledge
 
-`blender_workflow`, `blender_guide_search` and `blender_guide_get` give staged plans and short technique guides offline. See [Modeling knowledge](knowledge.md).
+`blender_workflow`, `blender_guide_search` and `blender_guide_get` give staged modeling, surfacing and lighting plans and short technique guides offline. See [Modeling knowledge](knowledge.md).
 
 ### Scene Inspection
 
@@ -157,7 +157,7 @@ blender_light_create(light_type="AREA", name="KeyLight", location=[2, -2, 3],
 | `portrait` | warm key 1, fill 0.3, rim 0.6 | Faces and characters |
 | `low_key` | small side key 1, fill 0.05, rim 0.9 | Dramatic, mostly shadow |
 
-**Scale.** With R as half the diagonal of the subject's world bounding box, each light sits 3.5R to 4.5R from the center, its disk is a multiple of R across, and its power is `3 W/m² × strength × π × distance²`. A subject and rig scaled together are geometrically identical, so exposure does not change with size; the test suite renders a 2 cm and a 200 m subject and compares them. 3 W/m² suits a mid-grey surface in an otherwise dark scene under the Standard view. It is a starting point: **the world and other lights add to it**, and the result lists other lights that will. Brighten or darken with `exposure_stops`, which doubles the light per stop. Long, thin subjects get lights fitted to their length, so check them. Very small or large scenes can still reach render engine limits such as light clamping.
+**Scale.** With R as half the diagonal of the subject's world bounding box, each light sits 3.5R to 4.5R from the center, its disk is a multiple of R across, and its power is `3 W/m² × strength × π × distance²`. This is accurate for small sources; large ones deliver somewhat less (about 10% less for a disk 0.75 times its distance), so the softbox rig runs a little darker than the others. A subject and rig scaled together are geometrically identical, so exposure does not change with size; the test suite renders a 2 cm and a 200 m subject and compares them. 3 W/m² suits a mid-grey surface in an otherwise dark scene under the Standard view. It is a starting point: **the world and other lights add to it**, and the result lists other lights that will. Brighten or darken with `exposure_stops`, which doubles the light per stop. Long, thin subjects get lights fitted to their length, so check them. Very small or large scenes can still reach render engine limits such as light clamping.
 
 **Orientation.** Light directions are measured from the camera (`camera`, else the scene camera; the front view if neither exists): positive angles toward the camera's right. `rotation` turns the whole rig. Elevations are relative to the horizon.
 

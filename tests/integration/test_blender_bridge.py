@@ -465,10 +465,28 @@ def test_every_guide_pattern_runs_and_builds_clean_meshes(call):
         assert result["error"] is None, (result["error"], result["stderr"])
         return result["result"]
 
+    # Lighting examples add lights and change render settings in the shared test scene; undo that afterwards.
+    keep = "__result__ = [sorted(o.name for o in bpy.data.objects if o.type == 'LIGHT'), sorted(m.name for m in bpy.data.materials)]"
+    render_state = "s = bpy.context.scene\n__result__ = [s.render.engine, s.view_settings.view_transform, s.view_settings.exposure]"
+    original_render = run_python(render_state)
     for guide in knowledge.guides().values():
         for block in guide.python_blocks():
             before = mesh_names()
+            lights, materials = run_python(keep)
             run_python(block)
+            new_lights, new_materials = run_python(keep)
+            # A guide that says its nodes do not export must agree with the diagnostics.
+            if guide.domain in {"surfacing", "art-direction"} and "ShaderNodeTex" in block:
+                for name in sorted(set(new_materials) - set(materials)):
+                    verdict = call("material_diagnose", material=name)["materials"][0]["gltf_export"]
+                    assert verdict["status"] == "unsupported", (guide.id, name, verdict)
+                    errors = call("material_diagnose", material=name, profile="render")["findings"]
+                    assert not [item for item in errors if item["severity"] == "error"], (guide.id, errors)
+            call(
+                "python_exec",
+                code="for n in args['names']: bpy.data.objects.remove(bpy.data.objects[n])",
+                args={"names": sorted(set(new_lights) - set(lights))},
+            )
             for name in sorted(mesh_names() - before):
                 for source in ("raw", "evaluated"):
                     report = call("mesh_inspect", name=name, source=source, check_duplicates=True)
@@ -503,6 +521,11 @@ __result__ = [(posed_tip - tip).length, (posed_base - base).length, bpy.context.
 """
                 )
                 assert moved[0] > 0.5 and moved[1] < 1e-5 and moved[2] == "OBJECT"
+    call(
+        "python_exec",
+        code="s = bpy.context.scene\ns.render.engine, s.view_settings.view_transform, s.view_settings.exposure = args['v']",
+        args={"v": original_render},
+    )
 
 
 _BUILD_MESH_FIXTURES = """

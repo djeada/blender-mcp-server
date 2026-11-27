@@ -1,4 +1,4 @@
-<!-- {"version": 1, "domain": "surfacing", "title": "UV coordinates",
+<!-- {"version": 2, "domain": "surfacing", "title": "UV coordinates",
 "summary": "Give meshes texture coordinates, from simple projection to unwrapping, with consistent texel density.",
 "tags": ["uv", "unwrap", "projection", "seam", "texel", "texture", "atlas", "bake", "game"],
 "related": ["pbr-materials", "retopology", "game-optimization"]} -->
@@ -50,4 +50,4 @@ __result__ = {"object": obj.name, "uv_layer": layer.name}
 - `bpy.ops.uv.smart_project` needs Edit Mode with faces selected; restore the previous mode afterwards.
 
 ## Checks
-Assign a checker or other regular image with `blender_material_set_texture` and capture in `material` mode: squares should be even and equally sized across parts. There is no automatic overlap or distortion report yet.
+Assign a checker or other regular image with `blender_material_set_texture` and capture in `material` mode: squares should be even and equally sized across parts. `blender_material_diagnose` checks the textures; there is no automatic overlap or distortion report yet.

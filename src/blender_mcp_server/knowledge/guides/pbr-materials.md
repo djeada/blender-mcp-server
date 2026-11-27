@@ -1,4 +1,4 @@
-<!-- {"version": 1, "domain": "surfacing", "title": "PBR materials",
+<!-- {"version": 2, "domain": "surfacing", "title": "PBR materials",
 "summary": "Set metallic-roughness materials with believable values and correct color spaces for texture maps.",
 "tags": ["pbr", "material", "shader", "metal", "roughness", "metallic", "texture", "normal-map", "color", "wood", "stone", "skin", "game"],
 "related": ["uv-unwrapping", "game-optimization", "hard-surface"]} -->
@@ -39,8 +39,8 @@ __result__ = {"materials": [steel.name, leather.name]}
 - Roughness, metallic and normal images are data: set `image.colorspace_settings.name = "Non-Color"`. Only color maps stay sRGB.
 - A normal image goes through a Normal Map node, never straight into the Normal input.
 - OpenGL and DirectX normal maps differ in the green channel.
-- Typed tools set base color and a base color texture only; other channels need a script.
+- Bind image maps with `blender_material_set_texture_set`; numeric metallic and roughness values need `blender_shader_graph_edit` (`set_input`).
 - Complex node graphs are usually lost on export. Bake them to images.
 
 ## Checks
-Capture in `material` mode from `three_quarter`. Its fixed lights compare materials fairly but are not your scene lighting; also render with `blender_render_still`. After a glTF export, re-import or view the file to confirm which maps survived.
+Run `blender_material_diagnose`. Capture in `material` mode from `three_quarter`. Its fixed lights compare materials fairly but are not your scene lighting; also render with `blender_render_still`. After a glTF export, re-import or view the file to confirm which maps survived.
