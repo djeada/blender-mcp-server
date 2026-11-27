@@ -18,6 +18,7 @@ from . import (
     color_management,
     lighting,
     lighting_report,
+    material_slots,
     materials,
     mesh,
     models,
@@ -71,6 +72,13 @@ class CommandHandler:
             "object.get_transform": Command(objects.get_transform, models.ObjectGetTransformParams),
             "object.get_hierarchy": Command(objects.get_hierarchy, models.ObjectGetHierarchyParams),
             "material.list": Command(materials.list_materials, models.PageParams),
+            "material.list_slots": Command(material_slots.list_slots, models.MaterialSlotsListParams),
+            "material.slot_append": Command(material_slots.append, models.MaterialSlotAppendParams, mutates=True),
+            "material.slot_replace": Command(material_slots.replace, models.MaterialSlotReplaceParams, mutates=True),
+            "material.slot_remove": Command(material_slots.remove, models.MaterialSlotRemoveParams, mutates=True),
+            "material.assign_faces": Command(
+                material_slots.assign_faces, models.MaterialAssignFacesParams, mutates=True
+            ),
             "mesh.inspect": Command(mesh.inspect, models.MeshInspectParams),
             "object.create_mesh": Command(objects.create_mesh, models.ObjectCreateMeshParams, mutates=True),
             "object.delete": Command(objects.delete, models.ObjectDeleteParams, mutates=True),

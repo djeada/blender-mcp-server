@@ -1037,6 +1037,107 @@ bpy.context.scene.world = world
     call("world_set", mode="color", color=[0.05, 0.05, 0.05], strength=1)
 
 
+# Four faces in four slots on a mesh shared by two objects, each with one object-linked slot. This is
+# the layout where Blender's own slot removal drops one object's material and misaligns the other's.
+_SLOT_FIXTURE = """
+suffix = args['suffix']
+mesh = bpy.data.meshes.new('ITSlotMesh' + suffix)
+mesh.from_pydata([(i, j, 0) for i in range(5) for j in range(2)], [],
+                 [(i * 2, i * 2 + 2, i * 2 + 3, i * 2 + 1) for i in range(4)])
+names = [f'ITSlot{i}{suffix}' for i in range(4)]
+for name in names:
+    mesh.materials.append(bpy.data.materials.new(name))
+for index, polygon in enumerate(mesh.polygons):
+    polygon.material_index = index
+objects = []
+for letter, slot in (('A', 2), ('B', 3)):
+    obj = bpy.data.objects.new('ITSlot' + letter + suffix, mesh)
+    bpy.context.scene.collection.objects.link(obj)
+    obj.material_slots[slot].link = 'OBJECT'
+    obj.material_slots[slot].material = bpy.data.materials.new('ITOwn' + letter + suffix)
+    obj.vertex_groups.new(name='strip').add([0, 1, 2, 3], 1.0, 'REPLACE') if letter == 'A' else None
+    objects.append(obj.name)
+__result__ = objects
+"""
+
+_FACE_MATERIALS = """
+__result__ = {
+    name: [bpy.data.objects[name].material_slots[p.material_index].material.name
+           for p in bpy.data.objects[name].data.polygons]
+    for name in args['names']
+}
+"""
+
+
+def test_material_slots_preserve_what_other_objects_show(call):
+    def fixture(suffix):
+        result = call("python_exec", code=_SLOT_FIXTURE, args={"suffix": suffix})
+        assert result["error"] is None, result
+        return result["result"]
+
+    def shown(names):
+        result = call("python_exec", code=_FACE_MATERIALS, args={"names": names})
+        assert result["error"] is None, result
+        return result["result"]
+
+    for removed in range(4):
+        suffix = f"_r{removed}"
+        first, second = fixture(suffix)
+        before = shown([first, second])
+        keep = 0 if removed else 1
+        slots = call("material_slots", object=first)["slots"]
+        assert [slot["faces"] for slot in slots] == [1, 1, 1, 1]
+        replacement = {}
+        for name in (first, second):
+            code = f"__result__ = bpy.data.objects[{name!r}].material_slots[{keep}].material.name"
+            replacement[name] = _python(call, code)
+        with pytest.raises(protocol.BridgeError, match="pass 'remap_to'"):
+            call("material_slot_remove", object=first, index=removed, shared_data="update_all")
+        with pytest.raises(protocol.BridgeError, match="shared by 2 objects"):
+            call("material_slot_remove", object=first, index=removed, remap_to=keep)
+        assert shown([first, second]) == before
+        call("material_slot_remove", object=first, index=removed, remap_to=keep, shared_data="update_all")
+        after = shown([first, second])
+        for name in (first, second):
+            expected = [replacement[name] if face == removed else m for face, m in enumerate(before[name])]
+            assert after[name] == expected, (removed, name)
+
+    # Making a single user must carry object-linked materials over and leave the other object alone.
+    first, second = fixture("_single")
+    before = shown([first, second])
+    added = call("material_slot_append", object=first, material="ITSlot0_single", shared_data="make_single_user")
+    assert "mesh_shared_by" not in added and added["added_index"] == 4
+    assert shown([first, second]) == before
+
+    # Three independent regions on one mesh, using each selector, with exact counts.
+    call("object_create", name="ITRegions")
+    for name in ("ITSkin", "ITTeeth", "ITArmor"):
+        call("material_create", name=name)
+        call("material_slot_append", object="ITRegions", material=name)
+    _python(
+        call,
+        """
+obj = bpy.data.objects['ITRegions']
+top = max(v.co.z for v in obj.data.vertices)
+obj.vertex_groups.new(name='top').add([v.index for v in obj.data.vertices if v.co.z == top], 1.0, 'REPLACE')
+""",
+    )
+    call("material_assign_faces", object="ITRegions", material="ITTeeth", vertex_group="top")
+    result = call("material_assign_faces", object="ITRegions", material="ITArmor", face_indices=[0, 2])
+    counts = {slot["material"]: slot["faces"] for slot in result["slots"]}
+    assert counts["ITTeeth"] == 1 and counts["ITArmor"] == 2 and counts["ITSkin"] == 3
+    assert call("material_assign_faces", object="ITRegions", slot=1, from_slot=2)["selected_faces"] == 2
+    linked = call("material_slot_replace", object="ITRegions", index=0, material="ITArmor", link="OBJECT")
+    assert linked["slots"][0]["link"] == "OBJECT" and linked["slots"][0]["data_material"] == "ITSkin"
+    # The original single-material assign keeps its behaviour: it sets the mesh's slot 0 only.
+    before_assign = call("material_slots", object="ITRegions")["slots"]
+    assert before_assign[0]["data_material"] == "ITSkin"
+    call("material_assign", object="ITRegions", material="ITTeeth")
+    after_assign = call("material_slots", object="ITRegions")["slots"]
+    assert after_assign[0]["data_material"] == "ITTeeth"
+    assert after_assign[0]["material"] == "ITArmor" and after_assign[1:] == before_assign[1:]
+
+
 @pytest.mark.asyncio
 async def test_mcp_stdio_compact_profile_discovers_and_invokes(bridge):
     async with (

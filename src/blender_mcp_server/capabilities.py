@@ -74,8 +74,13 @@ GROUPS: dict[str, Group] = {
         },
     ),
     "materials": Group(
-        "Create, assign and color materials and set image textures.",
+        "Create, assign and color materials, set image textures, and manage material slots and face regions.",
         {
+            "blender_material_slots": ("material.list_slots",),
+            "blender_material_slot_append": ("material.slot_append",),
+            "blender_material_slot_replace": ("material.slot_replace",),
+            "blender_material_slot_remove": ("material.slot_remove",),
+            "blender_material_assign_faces": ("material.assign_faces",),
             "blender_material_list": ("material.list",),
             "blender_material_create": ("material.create",),
             "blender_material_assign": ("material.assign",),
@@ -183,7 +188,11 @@ KEYWORDS: dict[str, str] = {
     "blender_material_create": "shader surface color pbr",
     "blender_material_set_texture": "image map albedo basecolor pbr texturing uv",
     "blender_material_set_color": "paint tint albedo",
-    "blender_material_assign": "apply shader",
+    "blender_material_assign": "apply shader whole object",
+    "blender_material_slots": "multiple materials regions list",
+    "blender_material_slot_append": "multiple materials add second another region",
+    "blender_material_assign_faces": "paint part region face selection multiple materials skin teeth eyes armor "
+    "vertex group",
     "blender_light_create": "lamp illuminate illumination lighting brightness sun spot area key fill rim",
     "blender_light_update": "lamp illumination lighting brightness energy warm cool temperature kelvin softness",
     "blender_lighting_inspect": "lights check review current setup report world exposure",

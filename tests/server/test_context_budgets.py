@@ -37,6 +37,20 @@ async def test_tool_lists_stay_within_budget():
         assert size <= limit["bytes"], f"{profile} tools/list grew to {size} bytes (limit {limit['bytes']})"
 
 
+@pytest.mark.asyncio
+async def test_documented_sizes_match_the_server():
+    """Published figures must be measured ones. KB here means 1,000 bytes, to one decimal."""
+    sizes = await benchmark.measure_tool_lists()
+    kilobytes = {profile: f"{size / 1000:.1f} KB" for profile, (_, size) in sizes.items()}
+    table = (ROOT / "docs" / "profiles.md").read_text()
+    for profile, (count, _) in sizes.items():
+        row = next(line for line in table.splitlines() if line.startswith(f"| `{profile}`"))
+        assert row.rstrip().endswith(f"| {count} | {kilobytes[profile]} |"), (profile, row, count, kilobytes[profile])
+    for document in ("README.md", "CHANGELOG.md"):
+        text = (ROOT / document).read_text()
+        assert kilobytes["compact"] in text and kilobytes["full"] in text, (document, kilobytes)
+
+
 def test_compact_stays_far_smaller_than_full():
     limits = BUDGETS["tools_list"]
     assert limits["compact"]["bytes"] * 6 < limits["full"]["bytes"]

@@ -512,3 +512,52 @@ class WorldSetParams(BridgeParams):
         "clear_camera_background": field("bool", False),
         "on_conflict": field("str", "error"),
     }
+
+
+_SHARED_DATA = field("str", "error")
+
+
+class MaterialSlotsListParams(BridgeParams):
+    fields = {"object": field("str", required=True), **PageParams.fields}
+
+
+class MaterialSlotAppendParams(BridgeParams):
+    fields = {
+        "object": field("str", required=True),
+        "material": field("str", allow_none=True),
+        "link": field("str", "DATA"),
+        "shared_data": _SHARED_DATA,
+    }
+
+
+class MaterialSlotReplaceParams(BridgeParams):
+    fields = {
+        "object": field("str", required=True),
+        "index": field("int", required=True, ge=0),
+        "material": field("str", allow_none=True),
+        "link": field("str", allow_none=True),
+        "shared_data": _SHARED_DATA,
+    }
+
+
+class MaterialSlotRemoveParams(BridgeParams):
+    fields = {
+        "object": field("str", required=True),
+        "index": field("int", required=True, ge=0),
+        "remap_to": field("int", allow_none=True, ge=0),
+        "shared_data": _SHARED_DATA,
+    }
+
+
+class MaterialAssignFacesParams(BridgeParams):
+    fields = {
+        "object": field("str", required=True),
+        "slot": field("int", allow_none=True, ge=0),
+        "material": field("str", allow_none=True),
+        "face_indices": field("list", allow_none=True),
+        "vertex_group": field("str", allow_none=True),
+        "from_slot": field("int", allow_none=True, ge=0),
+        "match": field("str", "all"),
+        "min_weight": field("float", 0.0, ge=0, le=1),
+        "shared_data": _SHARED_DATA,
+    }

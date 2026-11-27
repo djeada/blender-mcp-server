@@ -46,10 +46,15 @@ from blender_mcp_server.tools.lighting import (
 )
 from blender_mcp_server.tools.materials import (
     material_assign,
+    material_assign_faces,
     material_create,
     material_list,
     material_set_color,
     material_set_texture,
+    material_slot_append,
+    material_slot_remove,
+    material_slot_replace,
+    material_slots,
 )
 from blender_mcp_server.tools.mesh import mesh_inspect
 from blender_mcp_server.tools.objects import (
@@ -138,6 +143,11 @@ __all__ = [
     "material_assign",
     "material_set_color",
     "material_set_texture",
+    "material_slots",
+    "material_slot_append",
+    "material_slot_replace",
+    "material_slot_remove",
+    "material_assign_faces",
     "mesh_inspect",
     "camera_create",
     "camera_update",

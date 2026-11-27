@@ -178,6 +178,30 @@ All inputs are validated, and an image is loaded and checked (at most 256 MB and
 | `blender_material_set_color` | Set the Principled BSDF base color |
 | `blender_material_set_texture` | Set an image texture as base color |
 
+#### Material slots and face regions
+
+One mesh can use several materials, such as skin, eyes and armor. `blender_material_assign` still sets the mesh's first slot (or adds one). These tools manage the others. They work on mesh objects outside Edit Mode.
+
+| Tool | Does |
+|---|---|
+| `blender_material_slots` | Read-only: each slot's `index`, `material`, `link` (`DATA` or `OBJECT`) and face count; `faces_without_slot`; other objects sharing the mesh (`limit`, `offset`) |
+| `blender_material_slot_append` | Add a slot, empty or with a material |
+| `blender_material_slot_replace` | Set or empty one slot's material, optionally changing its link |
+| `blender_material_slot_remove` | Remove a slot; `remap_to` names the slot that takes its faces |
+| `blender_material_assign_faces` | Move faces to a slot, given by `slot` or by a `material` already in a slot |
+
+`blender_material_assign_faces` takes exactly one selector:
+
+- `face_indices`: raw mesh face indices (up to 100,000), such as those reported by `blender_mesh_inspect` with `source="raw"`.
+- `vertex_group`: faces whose vertices are in the group with weight above `min_weight` (default 0). `match="all"` (default) needs every vertex of a face; `match="any"` needs one.
+- `from_slot`: every face now using that slot.
+
+**Shared meshes.** Linked duplicates share a mesh, including its slots, data-linked materials and face assignments. Changing any of those fails and names the objects unless you pass `shared_data="update_all"` or `"make_single_user"`, which gives this object its own copy first. Replacing a material with `link="OBJECT"` affects only one object and needs no choice. Appending an object-linked slot still adds a slot to the shared mesh.
+
+**Removal.** If faces use the slot, `remap_to` is required, using the slot numbers from before the removal. Every other face, and every object's object-linked materials, show the same material afterwards. These tools restore that explicitly, because Blender's own slot removal can drop or misplace object-linked materials.
+
+Each change is checked completely before anything is modified and is one undo step.
+
 ### Rendering & Export
 
 | Tool | Description |
