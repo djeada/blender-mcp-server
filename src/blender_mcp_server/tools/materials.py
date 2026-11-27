@@ -2,15 +2,15 @@
 
 from mcp.server.fastmcp import Context
 
-from blender_mcp_server.app import bridge, mcp
+from blender_mcp_server.app import bridge, mcp, page_limit
 
 
 @mcp.tool(
     name="blender_material_list",
     description="List all materials in the Blender file.",
 )
-async def material_list(ctx: Context) -> str:
-    return await bridge(ctx, "material.list")
+async def material_list(ctx: Context, limit: int | None = None, offset: int | None = None) -> str:
+    return await bridge(ctx, "material.list", limit=page_limit(limit), offset=offset)
 
 
 @mcp.tool(

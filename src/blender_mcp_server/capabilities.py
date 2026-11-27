@@ -8,10 +8,11 @@ from __future__ import annotations
 
 import argparse
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
 from blender_mcp_server.shared import protocol
+from blender_mcp_server.wire import OutputBudget
 
 if TYPE_CHECKING:
     from collections.abc import Iterable, Mapping, Sequence
@@ -184,6 +185,11 @@ DISCOVERY_TOOLS = frozenset(
     }
 )
 
+# Advertised with compact output, the only mode that truncates responses.
+OUTPUT_TOOL = "blender_output_read"
+SUPPORT_TOOLS = DISCOVERY_TOOLS | {OUTPUT_TOOL}
+OUTPUT_MODES = ("auto", "compact", "full")
+
 TOOL_GROUPS = {tool: name for name, group in GROUPS.items() for tool in group.tools}
 _COMMAND_GROUPS = {
     command: TOOL_GROUPS[tool] for group in GROUPS.values() for tool, cmds in group.tools.items() for command in cmds
@@ -202,10 +208,16 @@ class Exposure:
     profile: str = DEFAULT_PROFILE
     advertised: frozenset[str] = PROFILES[DEFAULT_PROFILE]
     allowed: frozenset[str] = frozenset(GROUPS)
+    output: OutputBudget = field(default_factory=OutputBudget)
 
     @classmethod
     def create(
-        cls, profile: str = DEFAULT_PROFILE, enable: Iterable[str] = (), allow: Iterable[str] | None = None
+        cls,
+        profile: str = DEFAULT_PROFILE,
+        enable: Iterable[str] = (),
+        allow: Iterable[str] | None = None,
+        output: str = "auto",
+        **budgets: int,
     ) -> Exposure:
         """Build a validated exposure. `allow` limits every group, including on-demand use; core is always kept."""
         _names("profile", [profile], PROFILES)
@@ -213,11 +225,13 @@ class Exposure:
         allowed = frozenset(GROUPS) if allow is None else _names("capability group", allow, GROUPS) | {"core"}
         if blocked := enabled - allowed:
             raise ValueError(f"Enabled groups are not in the allowed groups: {', '.join(sorted(blocked))}")
-        return cls(profile, (PROFILES[profile] | enabled) & allowed, allowed)
+        _names("output mode", [output], OUTPUT_MODES)
+        compact = profile == "compact" if output == "auto" else output == "compact"
+        return cls(profile, (PROFILES[profile] | enabled) & allowed, allowed, OutputBudget(compact, **budgets))
 
     @property
     def compact_output(self) -> bool:
-        return self.profile == "compact"
+        return self.output.compact
 
     @property
     def on_demand(self) -> frozenset[str]:
@@ -227,6 +241,8 @@ class Exposure:
     def advertises(self, tool: str) -> bool:
         if tool in DISCOVERY_TOOLS:
             return bool(self.on_demand)
+        if tool == OUTPUT_TOOL:
+            return self.compact_output
         return TOOL_GROUPS.get(tool) in self.advertised
 
     def require_allowed_group(self, group: str, subject: str) -> None:
@@ -236,11 +252,10 @@ class Exposure:
             )
 
     def require_advertised(self, tool: str) -> None:
-        if tool in DISCOVERY_TOOLS:
-            if not self.on_demand:
-                raise protocol.BridgeError(
-                    "tool_not_enabled", f"{tool} is unavailable because every allowed tool is already advertised"
-                )
+        if tool in SUPPORT_TOOLS:
+            if not self.advertises(tool):
+                reason = "every allowed tool is already advertised" if tool in DISCOVERY_TOOLS else "output is full"
+                raise protocol.BridgeError("tool_not_enabled", f"{tool} is unavailable because {reason}")
             return
         group = TOOL_GROUPS[tool]
         self.require_allowed_group(group, tool)
@@ -288,9 +303,34 @@ def parse_exposure(argv: Sequence[str], environ: Mapping[str, str] | None = None
         help="Comma-separated limit on usable groups, advertised or on demand. Default: all "
         "(env BLENDER_MCP_ALLOWED_GROUPS).",
     )
+    parser.add_argument(
+        "--output",
+        default=env.get("BLENDER_MCP_OUTPUT") or "auto",
+        help="'compact' bounds and pages responses; 'full' returns them whole. 'auto' is compact only with the "
+        "compact profile (env BLENDER_MCP_OUTPUT).",
+    )
+    defaults = OutputBudget()
+    for name, description in (
+        ("max_response_bytes", "Largest compact response before it becomes a preview"),
+        ("page_size", "Default page size for compact listings"),
+        ("log_tail_chars", "Characters of stdout and stderr shown in compact output"),
+    ):
+        variable = f"BLENDER_MCP_{name.upper()}"
+        parser.add_argument(
+            f"--{name.replace('_', '-')}",
+            type=int,
+            default=env.get(variable) or getattr(defaults, name),  # argparse converts string defaults
+            help=f"{description} (env {variable}, default {getattr(defaults, name)}).",
+        )
     options = parser.parse_args(argv)
     allow = None if options.allow_groups is None else _split(options.allow_groups)
     try:
-        return Exposure.create(options.profile, _split(options.enable_groups), allow)
+        return Exposure.create(
+            options.profile,
+            _split(options.enable_groups),
+            allow,
+            options.output,
+            **{name: getattr(options, name) for name in OutputBudget.LIMITS},
+        )
     except ValueError as exc:
         parser.error(str(exc))

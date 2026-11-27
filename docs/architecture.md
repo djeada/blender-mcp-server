@@ -25,7 +25,8 @@ The Blender MCP Server enables AI assistants (Claude Desktop, etc.) to control B
 `server.py` assembles and re-exports the tools defined in `tools/` by feature.
 `app.py` owns the MCP instance, connection lifespan, and transport helpers.
 `capabilities.py` assigns each tool to a capability group and resolves the startup
-[profile](profiles.md); `search.py` ranks on-demand matches and `wire.py` shrinks compact payloads.
+[profile](profiles.md); `search.py` ranks on-demand matches and `wire.py` bounds compact payloads and
+keeps the full copies for continuation reads.
 `connection.py` handles authenticated TCP requests and response framing.
 `headless.py` manages background Blender processes and jobs. The packaged add-on
 provides the shared rendering, export and project commands. Importing the package alone does not

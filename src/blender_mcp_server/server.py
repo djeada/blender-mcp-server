@@ -65,6 +65,7 @@ from blender_mcp_server.tools.objects import (
     object_unparent,
     object_update_modifier,
 )
+from blender_mcp_server.tools.output import output_read
 from blender_mcp_server.tools.project import project_get_info, project_open, project_revert, project_save
 from blender_mcp_server.tools.rendering import (
     render_animation,
@@ -89,6 +90,7 @@ __all__ = [
     "capability_describe",
     "capability_invoke",
     "capability_reset",
+    "output_read",
     "scene_get_info",
     "scene_execute_batch",
     "project_get_info",

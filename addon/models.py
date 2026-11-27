@@ -139,7 +139,14 @@ class SceneListObjectsParams(BridgeParams):
         "collection": field("str", allow_none=True),
         "visible": field("bool", allow_none=True),
         "limit": field("int", allow_none=True, gt=0),
-        "offset": field("int", allow_none=True),
+        "offset": field("int", allow_none=True, ge=0),
+    }
+
+
+class PageParams(BridgeParams):
+    fields = {
+        "limit": field("int", allow_none=True, gt=0),
+        "offset": field("int", allow_none=True, ge=0),
     }
 
 
@@ -148,7 +155,12 @@ class ObjectGetTransformParams(BridgeParams):
 
 
 class ObjectGetHierarchyParams(BridgeParams):
-    fields = {"name": field("str", allow_none=True)}
+    fields = {
+        "name": field("str", allow_none=True),
+        "max_nodes": field("int", allow_none=True, gt=0),
+        "max_depth": field("int", allow_none=True, ge=0),
+        "offset": field("int", allow_none=True, ge=0),
+    }
 
 
 class ObjectCreateMeshParams(BridgeParams):
@@ -334,6 +346,7 @@ class KeyframeListParams(BridgeParams):
     fields = {
         "name": field("str", required=True),
         "property": field("str", allow_none=True),
+        **PageParams.fields,
     }
 
 

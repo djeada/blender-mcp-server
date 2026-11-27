@@ -4,9 +4,9 @@ Many clients put every tool's schema into the model's context. A profile chooses
 
 | Profile | Advertised groups | Tools | Serialized `tools/list` |
 |---|---|---:|---:|
-| `compact` | `core` | 14 | 5.2 KB |
-| `standard` | `core`, `scene`, `modeling`, `materials`, `lighting`, `rendering` | 49 | 32.8 KB |
-| `full` (default) | all | 55 | 38.3 KB |
+| `compact` | `core` | 15 | 5.7 KB |
+| `standard` | `core`, `scene`, `modeling`, `materials`, `lighting`, `rendering` | 49 | 33.5 KB |
+| `full` (default) | all | 55 | 39.4 KB |
 
 Sizes are the bytes of the JSON `tools/list` result. A client may reformat schemas, and token counts depend on its tokenizer, so treat bytes as a way to compare profiles, not as a promise about a particular context window. Reproduce them with `python scripts/measure_context.py`.
 
@@ -91,4 +91,38 @@ To keep a group unusable, set `--allow-groups`. It applies to direct calls, sear
 
 Calling a hidden tool directly fails with `tool_not_enabled`. A group outside `--allow-groups` fails with `permission_denied`.
 
-In the compact profile, results are sent once as unindented JSON without a duplicate structured copy, schemas omit generated titles and output schemas, and `blender_status` returns a summary. Pass `detail="full"` to `blender_status` for the complete lists.
+## Compact output
+
+The compact profile also keeps responses small. `--output compact` turns this on with another profile, and `--output full` turns it off.
+
+- Results are sent once, as unindented JSON without a duplicate structured copy. Schemas omit generated titles and output schemas.
+- `blender_status` returns a summary. `detail="full"` returns the complete lists.
+- Object, material, collection, keyframe and job listings return one page with `total` and `next_offset`. `blender_object_get_hierarchy` returns a node-limited tree; request a node with `children_omitted` by name to continue. Blender builds only the requested page of the hierarchy and material, collection and object records. Pass `limit` or `max_nodes` for a different size.
+- Long `stdout` and `stderr` keep their last characters, and `error` keeps twice as many, so the end of a traceback survives.
+- A response that is still over the budget becomes a preview. Its `truncation` field gives the total size, what was left out and an `output_id`. Failed batch steps and error findings are never dropped by list limits.
+
+`blender_output_read(output_id, path, offset, limit)` returns the rest without running the command again, which matters for scripts and batches that change the scene. `path` is dotted, such as `stdout` or `result.findings.0.ids`, and keys with dots such as `Cube.001` work. Follow `next_offset`. A part too big to return lists its keys, and a list item too big for a page is named in `item_too_large`. The server keeps each session's eight most recent truncated outputs (16 MB in total, in memory), and older IDs expire.
+
+| Option | Environment variable | Default |
+|---|---|---:|
+| `--max-response-bytes` | `BLENDER_MCP_MAX_RESPONSE_BYTES` | 8000 (minimum 2000) |
+| `--page-size` | `BLENDER_MCP_PAGE_SIZE` | 25 |
+| `--log-tail-chars` | `BLENDER_MCP_LOG_TAIL_CHARS` | 2000 |
+
+These are context budgets for text. They are separate from the 8 MB wire limit and from the [policy's](policy.md) execution limits. Bytes only approximate tokens: for English JSON, four bytes per token is a rough guide that varies with the tokenizer.
+
+### Measured responses
+
+Result sizes in bytes, including the MCP result wrapper, measured against Blender 5.1.1 with 501 objects in 50 parent groups and 80 materials:
+
+| Task | Full | Compact |
+|---|---:|---:|
+| `blender_status` | 8,886 | 746 |
+| List objects | 174,589 | 2,329 |
+| Scene hierarchy | 118,023 | 1,644 |
+| List materials | 16,547 | 1,656 |
+| Mesh inspection with regions and 100 sample IDs | 5,861 | 2,758 |
+| Script printing 3,000 lines and returning 501 entries | 177,329 | 3,207 |
+| Batch of 32 steps, one failing | 15,431 | 6,448 |
+
+Compact listings return only the first page, so reading every record costs more round trips.

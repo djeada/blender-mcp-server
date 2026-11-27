@@ -10,13 +10,22 @@ import pytest
 from mcp.shared.memory import create_connected_server_and_client_session
 
 from blender_mcp_server.app import mcp
-from blender_mcp_server.capabilities import DISCOVERY_TOOLS, GROUPS, KEYWORDS, TOOL_GROUPS, Exposure, parse_exposure
+from blender_mcp_server.capabilities import (
+    DISCOVERY_TOOLS,
+    GROUPS,
+    KEYWORDS,
+    OUTPUT_TOOL,
+    SUPPORT_TOOLS,
+    TOOL_GROUPS,
+    Exposure,
+    parse_exposure,
+)
 from blender_mcp_server.connection import BlenderConnection
 from blender_mcp_server.server import main  # noqa: F401  (importing registers every tool)
 
 # The compact startup surface. Growing it, or these limits, is a deliberate change: update the docs with it.
-COMPACT_TOOLS = sorted([*GROUPS["core"].tools, *DISCOVERY_TOOLS])
-COMPACT_SCHEMA_BYTE_BUDGET = 5_600
+COMPACT_TOOLS = sorted([*GROUPS["core"].tools, *SUPPORT_TOOLS])
+COMPACT_SCHEMA_BYTE_BUDGET = 6_200
 
 # Names that existing full-profile clients depend on.
 LEGACY_TOOLS = [
@@ -126,7 +135,7 @@ async def _describe_and_invoke(client, action, arguments):
 def test_every_tool_has_exactly_one_group():
     grouped = [tool for group in GROUPS.values() for tool in group.tools]
     assert len(grouped) == len(set(grouped))
-    assert set(mcp._tool_manager._tools) == set(grouped) | DISCOVERY_TOOLS
+    assert set(mcp._tool_manager._tools) == set(grouped) | SUPPORT_TOOLS
     assert set(KEYWORDS) <= set(grouped)
 
 
@@ -166,6 +175,7 @@ async def test_standard_profile_and_enabled_groups(serve):
         names = {tool.name for tool in (await client.list_tools()).tools}
     assert "blender_mesh_inspect" in names and names >= DISCOVERY_TOOLS
     assert not {"blender_python_exec", "blender_keyframe_add"} & names
+    assert OUTPUT_TOOL not in names  # standard output is not truncated
     async with serve("compact", enable=["lighting"]) as client:
         names = {tool.name for tool in (await client.list_tools()).tools}
         assert names == set(COMPACT_TOOLS) | set(GROUPS["lighting"].tools)

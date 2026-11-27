@@ -5,7 +5,7 @@ from typing import Any
 from mcp.server.fastmcp import Context
 from typing_extensions import NotRequired, TypedDict
 
-from blender_mcp_server.app import bridge, bridge_result, mcp
+from blender_mcp_server.app import bridge, bridge_result, mcp, page_limit
 
 
 @mcp.tool(
@@ -21,7 +21,7 @@ async def scene_get_info(ctx: Context) -> str:
     description=(
         "List all objects in the current Blender scene with stable name sorting, pagination and filters. "
         "Optional: type (MESH, CAMERA, LIGHT, EMPTY, CURVE, ...), name substring, collection membership, "
-        "visibility, limit and offset. Returns total matches plus the returned page."
+        "visibility, limit and offset. Returns total matches plus the returned page and next_offset."
     ),
 )
 async def scene_list_objects(
@@ -40,7 +40,7 @@ async def scene_list_objects(
         name=name,
         collection=collection,
         visible=visible,
-        limit=limit,
+        limit=page_limit(limit),
         offset=offset,
     )
 
@@ -57,8 +57,8 @@ async def collection_create(ctx: Context, name: str, parent: str | None = None) 
     name="blender_collection_list",
     description="List all collections with their object counts.",
 )
-async def collection_list(ctx: Context) -> str:
-    return await bridge(ctx, "collection.list")
+async def collection_list(ctx: Context, limit: int | None = None, offset: int | None = None) -> str:
+    return await bridge(ctx, "collection.list", limit=page_limit(limit), offset=offset)
 
 
 @mcp.tool(

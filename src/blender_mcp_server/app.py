@@ -12,11 +12,11 @@ from mcp.server.fastmcp import Context, FastMCP
 from mcp.server.fastmcp.exceptions import ToolError
 from pydantic import ValidationError
 
-from blender_mcp_server.capabilities import DISCOVERY_TOOLS, TOOL_GROUPS, Exposure
+from blender_mcp_server.capabilities import OUTPUT_TOOL, SUPPORT_TOOLS, TOOL_GROUPS, Exposure
 from blender_mcp_server.connection import BlenderConnection
 from blender_mcp_server.headless import HeadlessBlenderExecutor, HeadlessJobManager
 from blender_mcp_server.shared import protocol
-from blender_mcp_server.wire import compact_result, compact_tool
+from blender_mcp_server.wire import OutputStore, compact_result, compact_tool
 
 HEADLESS_JOB_MANAGER = HeadlessJobManager()
 Transport = Literal["bridge", "headless"]
@@ -25,6 +25,7 @@ Transport = Literal["bridge", "headless"]
 class BlenderMCP(FastMCP):
     # Replaced once at startup from the command line and environment.
     exposure = Exposure()
+    outputs = OutputStore()
 
     async def list_tools(self) -> list[types.Tool]:
         tools = [tool for tool in await super().list_tools() if self.exposure.advertises(tool.name)]
@@ -32,11 +33,15 @@ class BlenderMCP(FastMCP):
 
     async def call_tool(self, name: str, arguments: dict[str, Any]):
         try:
-            if name in TOOL_GROUPS or name in DISCOVERY_TOOLS:
+            if name in TOOL_GROUPS or name in SUPPORT_TOOLS:
                 self.exposure.require_advertised(name)
                 self.exposure.require_arguments(name, arguments)
             result = await super().call_tool(name, arguments)
-            return compact_result(result) if self.exposure.compact_output else result
+            if not self.exposure.compact_output:
+                return result
+            if name == OUTPUT_TOOL:  # its pages are already sized to the budget
+                return compact_result(result, self.exposure.output)
+            return compact_result(result, self.exposure.output, self.outputs, self.get_context().session)
         except (ToolError, protocol.BridgeError) as exc:
             cause: BaseException = exc
             while isinstance(cause, ToolError) and cause.__cause__ is not None:
@@ -77,6 +82,13 @@ def get_connection(ctx: Context) -> BlenderConnection:
 async def bridge_result(ctx: Context, command: str, **params: Any) -> Any:
     payload = {key: value for key, value in params.items() if value is not None}
     return await get_connection(ctx).send_command(command, payload)
+
+
+def page_limit(limit: int | None) -> int | None:
+    """Compact output pages every listing; full output keeps returning everything unless asked."""
+    if limit is None and mcp.exposure.compact_output:
+        return mcp.exposure.output.page_size
+    return limit
 
 
 async def bridge(ctx: Context, command: str, **params: Any) -> str:

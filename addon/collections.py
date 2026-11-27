@@ -2,6 +2,7 @@
 
 import bpy
 
+from .paging import paginate
 from .protocol import MissingResourceError
 
 
@@ -26,7 +27,8 @@ def create(params: dict) -> dict:
 
 
 def list_collections(params: dict) -> dict:
-    return {"collections": [{"name": coll.name, "object_count": len(coll.objects)} for coll in bpy.data.collections]}
+    page, metadata = paginate(list(bpy.data.collections), params)
+    return {"collections": [{"name": coll.name, "object_count": len(coll.objects)} for coll in page], **metadata}
 
 
 def rename(params: dict) -> dict:

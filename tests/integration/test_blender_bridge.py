@@ -530,7 +530,7 @@ async def test_mcp_stdio_compact_profile_discovers_and_invokes(bridge):
         ClientSession(read, write) as session,
     ):
         await session.initialize()
-        assert len((await session.list_tools()).tools) == 14
+        assert len((await session.list_tools()).tools) == 15
 
         async def call(tool, **arguments):
             result = await session.call_tool(tool, arguments)

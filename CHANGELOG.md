@@ -9,8 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added
 - Tool profiles (`--profile compact|standard|full`, `--enable-groups`, `--allow-groups`, or the matching
-  environment variables). `compact` advertises 14 tools in 5.2 KB instead of every schema (38.3 KB). The default
+  environment variables). `compact` advertises 15 tools in 5.7 KB instead of every schema (39.4 KB). The default
   stays `full`.
+- Compact output (`--output compact`, on by default in the compact profile) pages listings, keeps log tails and
+  turns oversized responses into previews that `blender_output_read` can finish without rerunning anything. Budgets
+  are set with `--max-response-bytes`, `--page-size` and `--log-tail-chars`.
+- Material, collection, keyframe and job listings accept `limit` and `offset`; the hierarchy accepts `max_nodes`,
+  `max_depth` and `offset`. Omitting them keeps the previous complete results in full output.
 - On-demand discovery: `blender_capability_search` / `describe` / `invoke` / `reset` reach unadvertised actions
   with the same validation, handlers and policy checks as direct calls.
 - `blender_status` reports the active profile and accepts `detail` (`auto`, `summary`, `full`).

@@ -2,6 +2,8 @@
 
 The server advertises all of these by default. [Tool profiles](profiles.md) explains how to advertise fewer and discover the rest on demand.
 
+Object, material, collection, keyframe and job listings accept `limit` and `offset`, and then report `total` and `next_offset`. Without them they return everything, except in [compact output](profiles.md#compact-output).
+
 ### Scene Inspection
 
 | Tool | Description |
@@ -9,7 +11,7 @@ The server advertises all of these by default. [Tool profiles](profiles.md) expl
 | `blender_scene_get_info` | Scene metadata — name, frame range, render engine, resolution, object count |
 | `blender_scene_list_objects` | List objects with stable name sorting, optional filters (`type`, `name` substring, `collection`, `visibility`) and pagination (`limit`, `offset`); returns total matches |
 | `blender_object_get_transform` | Get position, rotation, and scale of an object by name |
-| `blender_object_get_hierarchy` | Parent/child hierarchy tree (full scene or subtree) |
+| `blender_object_get_hierarchy` | Parent/child hierarchy tree (full scene or subtree), optionally limited by `max_nodes` and `max_depth`, with `offset` paging the top level |
 
 ### Mesh Diagnostics
 
