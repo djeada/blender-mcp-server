@@ -41,6 +41,10 @@ Start with `blender_scene_get_info` to inspect the scene and `blender_status` to
 
 ![The Midnight Observatory project open in Blender with the MCP Bridge panel visible](docs/images/observatory-viewport.jpg)
 
+## Small-context clients
+
+By default the server advertises every tool. For local or small-context models, start it with `--profile compact`: it advertises 14 tools (5.2 KB of schemas instead of 38.3 KB), and the model finds and runs other actions on demand. See [Tool profiles](docs/profiles.md) for client configurations, capability groups and the trade-offs.
+
 ## Policy and recovery
 
 The add-on listens on loopback and authenticates requests using a private token. A shared policy file can restrict commands, paths, and execution budgets. Headless Blender requires explicit opt-in. Python scripts run with the permissions of the Blender process, so only enable script execution for trusted code.

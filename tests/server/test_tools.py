@@ -1,5 +1,6 @@
 """Tests for MCP tools."""
 
+import asyncio
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -115,7 +116,7 @@ class TestToolRegistration:
         assert "blender_job_list" in names
 
     def test_total_tool_count(self):
-        assert len(self._get_tool_names()) == 55
+        assert len(asyncio.run(mcp.list_tools())) == 55  # the default full profile
 
     @pytest.mark.parametrize(
         "name", ["blender_object_create_tree", "blender_object_scatter", "blender_material_create_emissive"]
@@ -123,7 +124,7 @@ class TestToolRegistration:
     def test_example_recipes_are_not_core_tools(self, name):
         assert name not in self._get_tool_names()
 
-    def test_all_tools_have_descriptions(self):
+    def test_all_tools_have_descriptions(self):  # includes tools that only some profiles advertise
         for tool in mcp._tool_manager._tools.values():
             assert tool.description, f"Tool {tool.name} has no description"
 
@@ -139,7 +140,7 @@ class TestMCPProtocol:
 
     def test_main_runs_stdio_transport(self):
         with patch.object(mcp, "run") as run:
-            main()
+            main([])
         run.assert_called_once_with(transport="stdio")
 
 

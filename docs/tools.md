@@ -1,5 +1,7 @@
 # Tool Reference
 
+The server advertises all of these by default. [Tool profiles](profiles.md) explains how to advertise fewer and discover the rest on demand.
+
 ### Scene Inspection
 
 | Tool | Description |

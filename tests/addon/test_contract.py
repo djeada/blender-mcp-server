@@ -92,6 +92,13 @@ class TestServerAddonContract:
         assert commands == set(runtime.handler.commands)
 
 
+def test_capability_registry_covers_every_bridge_command(runtime):
+    from blender_mcp_server.capabilities import GROUPS
+
+    registered = {command for group in GROUPS.values() for commands in group.tools.values() for command in commands}
+    assert registered == set(runtime.handler.commands)
+
+
 class TestVersionConsistency:
     def test_addon_version_matches_package(self, addon_module):
         import re

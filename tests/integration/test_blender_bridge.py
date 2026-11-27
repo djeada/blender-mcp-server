@@ -513,6 +513,39 @@ def test_mesh_inspection_diagnoses_fixtures_without_changing_state(call):
 
 
 @pytest.mark.asyncio
+async def test_mcp_stdio_compact_profile_discovers_and_invokes(bridge):
+    async with (
+        stdio_client(
+            StdioServerParameters(
+                command=sys.executable,
+                args=["-m", "blender_mcp_server", "--profile", "compact"],
+                env={
+                    **os.environ,
+                    "BLENDER_MCP_PORT": str(bridge["port"]),
+                    "BLENDER_MCP_TOKEN_FILE": str(bridge["token_file"]),
+                    "BLENDER_MCP_TOKEN": "",
+                },
+            )
+        ) as (read, write),
+        ClientSession(read, write) as session,
+    ):
+        await session.initialize()
+        assert len((await session.list_tools()).tools) == 14
+
+        async def call(tool, **arguments):
+            result = await session.call_tool(tool, arguments)
+            assert not result.isError, result.content[0].text
+            return json.loads(result.content[0].text)
+
+        await call("blender_object_create", name="ITCompact")
+        found = await call("blender_capability_search", query="check mesh topology")
+        assert found["actions"][0]["action"] == "blender_mesh_inspect"
+        await call("blender_capability_describe", actions=["blender_mesh_inspect"])
+        report = await call("blender_capability_invoke", action="blender_mesh_inspect", arguments={"name": "ITCompact"})
+        assert report["result"]["counts"]["raw"]["faces"] == 6
+
+
+@pytest.mark.asyncio
 async def test_mcp_stdio_preserves_legacy_success_and_exposes_structured_errors(bridge):
     async with (
         stdio_client(

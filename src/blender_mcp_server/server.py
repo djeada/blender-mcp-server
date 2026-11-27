@@ -1,6 +1,10 @@
 """Assemble the feature tools and expose the stdio server entrypoint."""
 
+import sys
+from collections.abc import Sequence
+
 from blender_mcp_server.app import blender_status, mcp
+from blender_mcp_server.capabilities import parse_exposure
 from blender_mcp_server.tools.animation import (
     keyframe_add,
     keyframe_list,
@@ -11,6 +15,12 @@ from blender_mcp_server.tools.animation import (
 from blender_mcp_server.tools.camera import (
     camera_create,
     camera_update,
+)
+from blender_mcp_server.tools.discovery import (
+    capability_describe,
+    capability_invoke,
+    capability_reset,
+    capability_search,
 )
 from blender_mcp_server.tools.execution import (
     job_cancel,
@@ -75,6 +85,10 @@ __all__ = [
     "main",
     "mcp",
     "blender_status",
+    "capability_search",
+    "capability_describe",
+    "capability_invoke",
+    "capability_reset",
     "scene_get_info",
     "scene_execute_batch",
     "project_get_info",
@@ -132,7 +146,8 @@ __all__ = [
 ]
 
 
-def main():
+def main(argv: Sequence[str] | None = None):
+    mcp.exposure = parse_exposure(sys.argv[1:] if argv is None else argv)
     mcp.run(transport="stdio")
 
 

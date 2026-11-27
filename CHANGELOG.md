@@ -8,6 +8,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 ## [Unreleased]
 
 ### Added
+- Tool profiles (`--profile compact|standard|full`, `--enable-groups`, `--allow-groups`, or the matching
+  environment variables). `compact` advertises 14 tools in 5.2 KB instead of every schema (38.3 KB). The default
+  stays `full`.
+- On-demand discovery: `blender_capability_search` / `describe` / `invoke` / `reset` reach unadvertised actions
+  with the same validation, handlers and policy checks as direct calls.
+- `blender_status` reports the active profile and accepts `detail` (`auto`, `summary`, `full`).
 - `blender_mesh_inspect` reports raw and evaluated mesh counts, local and world bounds, material slots, vertex
   groups, modifiers, connected components and topology findings with sample element IDs, without changing the
   scene. Duplicate-vertex and per-region checks are opt-in, and meshes over `element_budget` fail with
