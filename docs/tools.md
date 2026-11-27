@@ -4,6 +4,10 @@ The server advertises all of these by default. [Tool profiles](profiles.md) expl
 
 Object, material, collection, keyframe and job listings accept `limit` and `offset`, and then report `total` and `next_offset`. Without them they return everything, except in [compact output](profiles.md#compact-output).
 
+### Modeling Knowledge
+
+`blender_workflow`, `blender_guide_search` and `blender_guide_get` give staged plans and short technique guides offline. See [Modeling knowledge](knowledge.md).
+
 ### Scene Inspection
 
 | Tool | Description |

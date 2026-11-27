@@ -35,6 +35,7 @@ from blender_mcp_server.tools.exports import (
     export_gltf,
     export_obj,
 )
+from blender_mcp_server.tools.knowledge import guide_get, guide_search, workflow
 from blender_mcp_server.tools.lighting import (
     light_create,
     light_update,
@@ -92,6 +93,9 @@ __all__ = [
     "capability_invoke",
     "capability_reset",
     "output_read",
+    "workflow",
+    "guide_search",
+    "guide_get",
     "scene_get_info",
     "scene_execute_batch",
     "project_get_info",

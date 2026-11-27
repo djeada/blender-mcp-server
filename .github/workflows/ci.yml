@@ -180,6 +180,11 @@ jobs:
         run: |
           pip install build
           python -m build
+      - name: Verify the installed wheel loads its packaged data
+        run: |
+          python -m venv "$RUNNER_TEMP/wheel-env"
+          "$RUNNER_TEMP/wheel-env/bin/pip" install dist/*.whl
+          cd "$RUNNER_TEMP" && "$RUNNER_TEMP/wheel-env/bin/python" "$GITHUB_WORKSPACE/scripts/check_wheel.py"
       - name: Build Blender add-on zip
         run: ./scripts/build_addon_zip.sh
       - name: Upload distributions

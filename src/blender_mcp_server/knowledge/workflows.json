@@ -1,0 +1,93 @@
+{
+  "version": 1,
+  "note": "Stages apply to every style and target unless they list some. 'optional' stages may be skipped.",
+  "styles": ["lowpoly", "stylized", "realistic"],
+  "targets": ["render", "game"],
+  "style_words": {
+    "lowpoly": ["low poly", "lowpoly", "low-poly", "retro", "ps1", "flat shaded"],
+    "stylized": ["stylized", "stylised", "cartoon", "toon", "chibi", "hand painted"],
+    "realistic": ["realistic", "photorealistic", "lifelike", "cinematic"]
+  },
+  "target_words": {
+    "game": ["game", "unity", "unreal", "godot", "real-time", "realtime", "web", "mobile"],
+    "render": ["render", "film", "still", "poster", "illustration"]
+  },
+  "workflows": [
+    {
+      "id": "creature",
+      "title": "Creature or character",
+      "summary": "Proportions first, a lofted blockout, then only the detail the style and target need.",
+      "keywords": ["orc", "creature", "character", "monster", "goblin", "troll", "dragon", "animal", "human", "humanoid", "person", "hero", "villain", "alien", "zombie", "robot character", "beast"],
+      "default_style": "stylized",
+      "stages": [
+        {"id": "proportions", "goal": "Choose head units and place landmarks; get a readable silhouette.", "guides": ["anatomy-proportions#proportions", "anatomy-proportions#pattern"], "actions": ["blender_view_capture"], "checkpoint": "Front and right captures are recognisable from outline alone."},
+        {"id": "blockout", "goal": "Replace boxes with lofted torso, limbs and head volumes.", "guides": ["organic-modeling#pattern", "organic-modeling#pitfalls"], "actions": ["blender_view_capture", "blender_mesh_inspect"], "checkpoint": "Proportions still match; parts overlap where they join."},
+        {"id": "forms", "goal": "Refine jaw, brow, muscles and asymmetry without changing topology.", "guides": ["base-mesh-deformation#pattern"], "actions": ["blender_view_capture"], "checkpoint": "Three-quarter capture shows clear primary and secondary forms."},
+        {"id": "high-detail", "goal": "Optionally fuse parts and add broad surface detail on a copy.", "guides": ["sculpting-remeshing#pattern"], "styles": ["realistic"], "optional": true, "actions": ["blender_mesh_inspect"], "checkpoint": "One component, no non-manifold edges."},
+        {"id": "retopology", "goal": "Build a deformable cage over the dense surface.", "guides": ["retopology#pattern", "retopology#pitfalls"], "styles": ["realistic"], "actions": ["blender_mesh_inspect", "blender_view_capture"], "checkpoint": "Cage within budget with loops at joints."},
+        {"id": "uvs", "goal": "Add UVs if the look or the engine needs textures.", "guides": ["uv-unwrapping#pattern"], "styles": ["stylized", "realistic"], "optional": true, "actions": ["blender_material_set_texture", "blender_view_capture"], "checkpoint": "A checker texture looks even."},
+        {"id": "materials", "goal": "Assign a few materials with believable roughness.", "guides": ["pbr-materials#values", "pbr-materials#pattern"], "actions": ["blender_material_create", "blender_material_assign", "blender_view_capture"], "checkpoint": "Material capture separates skin, cloth and metal."},
+        {"id": "rigging", "goal": "Add a skeleton only if it must be posed or animated.", "guides": ["rigging#pattern", "rigging#checks"], "optional": true, "actions": ["blender_mesh_inspect", "blender_view_capture"], "checkpoint": "A bent joint keeps its volume."},
+        {"id": "delivery", "goal": "Apply transforms, meet the budget, export and verify.", "guides": ["game-optimization#pattern", "game-optimization#checks"], "targets": ["game"], "actions": ["blender_mesh_inspect", "blender_export_gltf"], "checkpoint": "Triangles within budget and the export opens correctly."}
+      ]
+    },
+    {
+      "id": "weapon-prop",
+      "title": "Weapon or hand-held prop",
+      "summary": "Blockout from reference proportions, hard-surface shaping, then materials.",
+      "keywords": ["sword", "weapon", "blade", "axe", "dagger", "hammer", "shield", "gun", "bow", "staff", "knife", "spear", "tool"],
+      "default_style": "stylized",
+      "stages": [
+        {"id": "blockout", "goal": "Block out blade, guard, grip and pommel as separate parts at true scale.", "guides": ["box-modeling#pattern", "anatomy-proportions#checks"], "actions": ["blender_object_create", "blender_view_capture"], "checkpoint": "Front capture reads clearly; part lengths are plausible."},
+        {"id": "shape", "goal": "Taper and profile each part; use curves for wrapped grips or curved guards.", "guides": ["hard-surface#pattern", "curves#pattern"], "actions": ["blender_object_add_modifier", "blender_view_capture"], "checkpoint": "Silhouette is distinct and edges are intentional."},
+        {"id": "edges", "goal": "Add small bevels so edges catch light.", "guides": ["hard-surface#pitfalls", "hard-surface#checks"], "styles": ["stylized", "realistic"], "actions": ["blender_object_add_modifier", "blender_mesh_inspect"], "checkpoint": "No non-manifold or zero-area faces in the evaluated mesh."},
+        {"id": "uvs", "goal": "Add UVs before using image textures.", "guides": ["uv-unwrapping#pattern"], "optional": true, "actions": ["blender_material_set_texture"], "checkpoint": "A checker texture looks even."},
+        {"id": "materials", "goal": "Separate metal, wood and leather by metallic and roughness.", "guides": ["pbr-materials#values", "pbr-materials#pattern"], "actions": ["blender_material_create", "blender_material_assign", "blender_view_capture"], "checkpoint": "Materials are distinguishable in a material capture."},
+        {"id": "delivery", "goal": "Set the pivot at the grip, apply scale, budget and export.", "guides": ["game-optimization#pattern", "game-optimization#checks"], "targets": ["game"], "actions": ["blender_mesh_inspect", "blender_export_gltf"], "checkpoint": "Within budget and correctly oriented after export."}
+      ]
+    },
+    {
+      "id": "building",
+      "title": "House, building or environment",
+      "summary": "Fix a grid, build a small kit, assemble it, then vary and optimise.",
+      "keywords": ["house", "building", "cabin", "hut", "castle", "tower", "village", "city", "room", "interior", "dungeon", "street", "environment", "scene", "wall", "architecture"],
+      "default_style": "stylized",
+      "stages": [
+        {"id": "layout", "goal": "Choose the grid unit and block out footprint, storeys and roof volume.", "guides": ["modular-modeling#tradeoffs", "box-modeling#pattern"], "actions": ["blender_object_create", "blender_view_capture"], "checkpoint": "Top and front captures show the intended footprint and height."},
+        {"id": "modules", "goal": "Build wall, door, window, floor and roof modules with corner pivots.", "guides": ["modular-modeling#pattern", "modular-modeling#pitfalls"], "actions": ["blender_mesh_inspect", "blender_collection_create"], "checkpoint": "Each module is clean and snaps to the grid."},
+        {"id": "assembly", "goal": "Assemble with linked duplicates and check alignment.", "guides": ["modular-modeling#checks"], "actions": ["blender_view_capture", "blender_object_duplicate"], "checkpoint": "No gaps or visible overlaps from top and front."},
+        {"id": "dressing", "goal": "Add trim, props and repeated detail procedurally.", "guides": ["geometry-nodes#pattern", "curves#pattern"], "optional": true, "actions": ["blender_view_capture"], "checkpoint": "Repetition is not obvious."},
+        {"id": "materials", "goal": "Use a few shared materials with UVs at a consistent scale.", "guides": ["uv-unwrapping#pattern", "pbr-materials#pattern"], "actions": ["blender_material_create", "blender_material_assign"], "checkpoint": "Texel density matches across modules."},
+        {"id": "delivery", "goal": "Share meshes, count triangles, export and verify.", "guides": ["game-optimization#checks"], "targets": ["game"], "actions": ["blender_mesh_inspect", "blender_export_gltf"], "checkpoint": "Within budget and instances survive export."}
+      ]
+    },
+    {
+      "id": "hard-surface-prop",
+      "title": "Mechanical or manufactured object",
+      "summary": "Primitive blockout, boolean and bevel shaping, then materials.",
+      "keywords": ["machine", "vehicle", "car", "ship", "robot", "device", "furniture", "chair", "table", "crate", "barrel", "lamp", "mechanical", "product", "gadget", "armor"],
+      "default_style": "realistic",
+      "stages": [
+        {"id": "blockout", "goal": "Block out main volumes at real scale.", "guides": ["box-modeling#pattern"], "actions": ["blender_object_create", "blender_view_capture"], "checkpoint": "Proportions read from front, right and top."},
+        {"id": "shape", "goal": "Cut and join forms non-destructively.", "guides": ["hard-surface#pattern", "hard-surface#pitfalls"], "actions": ["blender_object_add_modifier", "blender_mesh_inspect"], "checkpoint": "Evaluated mesh has no non-manifold edges."},
+        {"id": "edges", "goal": "Bevel and check shading.", "guides": ["hard-surface#checks"], "actions": ["blender_object_add_modifier", "blender_view_capture"], "checkpoint": "Edges catch light with no pinching."},
+        {"id": "materials", "goal": "Add UVs if needed and assign materials.", "guides": ["pbr-materials#values", "uv-unwrapping#pattern"], "actions": ["blender_material_create", "blender_material_assign"], "checkpoint": "Materials are distinct in a material capture."},
+        {"id": "delivery", "goal": "Apply transforms, budget, export and verify.", "guides": ["game-optimization#pattern", "game-optimization#checks"], "targets": ["game"], "actions": ["blender_mesh_inspect", "blender_export_gltf"], "checkpoint": "Within budget and the export opens correctly."}
+      ]
+    },
+    {
+      "id": "general",
+      "title": "General modeling",
+      "summary": "Choose a technique, block out, refine, then surface.",
+      "keywords": [],
+      "default_style": "stylized",
+      "stages": [
+        {"id": "choose", "goal": "Pick a technique from the guide index: boxes for planar forms, lofts for limbs, curves for sweeps, modules for repetition.", "guides": ["box-modeling#use-when", "organic-modeling#use-when", "curves#use-when", "modular-modeling#use-when"], "actions": ["blender_guide_search"], "checkpoint": "One technique chosen with a reason."},
+        {"id": "blockout", "goal": "Block out proportions and silhouette.", "guides": ["anatomy-proportions#checks", "box-modeling#pattern"], "actions": ["blender_object_create", "blender_view_capture"], "checkpoint": "Silhouette reads from front and right."},
+        {"id": "refine", "goal": "Add detail only where it changes the result.", "guides": ["hard-surface#pattern", "base-mesh-deformation#pattern"], "actions": ["blender_mesh_inspect", "blender_view_capture"], "checkpoint": "No mesh errors."},
+        {"id": "materials", "goal": "Assign materials.", "guides": ["pbr-materials#pattern"], "actions": ["blender_material_create", "blender_material_assign"], "checkpoint": "Material capture looks as intended."},
+        {"id": "delivery", "goal": "Optimise and export.", "guides": ["game-optimization#checks"], "targets": ["game"], "actions": ["blender_export_gltf"], "checkpoint": "The export opens correctly."}
+      ]
+    }
+  ]
+}

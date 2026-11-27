@@ -115,6 +115,16 @@ GROUPS: dict[str, Group] = {
         "A running Blender with the MCP Bridge add-on, or transport='headless' with a .blend file for captures, "
         "renders and exports. Still and animation renders need a scene camera; captures bring their own.",
     ),
+    "knowledge": Group(
+        "Offline modeling, texturing and rigging guides, and staged workflows for tasks such as characters, props "
+        "and buildings.",
+        {
+            "blender_workflow": (),
+            "blender_guide_search": (),
+            "blender_guide_get": (),
+        },
+        "None. Works without Blender.",
+    ),
     "scripting": Group(
         "Run Python in Blender, immediately or as cancellable background jobs.",
         {
@@ -130,6 +140,9 @@ GROUPS: dict[str, Group] = {
 
 # Task words that a tool's name and description may not contain.
 KEYWORDS: dict[str, str] = {
+    "blender_workflow": "plan how to start approach steps stage guidance orc sword house character prop building",
+    "blender_guide_search": "how to technique learn tutorial help advice best practice",
+    "blender_guide_get": "read documentation tutorial technique",
     "blender_status": "health connection troubleshoot reconnect recover version",
     "blender_scene_get_info": "overview",
     "blender_scene_list_objects": "find search outliner",
@@ -173,7 +186,7 @@ KEYWORDS: dict[str, str] = {
 
 PROFILES: dict[str, frozenset[str]] = {
     "compact": frozenset({"core"}),
-    "standard": frozenset({"core", "scene", "modeling", "materials", "lighting", "rendering"}),
+    "standard": frozenset({"core", "scene", "modeling", "materials", "lighting", "rendering", "knowledge"}),
     "full": frozenset(GROUPS),
 }
 DEFAULT_PROFILE = "full"

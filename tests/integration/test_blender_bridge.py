@@ -398,6 +398,58 @@ def test_project_persistence_and_recovery_across_multiple_loads(call, bridge):
     assert call("scene_get_info")["name"] == "Scene"
 
 
+def test_every_guide_pattern_runs_and_builds_clean_meshes(call):
+    """Guide examples are instructions to a model, so they must work and must not teach broken topology."""
+    from blender_mcp_server import knowledge
+
+    def mesh_names():
+        return {obj["name"] for obj in call("scene_list_objects", type="MESH")["objects"]}
+
+    def run_python(code):
+        result = call("python_exec", code=code)
+        assert result["error"] is None, (result["error"], result["stderr"])
+        return result["result"]
+
+    for guide in knowledge.guides().values():
+        for block in guide.python_blocks():
+            before = mesh_names()
+            run_python(block)
+            for name in sorted(mesh_names() - before):
+                for source in ("raw", "evaluated"):
+                    report = call("mesh_inspect", name=name, source=source, check_duplicates=True)
+                    assert report["summary"]["status"] == "ok", (guide.id, name, source, report["findings"])
+            if guide.id == "geometry-nodes":
+                assert (
+                    run_python(
+                        "__result__ = sum(i.is_instance for i in bpy.context.evaluated_depsgraph_get().object_instances)"
+                    )
+                    > 10
+                )
+            if guide.id == "rigging":
+                moved = run_python(
+                    """
+import math
+arm = next(o for o in bpy.context.scene.objects if o.name.startswith('GuideArm'))
+rig = arm.modifiers['Skeleton'].object
+def points():
+    evaluated = arm.evaluated_get(bpy.context.evaluated_depsgraph_get())
+    mesh = evaluated.to_mesh()
+    found = (mesh.vertices[-1].co.copy(), mesh.vertices[0].co.copy())
+    evaluated.to_mesh_clear()
+    return found
+tip, base = points()
+bone = rig.pose.bones['lower']
+bone.rotation_mode = 'XYZ'
+bone.rotation_euler.x = math.radians(60)
+bpy.context.view_layer.update()
+posed_tip, posed_base = points()
+bone.rotation_euler.x = 0
+__result__ = [(posed_tip - tip).length, (posed_base - base).length, bpy.context.mode]
+"""
+                )
+                assert moved[0] > 0.5 and moved[1] < 1e-5 and moved[2] == "OBJECT"
+
+
 _BUILD_MESH_FIXTURES = """
 def add(name, vertices, edges=(), faces=()):
     mesh = bpy.data.meshes.new(name)

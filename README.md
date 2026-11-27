@@ -41,9 +41,13 @@ Start with `blender_scene_get_info` to inspect the scene and `blender_status` to
 
 ![The Midnight Observatory project open in Blender with the MCP Bridge panel visible](docs/images/observatory-viewport.jpg)
 
+## Modeling guidance
+
+Packaged [guides and staged workflows](docs/knowledge.md) help a model choose a technique, such as lofted forms for a creature or a modular kit for a house, and check each stage with mesh inspection and rendered views. They work offline.
+
 ## Small-context clients
 
-By default the server advertises every tool. For local or small-context models, start it with `--profile compact`: it advertises 15 tools (5.7 KB of schemas instead of 41.2 KB), pages listings and bounds long responses, and the model finds and runs other actions on demand. See [Tool profiles](docs/profiles.md) for client configurations, capability groups and the trade-offs.
+By default the server advertises every tool. For local or small-context models, start it with `--profile compact`: it advertises 15 tools (5.7 KB of schemas instead of 43.4 KB), pages listings and bounds long responses, and the model finds and runs other actions on demand. See [Tool profiles](docs/profiles.md) for client configurations, capability groups and the trade-offs.
 
 ## Policy and recovery
 
