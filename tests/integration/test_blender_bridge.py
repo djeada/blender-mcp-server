@@ -760,6 +760,131 @@ def test_headless_view_capture_of_a_saved_project(call, bridge, headless_policy)
     assert _png_size(base64.b64decode(report["views"][0]["png_base64"])) == (64, 64)
 
 
+def _python(call, code):
+    result = call("python_exec", code=code)
+    assert result["error"] is None, (result["error"], result["stderr"])
+    return result["result"]
+
+
+_LIGHT_IDS = "__result__ = [sorted(o.name for o in bpy.data.objects), sorted(l.name for l in bpy.data.lights)]"
+
+
+def test_lighting_validation_inspection_and_shared_data(call):
+    before = _python(call, _LIGHT_IDS)
+    with pytest.raises(protocol.BridgeError, match="does not apply to SUN"):
+        call("light_create", name="ITRejected", light_type="SUN", size=2.0)
+    assert _python(call, _LIGHT_IDS) == before  # no orphan object or light data
+
+    call("light_create", name="ITInsPoint", light_type="POINT", size=0.4, energy=50)
+    call("light_create", name="ITInsSun", light_type="SUN", angle=3, location=[0, 0, 5])
+    call("light_create", name="ITInsSpot", light_type="SPOT", spot_angle=40, spot_blend=0.5)
+    area = call(
+        "light_create",
+        name="ITInsArea",
+        light_type="AREA",
+        shape="ELLIPSE",
+        size=2,
+        size_y=0.5,
+        location=[3, 0, 0],
+        look_at=[0, 0, 0],
+        temperature=3000,
+    )
+    assert area["shape"] == "ELLIPSE" and area["color"][0] == pytest.approx(1) and area["color"][2] < 0.5
+
+    with pytest.raises(protocol.BridgeError, match="does not apply to SUN"):
+        call("light_update", name="ITInsPoint", light_type="SUN", size=2.0)
+    report = call("lighting_inspect")
+    found = {light["name"]: light for light in report["lights"] if light["name"].startswith("ITIns")}
+    assert found["ITInsPoint"]["light_type"] == "POINT" and found["ITInsPoint"]["size"] == pytest.approx(0.4)
+    assert found["ITInsSun"]["angle"] == pytest.approx(3) and found["ITInsSun"]["world_direction"] == [0, 0, -1]
+    assert found["ITInsSpot"]["spot_angle"] == pytest.approx(40) and found["ITInsSpot"]["spot_blend"] == 0.5
+    assert found["ITInsArea"]["size_y"] == pytest.approx(0.5)
+    assert found["ITInsArea"]["world_direction"] == pytest.approx([-1, 0, 0], abs=1e-5)
+    # Changing the type really changes the settings Blender exposes.
+    assert call("light_update", name="ITInsPoint", light_type="SPOT", spot_angle=30)["spot_angle"] == 30
+
+    _python(
+        call,
+        "o = bpy.data.objects['ITInsSun'].copy(); o.name = 'ITInsSunCopy'; bpy.context.scene.collection.objects.link(o)",
+    )
+    with pytest.raises(protocol.BridgeError, match="shared by 2 objects"):
+        call("light_update", name="ITInsSun", energy=9)
+    call("light_update", name="ITInsSun", energy=9, shared_data="make_single_user")
+    energies = _python(call, "__result__ = [bpy.data.objects[n].data.energy for n in ('ITInsSun', 'ITInsSunCopy')]")
+    assert energies[0] == 9 and energies[1] != 9
+
+
+_MEAN_BRIGHTNESS = """
+image = bpy.data.images.load(args['path'], check_existing=False)
+pixels = list(image.pixels)
+bpy.data.images.remove(image)
+values = [v for i, v in enumerate(pixels) if i % 4 != 3]
+__result__ = sum(values) / len(values)
+"""
+
+
+def test_color_management_changes_rendered_brightness_and_rejects_invalid_looks(call, bridge):
+    if not _python(call, _USE_FAST_CYCLES):
+        pytest.skip("Cycles is not available in this Blender build")
+    _python(
+        call,
+        """
+scene = bpy.context.scene
+camera = bpy.data.objects.new('ITColorCam', bpy.data.cameras.new('ITColorCam'))
+scene.collection.objects.link(camera)
+camera.location = (100, 100, 10)
+scene.camera = camera
+mesh = bpy.data.meshes.new('ITColorPlane')
+mesh.from_pydata([(95, 95, 0), (105, 95, 0), (105, 105, 0), (95, 105, 0)], [], [(0, 1, 2, 3)])
+scene.collection.objects.link(bpy.data.objects.new('ITColorPlane', mesh))
+""",
+    )
+    call("light_create", name="ITColorSun", light_type="SUN", energy=1, location=[100, 100, 20])
+    # Lights left by other tests would clip the picture to white, hiding any exposure change.
+    hidden = _python(
+        call,
+        """
+__result__ = [o.name for o in bpy.context.scene.objects
+              if o.type == 'LIGHT' and o.name != 'ITColorSun' and not o.hide_render]
+for name in __result__:
+    bpy.data.objects[name].hide_render = True
+""",
+    )
+    options = call("lighting_inspect", include_options=True)["color_management_options"]
+    assert "Standard" in options["view_transforms"] and options["looks"] and options["display_devices"]
+    original = call("lighting_inspect")["color_management"]
+
+    def brightness(name):
+        path = bridge["tmp"] / f"color-{name}.png"
+        call("render_still", output_path=str(path), resolution_x=16, resolution_y=16)
+        return call("python_exec", code=_MEAN_BRIGHTNESS, args={"path": str(path)})["result"]
+
+    result = call("color_management_set", view_transform="Standard", exposure=0, gamma=1)
+    assert result["color_management"]["view_transform"] == "Standard"
+    base = brightness("base")
+    call("color_management_set", exposure=1)
+    brighter = brightness("brighter")
+    assert 0.05 < base < 0.9, base  # not black or clipped, so the comparison means something
+    assert brighter > base * 1.15, (base, brighter)
+
+    state = call("lighting_inspect")["color_management"]
+    for settings, message in (
+        ({"view_transform": "NoSuchTransform"}, "Choose from"),
+        ({"view_transform": "Raw", "look": "NoSuchLook", "exposure": 3}, "Choose from"),
+    ):
+        with pytest.raises(protocol.BridgeError, match=message):
+            call("color_management_set", **settings)
+        assert call("lighting_inspect")["color_management"] == state
+    call(
+        "color_management_set",
+        view_transform=original["view_transform"],
+        look=original["look"],
+        exposure=original["exposure"],
+        gamma=original["gamma"],
+    )
+    call("python_exec", code="for n in args['names']: bpy.data.objects[n].hide_render = False", args={"names": hidden})
+
+
 @pytest.mark.asyncio
 async def test_mcp_stdio_compact_profile_discovers_and_invokes(bridge):
     async with (

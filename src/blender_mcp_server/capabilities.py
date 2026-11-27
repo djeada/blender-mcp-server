@@ -84,8 +84,11 @@ GROUPS: dict[str, Group] = {
         },
     ),
     "lighting": Group(
-        "Create and adjust point, sun, spot and area lights.",
+        "Inspect scene lighting, create and adjust point, sun, spot and area lights, and set exposure and view "
+        "transforms.",
         {
+            "blender_lighting_inspect": ("lighting.inspect",),
+            "blender_color_management_set": ("render.set_color_management",),
             "blender_light_create": ("light.create",),
             "blender_light_update": ("light.update",),
         },
@@ -180,7 +183,9 @@ KEYWORDS: dict[str, str] = {
     "blender_material_set_color": "paint tint albedo",
     "blender_material_assign": "apply shader",
     "blender_light_create": "lamp illuminate illumination lighting brightness sun spot area key fill rim",
-    "blender_light_update": "lamp illumination lighting brightness exposure energy",
+    "blender_light_update": "lamp illumination lighting brightness energy warm cool temperature kelvin softness",
+    "blender_lighting_inspect": "lights check review current setup report world exposure",
+    "blender_color_management_set": "exposure brightness contrast tone mapping filmic agx look gamma too dark bright",
     "blender_keyframe_add": "animate animation motion",
     "blender_timeline_set": "animate animation frame duration",
     "blender_camera_create": "view viewpoint shot framing composition lens",

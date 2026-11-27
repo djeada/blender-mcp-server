@@ -5,8 +5,8 @@ Many clients put every tool's schema into the model's context. A profile chooses
 | Profile | Advertised groups | Tools | Serialized `tools/list` |
 |---|---|---:|---:|
 | `compact` | `core` | 15 | 5.8 KB |
-| `standard` | `core`, `scene`, `modeling`, `materials`, `lighting`, `rendering`, `knowledge` | 53 | 38.0 KB |
-| `full` (default) | all | 62 | 46.1 KB |
+| `standard` | `core`, `scene`, `modeling`, `materials`, `lighting`, `rendering`, `knowledge` | 55 | 40.4 KB |
+| `full` (default) | all | 64 | 48.4 KB |
 
 Sizes are the bytes of the JSON `tools/list` result. A client may reformat schemas, and token counts depend on its tokenizer, so treat bytes as a way to compare profiles, not as a promise about a particular context window. A smaller list does not by itself make a model more capable; see the [benchmarks](benchmarks.md) before choosing. Reproduce them with `python scripts/context_benchmark.py sizes`.
 
@@ -18,7 +18,7 @@ Sizes are the bytes of the JSON `tools/list` result. A client may reformat schem
 | `scene` | Hierarchy, duplicating, naming, parenting, collections, batches, redo, project files |
 | `modeling` | Mesh diagnostics and modifier stacks |
 | `materials` | Materials and image textures |
-| `lighting` | Lights |
+| `lighting` | Lighting inspection, lights and color management |
 | `animation` | Timeline and keyframes |
 | `rendering` | Inspection views, cameras, renders and exports |
 | `knowledge` | [Modeling guides and staged workflows](knowledge.md) |

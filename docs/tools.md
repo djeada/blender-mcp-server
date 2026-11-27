@@ -97,9 +97,39 @@ available through `blender_python_exec` and the script library (e.g. `examples/l
 | `blender_camera_update` | Update an existing camera by `name` with any of the camera settings above |
 | `blender_light_create` | Create a light — `light_type` (`POINT`, `SUN`, `SPOT`, `AREA`), `color` `[r, g, b]` (0–1), `energy`, `size`, `size_y` (AREA), `angle` (SUN, degrees), `spot_angle`/`spot_blend` (SPOT), `look_at` |
 | `blender_light_update` | Update an existing light by `name` with any of the light settings above |
+| `blender_lighting_inspect` | Read-only report of the scene's lights, active camera, world, render engine and color management |
+| `blender_color_management_set` | Change `view_transform`, `look`, `exposure`, `gamma` or `display_device` |
 
-Parameters that do not apply to the chosen type (e.g. `spot_angle` on a `POINT` light) return an explicit error
-instead of being silently ignored. For advanced camera rigging, see [`examples/library/camera.py`](../examples/library/camera.py).
+Both light tools also accept `shape` (`SQUARE`, `RECTANGLE`, `DISK`, `ELLIPSE`; AREA only; `size_y` needs
+`RECTANGLE` or `ELLIPSE`) and `temperature` in kelvin (1667–25000) instead of `color`.
+
+`energy` is in watts, except for `SUN` lights, where it is irradiance in W/m². `size` is a radius for `POINT` and
+`SPOT` and a width for `AREA`, in Blender units. `angle`, `spot_angle` and `rotation` are in degrees.
+`temperature` sets the light's linear color to an approximation of a black body at that temperature, scaled so the
+strongest channel is 1. It changes color, not energy. On Blender 4.5+ it also turns off the light's own
+`use_temperature` option, which would otherwise apply a second time.
+
+A request is checked against the light's final type before anything changes: a rejected create makes nothing, and a
+rejected update leaves the light as it was. Parameters that do not apply to the chosen type (e.g. `spot_angle` on
+a `POINT` light) return an explicit error instead of being silently ignored.
+
+If several objects share a light's data (linked duplicates), changing anything except the transform fails and names
+them. Pass `shared_data="update_all"` to change every user, or `"make_single_user"` to give this object its own copy
+first.
+
+#### Inspect and color management
+
+`blender_lighting_inspect` lists lights in name order (`limit`, `offset`; paged automatically in compact output).
+Each has its world position, the direction it shines (except `POINT`), energy and unit, linear color, settings for
+its type, shadow and visibility flags, its data name, and `data_shared_by` when shared. The report also has the
+active camera, a world summary (`color`, `environment`, `sky`, `custom` or `none`), engine, resolution and samples,
+and the color management settings. `include_options=true` adds the valid view transforms, looks and display devices.
+
+Valid names come from Blender's color configuration and differ between versions; the `look` list also depends on the
+view transform. `blender_color_management_set` changes only the settings you pass, in the order display, view
+transform, look, exposure (stops, −32 to 32), gamma (0–5). If any is invalid, nothing changes and the error lists
+the valid values. When Blender adjusts a setting you did not pass, such as resetting an incompatible look,
+`adjusted_by_blender` reports it. Color management affects renders and image output, not light energy. For advanced camera rigging, see [`examples/library/camera.py`](../examples/library/camera.py).
 
 Example — frame and light a product shot:
 

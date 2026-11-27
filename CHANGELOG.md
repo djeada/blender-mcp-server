@@ -7,7 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Changed
+- `light.update` now refuses to change light data shared by several objects unless `shared_data` is `update_all`
+  or `make_single_user`. Moving or rotating such a light works as before.
+
 ### Added
+- `blender_lighting_inspect` reports every light, the camera, world, render settings and color management.
+  `blender_color_management_set` changes view transform, look, exposure, gamma and display device with all-or-nothing
+  validation. Light tools accept area `shape` and color `temperature`, and report the effective type settings.
 - `scripts/context_benchmark.py` measures tool list sizes, replays task traces and can score a local model against
   the Blender scene. CI enforces context limits from `tests/context_budgets.json`. Results and trade-offs are in
   `docs/benchmarks.md`.
@@ -23,7 +30,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   material or wireframe mode, framed from evaluated bounds in a temporary scene that leaves the project unchanged.
   Also works headless.
 - Tool profiles (`--profile compact|standard|full`, `--enable-groups`, `--allow-groups`, or the matching
-  environment variables). `compact` advertises 15 tools in 5.8 KB instead of every schema (46.1 KB). The default
+  environment variables). `compact` advertises 15 tools in 5.8 KB instead of every schema (48.4 KB). The default
   stays `full`.
 - Compact output (`--output compact`, on by default in the compact profile) pages listings, keeps log tails and
   turns oversized responses into previews that `blender_output_read` can finish without rerunning anything. Budgets
@@ -56,6 +63,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   renders: absolute path returned, missing folders created, extensions appended only when absent).
 
 ### Fixed
+- A rejected `light.create` (for example `size` on a SUN light) left a light object and its data in the scene, and a
+  rejected type-changing `light.update` left the new type applied. Requests are now validated before any change.
 - Rejected mutation requests no longer add undo entries, and the bridge also rejects oversized
   requests when their terminating newline has already arrived.
 - Parenting and unparenting with `keep_transform=true` restore a copy of the world matrix after

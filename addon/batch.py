@@ -38,6 +38,8 @@ BATCH_COMMANDS = frozenset(
         "material.set_color",
         "camera.create",
         "camera.update",
+        "lighting.inspect",
+        "render.set_color_management",
         "light.create",
         "light.update",
         "timeline.get",

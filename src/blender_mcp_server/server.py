@@ -37,8 +37,10 @@ from blender_mcp_server.tools.exports import (
 )
 from blender_mcp_server.tools.knowledge import guide_get, guide_search, workflow
 from blender_mcp_server.tools.lighting import (
+    color_management_set,
     light_create,
     light_update,
+    lighting_inspect,
 )
 from blender_mcp_server.tools.materials import (
     material_assign,
@@ -137,6 +139,8 @@ __all__ = [
     "mesh_inspect",
     "camera_create",
     "camera_update",
+    "lighting_inspect",
+    "color_management_set",
     "light_create",
     "light_update",
     "timeline_get",

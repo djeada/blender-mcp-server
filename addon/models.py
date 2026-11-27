@@ -304,6 +304,8 @@ class LightCreateParams(BridgeParams):
         "angle": field("float", allow_none=True, gt=0),
         "spot_angle": field("float", allow_none=True, gt=0),
         "spot_blend": field("float", allow_none=True),
+        "shape": field("str", allow_none=True),
+        "temperature": field("float", allow_none=True, gt=0),
     }
 
 
@@ -321,6 +323,26 @@ class LightUpdateParams(BridgeParams):
         "angle": field("float", allow_none=True, gt=0),
         "spot_angle": field("float", allow_none=True, gt=0),
         "spot_blend": field("float", allow_none=True),
+        "shape": field("str", allow_none=True),
+        "temperature": field("float", allow_none=True, gt=0),
+        "shared_data": field("str", "error"),
+    }
+
+
+class LightingInspectParams(BridgeParams):
+    fields = {
+        "include_options": field("bool", False),
+        **PageParams.fields,
+    }
+
+
+class ColorManagementParams(BridgeParams):
+    fields = {
+        "display_device": field("str", allow_none=True),
+        "view_transform": field("str", allow_none=True),
+        "look": field("str", allow_none=True),
+        "exposure": field("float", allow_none=True, ge=-32, le=32),
+        "gamma": field("float", allow_none=True, ge=0, le=5),
     }
 
 

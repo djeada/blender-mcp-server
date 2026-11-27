@@ -78,6 +78,8 @@ LEGACY_TOOLS = [
     "render_animation",
     "render_still",
     "view_capture",
+    "color_management_set",
+    "lighting_inspect",
     "recipe_get",
     "recipe_run",
     "recipe_search",
