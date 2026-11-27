@@ -47,6 +47,9 @@ class TestToolRegistration:
         ]:
             assert tool in names
 
+    def test_mesh_inspection_registered(self):
+        assert "blender_mesh_inspect" in self._get_tool_names()
+
     def test_material_tools_registered(self):
         names = self._get_tool_names()
         for tool in [
@@ -112,7 +115,7 @@ class TestToolRegistration:
         assert "blender_job_list" in names
 
     def test_total_tool_count(self):
-        assert len(self._get_tool_names()) == 54
+        assert len(self._get_tool_names()) == 55
 
     @pytest.mark.parametrize(
         "name", ["blender_object_create_tree", "blender_object_scatter", "blender_material_create_emissive"]

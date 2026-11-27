@@ -8,6 +8,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 ## [Unreleased]
 
 ### Added
+- `blender_mesh_inspect` reports raw and evaluated mesh counts, local and world bounds, material slots, vertex
+  groups, modifiers, connected components and topology findings with sample element IDs, without changing the
+  scene. Duplicate-vertex and per-region checks are opt-in, and meshes over `element_budget` fail with
+  `budget_exceeded`. Also available as `mesh.inspect` in batches.
 - Typed timeline and keyframe tools: `blender_timeline_get` / `blender_timeline_set` and
   `blender_keyframe_add` / `blender_keyframe_list` / `blender_keyframe_remove` over a small allowlist of
   object transforms (`location`, `rotation` in degrees, `scale`) with explicit interpolation modes,

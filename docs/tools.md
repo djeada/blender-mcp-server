@@ -9,6 +9,37 @@
 | `blender_object_get_transform` | Get position, rotation, and scale of an object by name |
 | `blender_object_get_hierarchy` | Parent/child hierarchy tree (full scene or subtree) |
 
+### Mesh Diagnostics
+
+`blender_mesh_inspect` checks one mesh object by `name` without changing the scene, selection, mode or geometry. It works through the live bridge and in ordered batches (as `mesh.inspect`).
+
+| Parameter | Default | Meaning |
+|---|---|---|
+| `source` | `raw` | Mesh described by bounds, vertex groups, components, material face counts, findings and element IDs: `raw` (the object's mesh data) or `evaluated` (after modifiers and shape keys) |
+| `check_duplicates` | `false` | Also look for vertices within `tolerance` of each other |
+| `include_regions` | `false` | Add local bounds for each vertex group and each used material index |
+| `tolerance` | `1e-5` | Distance in local units (0–1,000) for duplicate vertices and zero-area faces |
+| `max_ids` | `10` | Sample element IDs per finding, and the number of components listed (0–100) |
+| `element_budget` | `500000` | Largest mesh to analyze, counted as vertices + edges + face corners (up to 2,000,000) |
+
+`counts.raw` and `counts.evaluated` are always reported. `evaluated` uses **viewport** settings, so a modifier hidden in the viewport is left out and Subdivision uses its viewport level, not its render level. Blender does not evaluate objects that are disabled in viewports or excluded from the view layer. For those, `counts.evaluated` is `null`, `world_transform_current` is `false` (world bounds may be out of date), and `source="evaluated"` fails. Element IDs from an evaluated mesh do not index the raw mesh.
+
+Coordinates are Blender's right-handed, Z-up system. `bounds.local` is in object space, before the object's transform. `bounds.world` is the axis-aligned box around the transformed vertices. Both use Blender units, as `[x, y, z]` rounded to six decimals. Component and region bounds are local. `tolerance` ignores object scale.
+
+| Check | Severity | Reports |
+|---|---|---|
+| `non_finite_vertices` | error | NaN or infinite coordinates (left out of bounds) |
+| `non_manifold_edges` | error | Edges with more than two faces |
+| `zero_area_faces` | error | Faces whose width (twice the area over the longest side) is within `tolerance` |
+| `inconsistent_winding` | error | Two adjacent faces whose normals disagree |
+| `loose_vertices`, `loose_edges` | warning | Geometry that is not part of an edge or a face |
+| `duplicate_vertices` | warning | Opt-in. Vertices within `tolerance` of an earlier one; chains are not merged transitively |
+| `boundary_edges` | info | Edges with one face: a hole, or an intentionally open surface |
+
+`summary.status` is `errors`, `warnings` or `ok`. It only covers `checks_run`; `checks_skipped` lists the rest. Boundary edges and separate components are often intentional and do not change the status. `summary.closed_edge_manifold` means every edge has exactly two faces. Faces that meet only at a vertex, self-intersections and inward-facing normals on a consistently wound mesh are not detected.
+
+Lists of material slots, vertex groups, modifiers and regions stop at 64 entries and set `truncated`. A mesh over `element_budget` fails with `budget_exceeded`, and the error details include the element counts. Meshes in Edit Mode are rejected because their stored data is stale.
+
 ### Scene Organization
 
 | Tool | Description |
@@ -128,7 +159,7 @@ folders are created.
 
 Allowlist and parameter-shape checks run before any step starts. State-dependent checks run in order. Each result has a zero-based `index` and a `status` of `succeeded`, `failed`, or `skipped`. Earlier changes persist after a failure. Each successful mutation records an undo checkpoint after the change, just like its standalone tool, when Blender's context supports undo. A timeout after execution begins can leave completed edits in the scene. The batch stops starting new steps at its command deadline.
 
-The batch supports ordinary scene, object, modifier, material, camera, light, timeline, keyframe, and collection operations. Use standalone tools for project files, textures, renders, exports, Python, jobs, and history. The entire input is capped at 64 KiB. Results larger than 16 KiB per step are marked with `result_omitted: "size_limit"`.
+The batch supports mesh inspection and ordinary scene, object, modifier, material, camera, light, timeline, keyframe, and collection operations. Use standalone tools for project files, textures, renders, exports, Python, jobs, and history. The entire input is capped at 64 KiB. Results larger than 16 KiB per step are marked with `result_omitted: "size_limit"`.
 
 ### Modifier stack
 

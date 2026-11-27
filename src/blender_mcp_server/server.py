@@ -35,6 +35,7 @@ from blender_mcp_server.tools.materials import (
     material_set_color,
     material_set_texture,
 )
+from blender_mcp_server.tools.mesh import mesh_inspect
 from blender_mcp_server.tools.objects import (
     history_redo,
     history_undo,
@@ -108,6 +109,7 @@ __all__ = [
     "material_assign",
     "material_set_color",
     "material_set_texture",
+    "mesh_inspect",
     "camera_create",
     "camera_update",
     "light_create",

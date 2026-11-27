@@ -18,6 +18,7 @@ BATCH_COMMANDS = frozenset(
         "scene.list_objects",
         "object.get_transform",
         "object.get_hierarchy",
+        "mesh.inspect",
         "object.create_mesh",
         "object.delete",
         "object.translate",

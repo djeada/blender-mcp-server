@@ -81,6 +81,10 @@ class BridgeParams:
 
         if spec.get("gt") is not None and value <= spec["gt"]:
             raise ValueError(f"Parameter '{name}' must be greater than {spec['gt']}")
+        if spec.get("ge") is not None and value < spec["ge"]:
+            raise ValueError(f"Parameter '{name}' must be at least {spec['ge']}")
+        if spec.get("le") is not None and value > spec["le"]:
+            raise ValueError(f"Parameter '{name}' must be at most {spec['le']}")
         return value
 
     def model_dump(self, exclude_none: bool = False) -> dict[str, Any]:
@@ -106,6 +110,8 @@ def field(
     min_length: int | None = None,
     max_length: int | None = None,
     gt: float | int | None = None,
+    ge: float | int | None = None,
+    le: float | int | None = None,
 ) -> dict[str, Any]:
     spec = {
         "type": field_type,
@@ -114,6 +120,8 @@ def field(
         "min_length": min_length,
         "max_length": max_length,
         "gt": gt,
+        "ge": ge,
+        "le": le,
     }
     if default_factory is not None:
         spec["default_factory"] = default_factory
@@ -421,4 +429,16 @@ class ModifierRemoveParams(BridgeParams):
     fields = {
         "name": field("str", required=True),
         "modifier_name": field("str", required=True),
+    }
+
+
+class MeshInspectParams(BridgeParams):
+    fields = {
+        "name": field("str", required=True),
+        "source": field("str", "raw"),
+        "check_duplicates": field("bool", False),
+        "include_regions": field("bool", False),
+        "tolerance": field("float", 1e-5, ge=0, le=1000),
+        "max_ids": field("int", 10, ge=0, le=100),
+        "element_budget": field("int", 500_000, ge=1, le=2_000_000),
     }

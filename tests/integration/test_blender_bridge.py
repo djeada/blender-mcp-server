@@ -397,6 +397,121 @@ def test_project_persistence_and_recovery_across_multiple_loads(call, bridge):
     assert call("scene_get_info")["name"] == "Scene"
 
 
+_BUILD_MESH_FIXTURES = """
+def add(name, vertices, edges=(), faces=()):
+    mesh = bpy.data.meshes.new(name)
+    mesh.from_pydata(vertices, list(edges), list(faces))
+    mesh.update()
+    obj = bpy.data.objects.new(name, mesh)
+    bpy.context.scene.collection.objects.link(obj)
+    return obj
+
+square = [(0, 0, 0), (1, 0, 0), (1, 1, 0), (0, 1, 0)]
+cube = [(x, y, z) for x in (0, 1) for y in (0, 1) for z in (0, 1)]
+sides = [(0, 1, 3, 2), (4, 6, 7, 5), (0, 4, 5, 1), (2, 3, 7, 6), (0, 2, 6, 4), (1, 5, 7, 3)]
+modified = add('MeshCube', cube, faces=sides)
+modified.modifiers.new('Smooth', 'SUBSURF').levels = 1
+modified.location = (10, 0, 0)
+modified.vertex_groups.new(name='corner').add([0], 1.0, 'REPLACE')
+add('MeshPlane', square, faces=[(0, 1, 2, 3)])
+add('MeshParts', square + [(x + 5, y, z) for x, y, z in square], faces=[(0, 1, 2, 3), (4, 5, 6, 7)])
+add(
+    'MeshDefects',
+    [(0, 0, 0), (1, 0, 0), (0, 1, 0), (0, -1, 0), (0, 0, 1), (2, 0, 0), (3, 3, 3), (4, 4, 4), (5, 4, 4), (1, 0, 0)],
+    edges=[(7, 8)],
+    faces=[(0, 1, 2), (0, 1, 3), (1, 0, 4), (0, 1, 5)],
+)
+hidden = add('MeshHidden', cube, faces=sides)
+hidden.modifiers.new('Smooth', 'SUBSURF').levels = 1
+hidden.hide_viewport = True
+for obj in bpy.context.selected_objects:
+    obj.select_set(False)
+bpy.data.objects['MeshPlane'].select_set(True)
+bpy.context.view_layer.objects.active = bpy.data.objects['MeshParts']
+bpy.context.view_layer.update()
+__result__ = True
+"""
+
+_SNAPSHOT_STATE = """
+__result__ = {
+    'active': bpy.context.view_layer.objects.active.name,
+    'mode': bpy.context.mode,
+    'datablocks': [len(bpy.data.meshes), len(bpy.data.objects), len(bpy.data.materials)],
+    'objects': {
+        obj.name: [
+            obj.select_get(),
+            [list(row) for row in obj.matrix_world],
+            [(m.name, m.show_viewport) for m in obj.modifiers],
+            [list(v.co) + [v.select] for v in obj.data.vertices],
+            [list(e.vertices) for e in obj.data.edges],
+            [list(p.vertices) for p in obj.data.polygons],
+        ]
+        for obj in bpy.context.scene.objects
+        if obj.name.startswith('Mesh')
+    },
+}
+"""
+
+
+def test_mesh_inspection_diagnoses_fixtures_without_changing_state(call):
+    def run_python(code):
+        result = call("python_exec", code=code)
+        assert result["error"] is None, result["error"]
+        return result["result"]
+
+    run_python(_BUILD_MESH_FIXTURES)
+    before = run_python(_SNAPSHOT_STATE)
+
+    def inspect(name, **params):
+        return call("mesh_inspect", name=name, check_duplicates=True, **params)
+
+    raw = inspect("MeshCube", include_regions=True)
+    assert raw["counts"]["raw"] == {"vertices": 8, "edges": 12, "faces": 6, "triangles": 12}
+    assert raw["counts"]["evaluated"] == {"vertices": 26, "edges": 48, "faces": 24, "triangles": 48}
+    assert raw["findings"] == [] and raw["summary"]["closed_edge_manifold"]
+    assert raw["bounds"]["world"] == {"min": [10, 0, 0], "max": [11, 1, 1], "size": [1, 1, 1]}
+    assert raw["regions"]["vertex_groups"]["items"][0]["vertices"] == 1
+    evaluated = inspect("MeshCube", source="evaluated", include_regions=True)
+    assert evaluated["bounds"]["local"]["size"][0] < 1
+    assert evaluated["regions"]["vertex_groups"]["items"][0]["vertices"] > 1
+    assert inspect("MeshCube", source="evaluated", include_regions=True) == evaluated
+
+    plane = inspect("MeshPlane")
+    assert plane["summary"]["status"] == "ok"
+    assert [(f["check"], f["severity"], f["count"]) for f in plane["findings"]] == [("boundary_edges", "info", 4)]
+    assert inspect("MeshParts")["components"]["count"] == 2
+
+    defects = {finding["check"]: finding["count"] for finding in inspect("MeshDefects")["findings"]}
+    assert defects == {
+        "non_manifold_edges": 1,
+        "zero_area_faces": 1,
+        "loose_vertices": 2,
+        "loose_edges": 1,
+        "duplicate_vertices": 1,
+        "boundary_edges": 8,  # two unshared edges on each of the four faces
+    }
+
+    hidden = inspect("MeshHidden")
+    assert hidden["counts"]["evaluated"] is None and hidden["world_transform_current"] is False
+
+    for kwargs, code in (
+        ({"name": "MeshHidden", "source": "evaluated"}, "unsupported"),
+        ({"name": "MeshCube", "element_budget": 10}, "budget_exceeded"),
+        ({"name": "Missing"}, "not_found"),
+    ):
+        with pytest.raises(protocol.BridgeError) as failure:
+            call("mesh_inspect", **kwargs)
+        assert failure.value.code == code
+
+    assert run_python(_SNAPSHOT_STATE) == before
+
+    run_python("bpy.ops.object.mode_set(mode='EDIT')")
+    with pytest.raises(protocol.BridgeError, match="Edit Mode"):
+        call("mesh_inspect", name="MeshParts")
+    assert run_python("__result__ = bpy.context.mode") == "EDIT_MESH"
+    run_python("bpy.ops.object.mode_set(mode='OBJECT')")
+
+
 @pytest.mark.asyncio
 async def test_mcp_stdio_preserves_legacy_success_and_exposes_structured_errors(bridge):
     async with (

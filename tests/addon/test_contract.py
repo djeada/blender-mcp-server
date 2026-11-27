@@ -45,6 +45,10 @@ class TestServerAddonContract:
         ("material_assign", {"object": "Cube", "material": "M"}),
         ("material_set_color", {"name": "M", "color": [1, 0, 0]}),
         ("material_set_texture", {"name": "M", "filepath": "/tmp/t.png"}),
+        (
+            "mesh_inspect",
+            {"name": "Cube", "source": "evaluated", "check_duplicates": True, "include_regions": True},
+        ),
         ("render_still", {"output_path": "/tmp/r.png", "resolution_x": 64, "resolution_y": 64, "engine": "CYCLES"}),
         ("render_animation", {"output_path": "/tmp/r_", "frame_start": 1, "frame_end": 2}),
         ("export_gltf", {"filepath": "/tmp/x.glb"}),

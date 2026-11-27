@@ -46,7 +46,7 @@ The implementation is split by responsibility:
 | `runtime.py` | Compose settings, dispatch, script execution, jobs, and server lifecycle |
 | `settings.py`, `paths.py`, `auth.py` | Preferences, file-access policy, and token authentication |
 | `commands.py` | One command registry defining handlers, validators, undo behavior, and worker-thread eligibility |
-| `scene.py`, `objects.py`, `materials.py`, `camera.py`, `lighting.py`, `animation.py`, `collections.py`, `rendering.py` | Blender operations grouped by feature |
+| `scene.py`, `objects.py`, `mesh.py`, `materials.py`, `camera.py`, `lighting.py`, `animation.py`, `collections.py`, `rendering.py` | Blender operations grouped by feature |
 | `execution.py`, `jobs.py` | Shared script-source checks, execution, output capture, cancellation, and job status |
 | `transport.py` | TCP framing and the main-thread request queue |
 | `ui.py` | Blender preferences, panel, operators, and registration |
