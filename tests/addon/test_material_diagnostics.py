@@ -110,6 +110,8 @@ def test_files_outside_approved_roots_are_not_touched(diagnostics, handler, runt
         {"object": "Nope"},
         {"allow": [1]},
         {"max_texture_size": 0},
+        {"alpha_modes": []},
+        {"alpha_modes": ["GLASS"]},
     ],
 )
 def test_invalid_requests(handler, mock_bpy, params):
@@ -117,6 +119,45 @@ def test_invalid_requests(handler, mock_bpy, params):
     mock_bpy.data.objects.get = lambda name: None
     with pytest.raises(ValueError):
         handler.handle("material.diagnose", params)
+
+
+@pytest.mark.parametrize(
+    ("value", "source", "expected"),
+    [
+        (1.0, None, "OPAQUE"),
+        (0.5, None, "BLEND"),
+        (1.0, ("ShaderNodeTexImage", None), "BLEND"),
+        (1.0, ("ShaderNodeMath", "GREATER_THAN"), "MASK"),
+        (1.0, ("ShaderNodeMath", "ROUND"), "MASK"),
+        (1.0, ("ShaderNodeMath", "MULTIPLY"), "BLEND"),
+    ],
+)
+def test_alpha_modes_follow_the_exporters_patterns(diagnostics, value, source, expected):
+    links = []
+    if source:
+        links = [SimpleNamespace(from_node=SimpleNamespace(bl_idname=source[0], operation=source[1]))]
+    shader = SimpleNamespace(inputs={"Alpha": SimpleNamespace(default_value=value, links=links)})
+    assert diagnostics._alpha_mode(shader) == expected
+
+
+@pytest.mark.parametrize(
+    ("roughness", "metallic", "check"),
+    [
+        (("orm", "G"), ("orm", "B"), None),
+        (("rough", "R"), ("metal", "R"), "channel_packing"),
+        (("orm", "R"), ("orm", "B"), "channel_layout"),
+        (("orm", "G"), None, None),
+    ],
+)
+def test_metallic_and_roughness_packing(diagnostics, roughness, metallic, check):
+    bindings = [
+        {"semantic": semantic, "image": spec[0], "channel": spec[1]}
+        for semantic, spec in (("roughness", roughness), ("metallic", metallic))
+        if spec
+    ]
+    report = diagnostics._Report([])
+    diagnostics._check_packing("M", bindings, "heuristic", report)
+    assert [finding["check"] for finding in report.findings] == ([check] if check else [])
 
 
 def test_diagnostics_and_previews_add_no_undo_step(handler):

@@ -19,10 +19,31 @@ from .protocol import MissingResourceError, UnsupportedError
 if TYPE_CHECKING:
     from .paths import PathPolicy
 
+ALPHA_MODES = ("OPAQUE", "MASK", "BLEND")
+# packing: how strongly to report metallic and roughness that are not in glTF's layout (None: not checked).
 PROFILES: dict[str, dict] = {
-    "gltf": {"max_texture_size": 4096, "max_texture_memory_mb": 256, "gltf": True},
-    "mobile": {"max_texture_size": 2048, "max_texture_memory_mb": 64, "gltf": True},
-    "render": {"max_texture_size": 16384, "max_texture_memory_mb": 4096, "gltf": False},
+    "gltf": {
+        "max_texture_size": 4096,
+        "max_texture_memory_mb": 256,
+        "gltf": True,
+        "alpha_modes": list(ALPHA_MODES),
+        "packing": "heuristic",
+    },
+    # Blended transparency is costly on many mobile GPUs, and every extra image is another sample.
+    "mobile": {
+        "max_texture_size": 2048,
+        "max_texture_memory_mb": 64,
+        "gltf": True,
+        "alpha_modes": ["OPAQUE", "MASK"],
+        "packing": "warning",
+    },
+    "render": {
+        "max_texture_size": 16384,
+        "max_texture_memory_mb": 4096,
+        "gltf": False,
+        "alpha_modes": list(ALPHA_MODES),
+        "packing": None,
+    },
 }
 MAX_MATERIALS = 32
 MAX_NODES_WALKED = 500
@@ -378,12 +399,62 @@ def _check_material(material, profile: dict, report: _Report, images: dict, poli
         listed = ", ".join(unused[:MAX_LISTED_NAMES])
         report.add("unused_nodes", "warning", name, f"{len(unused)} node(s) do not affect the output: {listed}")
 
+    if principled is not None:
+        entry["alpha_mode"] = mode = _alpha_mode(principled)
+        if mode not in profile["alpha_modes"]:
+            report.add(
+                "alpha_mode",
+                "warning",
+                name,
+                f"The material is {mode}; this profile expects {' or '.join(profile['alpha_modes'])}",
+                name,
+            )
+    if profile["packing"]:
+        _check_packing(name, entry["bindings"], profile["packing"], report)
+
     if profile["gltf"]:
         entry["gltf_export"] = _exportability(principled, shader, state, export_reasons, unknown_reasons)
         if entry["gltf_export"]["status"] == "unsupported":
             for reason in entry["gltf_export"]["reasons"]:
                 report.add("gltf_unsupported", "error", name, f"glTF export: {reason}", name)
     return entry
+
+
+def _alpha_mode(principled) -> str:
+    """How the Alpha input behaves, using the patterns the glTF exporter recognizes."""
+    alpha = principled.inputs["Alpha"]
+    if not alpha.links:
+        return "OPAQUE" if alpha.default_value >= 1.0 else "BLEND"
+    node = alpha.links[0].from_node
+    if node.bl_idname == "ShaderNodeMath" and node.operation in {"GREATER_THAN", "ROUND"}:
+        return "MASK"
+    return "BLEND"
+
+
+def _check_packing(material: str, bindings: list[dict], severity: str, report: _Report) -> None:
+    """glTF reads roughness from green and metallic from blue of one image."""
+    found = {item["semantic"]: item for item in bindings if item["semantic"] in {"roughness", "metallic"}}
+    if len(found) < 2:
+        return
+    rough, metal = found["roughness"], found["metallic"]
+    if rough["image"] != metal["image"]:
+        report.add(
+            "channel_packing",
+            severity,
+            material,
+            "Roughness and metallic use separate images; glTF stores both in one, so pack roughness into green "
+            "and metallic into blue",
+            material,
+        )
+    elif (rough.get("channel"), metal.get("channel")) != ("G", "B"):
+        report.add(
+            "channel_layout",
+            "warning",
+            material,
+            f"One image supplies roughness from {rough.get('channel') or 'its color'} and metallic from "
+            f"{metal.get('channel') or 'its color'}; glTF's layout is green and blue",
+            material,
+        )
 
 
 def _exportability(principled, shader, state: dict, unsupported: list[str], unknown: list[str]) -> dict:
@@ -456,6 +527,10 @@ def diagnose(params: dict, *, policy: PathPolicy) -> dict:
     for key in ("max_texture_size", "max_texture_memory_mb"):
         if params.get(key) is not None:
             profile[key] = params[key]
+    if (modes := params.get("alpha_modes")) is not None:
+        if not modes or not all(isinstance(mode, str) and mode in ALPHA_MODES for mode in modes):
+            raise ValueError(f"'alpha_modes' lists any of: {', '.join(ALPHA_MODES)}")
+        profile["alpha_modes"] = list(modes)
     allow = params.get("allow") or []
     if len(allow) > 100 or not all(isinstance(item, str) for item in allow):
         raise ValueError("'allow' lists up to 100 'check' or 'check:subject' strings")

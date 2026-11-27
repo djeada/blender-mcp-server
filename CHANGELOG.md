@@ -19,7 +19,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   a subject, with the same exposure at any scale, in their own collection. `blender_camera_frame` fits a camera to
   a subject for a given aspect ratio without changing the active camera unless asked.
 - `blender_material_diagnose` finds missing textures, wrong color spaces, broken chains, unused nodes, texture
-  budget overruns and glTF export limits, separating errors, warnings, heuristics and unchecked items.
+  budget overruns, unexpected alpha modes, unpacked or misplaced channels and glTF export limits, separating errors, warnings, heuristics and unchecked items.
   `blender_material_preview` renders a material on a temporary sphere, plane or cube.
 - `blender_shader_graph_inspect` and `blender_shader_graph_edit` read and patch material, world and shader group
   nodes. Patches are limited to listed node types and settings and are all-or-nothing.
@@ -50,7 +50,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   material or wireframe mode, framed from evaluated bounds in a temporary scene that leaves the project unchanged.
   Also works headless.
 - Tool profiles (`--profile compact|standard|full`, `--enable-groups`, `--allow-groups`, or the matching
-  environment variables). `compact` advertises 15 tools in 5.8 KB instead of every schema (65.0 KB). The default
+  environment variables). `compact` advertises 15 tools in 5.8 KB instead of every schema (65.2 KB). The default
   stays `full`.
 - Compact output (`--output compact`, on by default in the compact profile) pages listings, keeps log tails and
   turns oversized responses into previews that `blender_output_read` can finish without rerunning anything. Budgets

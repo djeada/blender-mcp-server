@@ -1727,6 +1727,12 @@ tree.nodes.new('ShaderNodeTexNoise').name = 'leftover'
 
     cutout = diagnose(material="ITDiagCutout")
     assert not [item for item in cutout["findings"] if item["check"] in {"color_space", "mixed_use"}], cutout
+    # A texture wired straight into Alpha blends, which the mobile profile questions unless allowed.
+    assert cutout["materials"][0]["alpha_mode"] == "BLEND" and good["materials"][0]["alpha_mode"] == "OPAQUE"
+    assert ("alpha_mode", "warning") in checks(diagnose(material="ITDiagCutout", profile="mobile"))
+    assert ("alpha_mode", "warning") not in checks(
+        diagnose(material="ITDiagCutout", profile="mobile", alpha_modes=["BLEND"])
+    )
 
     bad = diagnose(material="ITDiagBad")
     assert {
@@ -1751,6 +1757,13 @@ tree.nodes.new('ShaderNodeTexNoise').name = 'leftover'
     excused = diagnose(material="ITDiagGood", max_texture_size=4, allow=["texture_size"])
     assert excused["summary"]["status"] == "ok" and excused["summary"]["allowed"] == 3
     assert python(_MATERIAL_SNAPSHOT) == before
+    # Metallic and roughness from separate files are reported; the packed material is not.
+    call("material_create", name="ITDiagUnpacked")
+    bind("ITDiagUnpacked", maps={"roughness": path["d_leaf"], "metallic": path["d_normal"]})
+    assert ("channel_packing", "warning") in checks(diagnose(material="ITDiagUnpacked", profile="mobile"))
+    assert ("channel_packing", "heuristic") in checks(diagnose(material="ITDiagUnpacked"))
+    assert not [item for item in diagnose(material="ITDiagGood")["findings"] if item["check"].startswith("channel_")]
+    before = python(_MATERIAL_SNAPSHOT)
 
     # The export verdict matches what the exporter really does with the supported material.
     call("object_create", mesh_type="cube", name="ITDiagCube")

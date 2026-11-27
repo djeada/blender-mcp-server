@@ -298,19 +298,19 @@ Rejected: links between a shader and a value, links that would form a loop (Blen
 
 `blender_material_diagnose` checks materials without changing anything. Give `material`, or `object` for the materials in its slots, or neither for every material used in the scene (32 per page).
 
-| Profile | Largest texture | Texture memory budget | glTF checks |
-|---|---:|---:|---|
-| `gltf` (default) | 4,096 | 256 MB | Yes |
-| `mobile` | 2,048 | 64 MB | Yes |
-| `render` | 16,384 | 4,096 MB | No |
+| Profile | Largest texture | Texture memory budget | Expected alpha modes | Unpacked metallic and roughness | glTF checks |
+|---|---:|---:|---|---|---|
+| `gltf` (default) | 4,096 | 256 MB | any | heuristic | Yes |
+| `mobile` | 2,048 | 64 MB | `OPAQUE`, `MASK` | warning | Yes |
+| `render` | 16,384 | 4,096 MB | any | not checked | No |
 
-`max_texture_size` and `max_texture_memory_mb` override a profile. These are starting points, not platform requirements.
+`max_texture_size`, `max_texture_memory_mb` and `alpha_modes` override a profile. These are starting points, not platform requirements. Each material reports its `alpha_mode`: `MASK` when a greater-than or round node feeds Alpha, `BLEND` for any other link or a constant below 1, otherwise `OPAQUE`.
 
 | Severity | Meaning | Checks |
 |---|---|---|
 | `error` | Will look or export wrong | `missing_file`, `unreadable_image`, `no_image`, `broken_shader_chain`, `invalid_link`, `normal_without_normal_map`, `color_space` for data read as sRGB, `texture_size`, `texture_memory`, `gltf_unsupported` |
-| `warning` | Probably a problem | `color_space` for color read as linear, `mixed_use`, `unused_nodes`, `empty_normal_map`, `normal_space`, `empty_slot`, `no_material` |
-| `heuristic` | A guess from names or typical values | `name_mismatch`, `partial_metallic`, `non_power_of_two` |
+| `warning` | Probably a problem | `alpha_mode`, `channel_layout` (one image, not roughness in green and metallic in blue), `channel_packing` (mobile), `color_space` for color read as linear, `mixed_use`, `unused_nodes`, `empty_normal_map`, `normal_space`, `empty_slot`, `no_material` |
+| `heuristic` | A guess, or a matter of preference | `channel_packing` (gltf), `name_mismatch`, `partial_metallic`, `non_power_of_two` |
 
 A channel read from an image's **alpha** is never a color-space error, because alpha is linear in any color space.
 

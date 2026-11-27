@@ -106,6 +106,7 @@ class TestServerAddonContract:
                 "profile": "mobile",
                 "max_texture_size": 512,
                 "max_texture_memory_mb": 8,
+                "alpha_modes": ["OPAQUE"],
                 "allow": ["unused_nodes"],
                 "limit": 4,
                 "offset": 1,

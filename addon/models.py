@@ -603,6 +603,7 @@ class MaterialDiagnoseParams(BridgeParams):
         "profile": field("str", "gltf"),
         "max_texture_size": field("int", allow_none=True, ge=1, le=65_536),
         "max_texture_memory_mb": field("int", allow_none=True, ge=1, le=1_000_000),
+        "alpha_modes": field("list", allow_none=True),
         "allow": field("list", allow_none=True),
         **PageParams.fields,
     }
