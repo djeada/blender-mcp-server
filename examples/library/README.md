@@ -4,6 +4,9 @@ Pre-built Blender Python scripts for common tasks. Call them via
 `blender_python_exec` with `script_path` pointing to the script and
 structured `args`.
 
+Eight of these scripts are also in the packaged [recipe catalog](../../docs/recipes.md), which runs them by ID with
+validated arguments and works from an installed wheel.
+
 ## Scripts
 
 | Script | Description |

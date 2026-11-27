@@ -13,7 +13,8 @@ htmlcov
 coverage.xml
 .coverage
 docs
-examples
+examples/*
+!examples/library
 scripts
 tests
 *.md

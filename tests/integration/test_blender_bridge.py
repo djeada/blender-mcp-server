@@ -398,6 +398,61 @@ def test_project_persistence_and_recovery_across_multiple_loads(call, bridge):
     assert call("scene_get_info")["name"] == "Scene"
 
 
+_RECIPE_RUN_ORDER = (
+    # (recipe, arguments); later steps use objects the earlier ones create.
+    ("create-mesh", {"mesh_type": "sphere", "name": "RecipeOrb", "location": [0, 0, 5]}),
+    ("create-mesh", {"mesh_type": "plane", "name": "RecipeGround"}),
+    ("create-tree", {"name": "RecipeOak", "height": 2.5, "seed": 7}),
+    ("scatter-objects", {"source": "RecipeOak", "count": 3, "seed": 1}),
+    ("emissive-material", {"name": "RecipeGlow", "emission_color": [0, 1, 1]}),
+    ("setup-camera", {"name": "RecipeCam", "location": [6, -6, 4], "focal_length": 70}),
+    ("rigid-body", {"objects": ["RecipeOrb", "Missing"], "mass": 2.0}),
+    ("physics-effector", {"objects": ["RecipeGround"]}),
+    ("apply-transforms", {"objects": ["RecipeGround"], "location": True}),
+)
+
+
+def _check_recipe_result(recipe_id, result):
+    from jsonschema import validate
+
+    from blender_mcp_server.recipes import get_recipe
+
+    validate(result, get_recipe(recipe_id).output_schema)
+
+
+def test_every_recipe_runs_through_the_bridge_and_matches_its_contract(call):
+    from blender_mcp_server.recipes import catalog
+
+    assert {recipe for recipe, _ in _RECIPE_RUN_ORDER} == set(catalog())
+    results = {}
+    for recipe, arguments in _RECIPE_RUN_ORDER:
+        results[recipe] = call("recipe_run", recipe=recipe, arguments=arguments)  # the fixture unwraps "result"
+        _check_recipe_result(recipe, results[recipe])
+    assert results["rigid-body"] == {"configured": ["RecipeOrb"], "skipped": ["Missing"], "rb_type": "ACTIVE"}
+    assert results["setup-camera"]["is_active"] is True
+    state = call(
+        "python_exec",
+        code="""
+orb, ground = bpy.data.objects['RecipeOrb'], bpy.data.objects['RecipeGround']
+__result__ = [orb.rigid_body.mass, sorted(m.type for m in ground.modifiers), list(ground.location),
+              bpy.context.scene.camera.name]
+""",
+    )
+    assert state["error"] is None
+    assert state["result"] == [2.0, ["COLLISION", "FLUID"], [0, 0, 0], "RecipeCam"]
+    with pytest.raises(protocol.BridgeError, match="scatter-objects failed"):
+        call("recipe_run", recipe="scatter-objects", arguments={"source": "NoSuchObject"})
+
+
+def test_a_recipe_runs_headless(call, headless_policy):
+    context = MagicMock()
+    context.request_context.lifespan_context.policy = headless_policy
+    outcome = asyncio.run(
+        server.recipe_run(context, "create-tree", {"seed": 3}, transport="headless", timeout_seconds=120)
+    )
+    _check_recipe_result("create-tree", outcome["result"])
+
+
 def test_every_guide_pattern_runs_and_builds_clean_meshes(call):
     """Guide examples are instructions to a model, so they must work and must not teach broken topology."""
     from blender_mcp_server import knowledge

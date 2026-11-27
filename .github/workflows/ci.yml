@@ -185,6 +185,11 @@ jobs:
           python -m venv "$RUNNER_TEMP/wheel-env"
           "$RUNNER_TEMP/wheel-env/bin/pip" install dist/*.whl
           cd "$RUNNER_TEMP" && "$RUNNER_TEMP/wheel-env/bin/python" "$GITHUB_WORKSPACE/scripts/check_wheel.py"
+      - name: Verify the Docker image builds with its packaged data
+        run: |
+          docker build -t blender-mcp-server:ci .
+          docker run --rm --entrypoint python blender-mcp-server:ci -c \
+            "from blender_mcp_server import knowledge, recipes; assert knowledge.guides() and all(r.path.is_file() for r in recipes.catalog().values())"
       - name: Build Blender add-on zip
         run: ./scripts/build_addon_zip.sh
       - name: Upload distributions

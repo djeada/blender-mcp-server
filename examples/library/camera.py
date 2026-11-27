@@ -2,7 +2,7 @@
 
 Args:
     name (str): Camera name. Default: "Camera"
-    location (list[float]): [x, y, z] location. Default: [7, -6, 5]
+    location (list[float]): [x, y, z] location. Default: unchanged (a new camera starts at the origin)
     rotation (list[float]): [rx, ry, rz] Euler rotation in radians. Default: None
     focal_length (float): Lens focal length in mm. Default: 50.0
     set_active (bool): Make this the scene's active camera. Default: True

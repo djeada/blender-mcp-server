@@ -69,6 +69,7 @@ from blender_mcp_server.tools.objects import (
 )
 from blender_mcp_server.tools.output import output_read
 from blender_mcp_server.tools.project import project_get_info, project_open, project_revert, project_save
+from blender_mcp_server.tools.recipes import recipe_get, recipe_run, recipe_search
 from blender_mcp_server.tools.rendering import (
     render_animation,
     render_still,
@@ -96,6 +97,9 @@ __all__ = [
     "workflow",
     "guide_search",
     "guide_get",
+    "recipe_search",
+    "recipe_get",
+    "recipe_run",
     "scene_get_info",
     "scene_execute_batch",
     "project_get_info",

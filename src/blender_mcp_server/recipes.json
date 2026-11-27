@@ -1,0 +1,834 @@
+{
+  "version": 1,
+  "recipes": [
+    {
+      "id": "create-mesh",
+      "file": "create_mesh.py",
+      "category": "geometry",
+      "title": "Create a primitive mesh",
+      "description": "Create a cube, sphere, cylinder, plane, cone or torus through the data API, without operators.",
+      "tags": [
+        "primitive",
+        "cube",
+        "sphere",
+        "cylinder",
+        "plane",
+        "cone",
+        "torus",
+        "shape"
+      ],
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "mesh_type": {
+            "type": "string",
+            "enum": [
+              "cube",
+              "sphere",
+              "cylinder",
+              "plane",
+              "cone",
+              "torus"
+            ],
+            "default": "cube",
+            "description": "Shape"
+          },
+          "name": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 63,
+            "description": "Object name; defaults to the shape"
+          },
+          "location": {
+            "type": "array",
+            "items": {
+              "type": "number"
+            },
+            "minItems": 3,
+            "maxItems": 3,
+            "description": "Position",
+            "default": [
+              0,
+              0,
+              0
+            ]
+          },
+          "size": {
+            "type": "number",
+            "default": 2.0,
+            "description": "Primitive size",
+            "exclusiveMinimum": 0
+          }
+        },
+        "required": [],
+        "additionalProperties": false
+      },
+      "output_schema": {
+        "type": "object",
+        "required": [
+          "name",
+          "type",
+          "location"
+        ],
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "type": {
+            "type": "string"
+          },
+          "location": {
+            "type": "array"
+          }
+        }
+      },
+      "side_effects": [
+        "Adds one object and mesh"
+      ],
+      "prerequisites": [],
+      "examples": [
+        {
+          "mesh_type": "sphere",
+          "name": "Orb",
+          "size": 1.0
+        }
+      ],
+      "version": 1,
+      "blender_min": "3.6"
+    },
+    {
+      "id": "create-tree",
+      "file": "create_tree.py",
+      "category": "environment",
+      "title": "Seeded low-poly tree",
+      "description": "Create a low-poly tree as one mesh with bark and leaf materials. The seed fixes the canopy.",
+      "tags": [
+        "tree",
+        "vegetation",
+        "foliage",
+        "forest",
+        "nature",
+        "low-poly"
+      ],
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 63,
+            "description": "Object name",
+            "default": "Tree"
+          },
+          "location": {
+            "type": "array",
+            "items": {
+              "type": "number"
+            },
+            "minItems": 3,
+            "maxItems": 3,
+            "description": "Trunk base",
+            "default": [
+              0,
+              0,
+              0
+            ]
+          },
+          "height": {
+            "type": "number",
+            "default": 3.0,
+            "description": "Trunk height",
+            "exclusiveMinimum": 0,
+            "maximum": 1000
+          },
+          "seed": {
+            "type": "integer",
+            "description": "Canopy seed"
+          },
+          "trunk_material": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 63,
+            "description": "Existing material for the trunk"
+          },
+          "leaves_material": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 63,
+            "description": "Existing material for the leaves"
+          }
+        },
+        "required": [],
+        "additionalProperties": false
+      },
+      "output_schema": {
+        "type": "object",
+        "required": [
+          "name",
+          "location",
+          "height",
+          "vertices",
+          "faces",
+          "materials"
+        ],
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "location": {
+            "type": "array"
+          },
+          "height": {
+            "type": "number"
+          },
+          "vertices": {
+            "type": "integer"
+          },
+          "faces": {
+            "type": "integer"
+          },
+          "materials": {
+            "type": "array"
+          }
+        }
+      },
+      "side_effects": [
+        "Adds one object and mesh",
+        "Creates materials TreeBark and TreeLeaves if needed"
+      ],
+      "prerequisites": [
+        "Named materials must already exist"
+      ],
+      "examples": [
+        {
+          "name": "Oak",
+          "height": 2.5,
+          "seed": 7
+        }
+      ],
+      "version": 1,
+      "blender_min": "3.6"
+    },
+    {
+      "id": "scatter-objects",
+      "file": "scatter_objects.py",
+      "category": "environment",
+      "title": "Scatter linked copies",
+      "description": "Place linked duplicates of one object across a disk with seeded position, rotation and scale.",
+      "tags": [
+        "scatter",
+        "instance",
+        "duplicate",
+        "random",
+        "forest",
+        "rocks",
+        "distribute"
+      ],
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "source": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 63,
+            "description": "Object to copy"
+          },
+          "count": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 500,
+            "default": 10,
+            "description": "Copies"
+          },
+          "location": {
+            "type": "array",
+            "items": {
+              "type": "number"
+            },
+            "minItems": 3,
+            "maxItems": 3,
+            "description": "Disk center",
+            "default": [
+              0,
+              0,
+              0
+            ]
+          },
+          "radius": {
+            "type": "number",
+            "default": 5.0,
+            "description": "Disk radius",
+            "exclusiveMinimum": 0
+          },
+          "scale_min": {
+            "type": "number",
+            "default": 1.0,
+            "description": "Smallest scale multiplier",
+            "exclusiveMinimum": 0
+          },
+          "scale_max": {
+            "type": "number",
+            "default": 1.0,
+            "description": "Largest scale multiplier",
+            "exclusiveMinimum": 0
+          },
+          "rotation_z_min": {
+            "type": "number",
+            "default": 0.0,
+            "description": "Degrees"
+          },
+          "rotation_z_max": {
+            "type": "number",
+            "default": 360.0,
+            "description": "Degrees"
+          },
+          "name_prefix": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 63,
+            "description": "Name prefix for copies"
+          },
+          "seed": {
+            "type": "integer",
+            "description": "Placement seed"
+          }
+        },
+        "required": [
+          "source"
+        ],
+        "additionalProperties": false
+      },
+      "output_schema": {
+        "type": "object",
+        "required": [
+          "source",
+          "count",
+          "names",
+          "location",
+          "radius"
+        ],
+        "properties": {
+          "source": {
+            "type": "string"
+          },
+          "count": {
+            "type": "integer"
+          },
+          "names": {
+            "type": "array"
+          },
+          "location": {
+            "type": "array"
+          },
+          "radius": {
+            "type": "number"
+          }
+        }
+      },
+      "side_effects": [
+        "Adds up to 500 objects that share the source mesh"
+      ],
+      "prerequisites": [
+        "The source object exists"
+      ],
+      "examples": [
+        {
+          "source": "Oak",
+          "count": 12,
+          "radius": 8,
+          "seed": 3
+        }
+      ],
+      "version": 1,
+      "blender_min": "3.6"
+    },
+    {
+      "id": "emissive-material",
+      "file": "create_emissive_material.py",
+      "category": "materials",
+      "title": "Emissive material",
+      "description": "Create a Principled material with emission color and strength for glowing surfaces.",
+      "tags": [
+        "material",
+        "emission",
+        "glow",
+        "neon",
+        "light",
+        "screen",
+        "lava"
+      ],
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 63,
+            "description": "Material name",
+            "default": "Glow"
+          },
+          "color": {
+            "type": "array",
+            "items": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 1
+            },
+            "minItems": 3,
+            "maxItems": 4,
+            "description": "Base color"
+          },
+          "emission_color": {
+            "type": "array",
+            "items": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 1
+            },
+            "minItems": 3,
+            "maxItems": 4,
+            "default": [
+              1,
+              1,
+              1
+            ],
+            "description": "Emission color"
+          },
+          "emission_strength": {
+            "type": "number",
+            "default": 5.0,
+            "description": "Emission strength",
+            "exclusiveMinimum": 0
+          }
+        },
+        "required": [],
+        "additionalProperties": false
+      },
+      "output_schema": {
+        "type": "object",
+        "required": [
+          "name",
+          "emission_color",
+          "emission_strength"
+        ],
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "emission_color": {
+            "type": "array"
+          },
+          "emission_strength": {
+            "type": "number"
+          }
+        }
+      },
+      "side_effects": [
+        "Adds one material; assign it with blender_material_assign"
+      ],
+      "prerequisites": [],
+      "examples": [
+        {
+          "name": "Neon",
+          "emission_color": [
+            0,
+            1,
+            1
+          ],
+          "emission_strength": 8
+        }
+      ],
+      "version": 1,
+      "blender_min": "3.6"
+    },
+    {
+      "id": "setup-camera",
+      "file": "camera.py",
+      "category": "camera",
+      "title": "Create or place a camera",
+      "description": "Create or reposition a camera, set its focal length and optionally make it the active scene camera.",
+      "tags": [
+        "camera",
+        "view",
+        "lens",
+        "shot"
+      ],
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 63,
+            "description": "Name for a new camera",
+            "default": "Camera"
+          },
+          "location": {
+            "type": "array",
+            "items": {
+              "type": "number"
+            },
+            "minItems": 3,
+            "maxItems": 3,
+            "description": "Position"
+          },
+          "rotation": {
+            "type": "array",
+            "items": {
+              "type": "number"
+            },
+            "minItems": 3,
+            "maxItems": 3,
+            "description": "Euler rotation in radians"
+          },
+          "focal_length": {
+            "type": "number",
+            "default": 50.0,
+            "description": "Lens in mm",
+            "exclusiveMinimum": 0
+          },
+          "set_active": {
+            "type": "boolean",
+            "default": true,
+            "description": "Make it the scene camera"
+          },
+          "use_existing": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 63,
+            "description": "Configure this existing camera instead"
+          }
+        },
+        "required": [],
+        "additionalProperties": false
+      },
+      "output_schema": {
+        "type": "object",
+        "required": [
+          "name",
+          "location",
+          "focal_length",
+          "is_active"
+        ],
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "location": {
+            "type": "array"
+          },
+          "focal_length": {
+            "type": "number"
+          },
+          "is_active": {
+            "type": "boolean"
+          }
+        }
+      },
+      "side_effects": [
+        "Adds or moves a camera",
+        "May change the active scene camera"
+      ],
+      "prerequisites": [
+        "use_existing names a camera object"
+      ],
+      "examples": [
+        {
+          "name": "Hero",
+          "location": [
+            6,
+            -6,
+            4
+          ],
+          "focal_length": 70
+        }
+      ],
+      "version": 1,
+      "blender_min": "3.6"
+    },
+    {
+      "id": "rigid-body",
+      "file": "rigid_body.py",
+      "category": "physics",
+      "title": "Add rigid body physics",
+      "description": "Make objects active or passive rigid bodies with mass, friction, bounciness and collision shape.",
+      "tags": [
+        "physics",
+        "rigid",
+        "body",
+        "simulation",
+        "collision",
+        "fall",
+        "gravity",
+        "debris"
+      ],
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "objects": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            },
+            "minItems": 1,
+            "maxItems": 100,
+            "description": "Object names"
+          },
+          "rb_type": {
+            "type": "string",
+            "enum": [
+              "ACTIVE",
+              "PASSIVE"
+            ],
+            "default": "ACTIVE",
+            "description": "Active bodies move; passive ones only collide"
+          },
+          "mass": {
+            "type": "number",
+            "default": 1.0,
+            "description": "Kilograms",
+            "exclusiveMinimum": 0
+          },
+          "friction": {
+            "type": "number",
+            "default": 0.5,
+            "description": "0 to 1",
+            "minimum": 0,
+            "maximum": 1
+          },
+          "restitution": {
+            "type": "number",
+            "default": 0.3,
+            "description": "Bounciness 0 to 1",
+            "minimum": 0,
+            "maximum": 1
+          },
+          "collision_shape": {
+            "type": "string",
+            "enum": [
+              "BOX",
+              "SPHERE",
+              "CAPSULE",
+              "CYLINDER",
+              "CONE",
+              "CONVEX_HULL",
+              "MESH"
+            ],
+            "default": "CONVEX_HULL",
+            "description": "Collision shape"
+          }
+        },
+        "required": [
+          "objects"
+        ],
+        "additionalProperties": false
+      },
+      "output_schema": {
+        "type": "object",
+        "required": [
+          "configured",
+          "skipped",
+          "rb_type"
+        ],
+        "properties": {
+          "configured": {
+            "type": "array"
+          },
+          "skipped": {
+            "type": "array"
+          },
+          "rb_type": {
+            "type": "string"
+          }
+        }
+      },
+      "side_effects": [
+        "Adds rigid body settings and, if missing, a rigid body world",
+        "Changes the active object"
+      ],
+      "prerequisites": [
+        "Objects are meshes in the current scene"
+      ],
+      "examples": [
+        {
+          "objects": [
+            "Orb"
+          ],
+          "mass": 2.0
+        }
+      ],
+      "version": 1,
+      "blender_min": "3.6"
+    },
+    {
+      "id": "physics-effector",
+      "file": "effector.py",
+      "category": "physics",
+      "title": "Fluid and collision effector",
+      "description": "Make objects obstacles for Mantaflow fluids and, optionally, collision physics.",
+      "tags": [
+        "physics",
+        "fluid",
+        "collision",
+        "obstacle",
+        "effector",
+        "simulation"
+      ],
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "objects": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            },
+            "minItems": 1,
+            "maxItems": 100,
+            "description": "Object names"
+          },
+          "effector_type": {
+            "type": "string",
+            "enum": [
+              "COLLISION",
+              "GUIDE"
+            ],
+            "default": "COLLISION",
+            "description": "Fluid effector kind"
+          },
+          "surface_distance": {
+            "type": "number",
+            "default": 0.01,
+            "description": "Surface thickness",
+            "minimum": 0,
+            "maximum": 10
+          },
+          "use_effector": {
+            "type": "boolean",
+            "default": true,
+            "description": "Also add collision physics"
+          }
+        },
+        "required": [
+          "objects"
+        ],
+        "additionalProperties": false
+      },
+      "output_schema": {
+        "type": "object",
+        "required": [
+          "configured",
+          "skipped"
+        ],
+        "properties": {
+          "configured": {
+            "type": "array"
+          },
+          "skipped": {
+            "type": "array"
+          }
+        }
+      },
+      "side_effects": [
+        "Adds Fluid and Collision modifiers"
+      ],
+      "prerequisites": [
+        "Objects are meshes"
+      ],
+      "examples": [
+        {
+          "objects": [
+            "Ground"
+          ]
+        }
+      ],
+      "version": 1,
+      "blender_min": "3.6"
+    },
+    {
+      "id": "apply-transforms",
+      "file": "apply_transforms.py",
+      "category": "cleanup",
+      "title": "Apply object transforms",
+      "description": "Bake location, rotation and scale into mesh data, as exporters and modifiers often expect.",
+      "tags": [
+        "apply",
+        "transform",
+        "scale",
+        "rotation",
+        "freeze",
+        "export",
+        "cleanup",
+        "game"
+      ],
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "objects": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            },
+            "minItems": 1,
+            "maxItems": 100,
+            "description": "Object names"
+          },
+          "location": {
+            "type": "boolean",
+            "default": true,
+            "description": "Apply location"
+          },
+          "rotation": {
+            "type": "boolean",
+            "default": true,
+            "description": "Apply rotation"
+          },
+          "scale": {
+            "type": "boolean",
+            "default": true,
+            "description": "Apply scale"
+          }
+        },
+        "required": [
+          "objects"
+        ],
+        "additionalProperties": false
+      },
+      "output_schema": {
+        "type": "object",
+        "required": [
+          "applied",
+          "skipped"
+        ],
+        "properties": {
+          "applied": {
+            "type": "array"
+          },
+          "skipped": {
+            "type": "array"
+          }
+        }
+      },
+      "side_effects": [
+        "Rewrites mesh vertices and resets object transforms",
+        "Changes selection and the active object"
+      ],
+      "prerequisites": [
+        "Object Mode",
+        "Mesh data used by one object only"
+      ],
+      "examples": [
+        {
+          "objects": [
+            "Crate"
+          ],
+          "location": false
+        }
+      ],
+      "version": 1,
+      "blender_min": "3.6"
+    }
+  ]
+}

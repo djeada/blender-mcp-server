@@ -6,7 +6,7 @@ Many clients put every tool's schema into the model's context. A profile chooses
 |---|---|---:|---:|
 | `compact` | `core` | 15 | 5.7 KB |
 | `standard` | `core`, `scene`, `modeling`, `materials`, `lighting`, `rendering`, `knowledge` | 53 | 37.5 KB |
-| `full` (default) | all | 59 | 43.4 KB |
+| `full` (default) | all | 62 | 45.4 KB |
 
 Sizes are the bytes of the JSON `tools/list` result. A client may reformat schemas, and token counts depend on its tokenizer, so treat bytes as a way to compare profiles, not as a promise about a particular context window. Reproduce them with `python scripts/measure_context.py`.
 
@@ -22,6 +22,7 @@ Sizes are the bytes of the JSON `tools/list` result. A client may reformat schem
 | `animation` | Timeline and keyframes |
 | `rendering` | Inspection views, cameras, renders and exports |
 | `knowledge` | [Modeling guides and staged workflows](knowledge.md) |
+| `recipes` | [Reviewed scripts run by ID](recipes.md) |
 | `scripting` | Python execution and background jobs |
 
 ## Configure

@@ -125,6 +125,16 @@ GROUPS: dict[str, Group] = {
         },
         "None. Works without Blender.",
     ),
+    "recipes": Group(
+        "Reviewed ready-made scripts run by ID with validated arguments: primitives, trees, scattering, glowing "
+        "materials, cameras, physics and transform cleanup.",
+        {
+            "blender_recipe_search": (),
+            "blender_recipe_get": (),
+            "blender_recipe_run": ("python.execute",),
+        },
+        "Searching works offline. Running needs the same permission as Python execution.",
+    ),
     "scripting": Group(
         "Run Python in Blender, immediately or as cancellable background jobs.",
         {
@@ -143,6 +153,8 @@ KEYWORDS: dict[str, str] = {
     "blender_workflow": "plan how to start approach steps stage guidance orc sword house character prop building",
     "blender_guide_search": "how to technique learn tutorial help advice best practice",
     "blender_guide_get": "read documentation tutorial technique",
+    "blender_recipe_search": "ready-made template tree scatter glow emissive physics rigid camera",
+    "blender_recipe_run": "ready-made template tree scatter glow emissive physics rigid apply transform",
     "blender_status": "health connection troubleshoot reconnect recover version",
     "blender_scene_get_info": "overview",
     "blender_scene_list_objects": "find search outliner",

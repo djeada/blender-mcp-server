@@ -8,6 +8,7 @@ WORKDIR /app
 COPY pyproject.toml README.md LICENSE ./
 COPY src/ src/
 COPY addon/ addon/
+COPY examples/library/ examples/library/
 
 RUN pip install --no-cache-dir . \
     && useradd --create-home --uid 10001 mcp

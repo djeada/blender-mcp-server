@@ -47,7 +47,7 @@ Packaged [guides and staged workflows](docs/knowledge.md) help a model choose a 
 
 ## Small-context clients
 
-By default the server advertises every tool. For local or small-context models, start it with `--profile compact`: it advertises 15 tools (5.7 KB of schemas instead of 43.4 KB), pages listings and bounds long responses, and the model finds and runs other actions on demand. See [Tool profiles](docs/profiles.md) for client configurations, capability groups and the trade-offs.
+By default the server advertises every tool. For local or small-context models, start it with `--profile compact`: it advertises 15 tools (5.7 KB of schemas instead of 45.4 KB), pages listings and bounds long responses, and the model finds and runs other actions on demand. See [Tool profiles](docs/profiles.md) for client configurations, capability groups and the trade-offs.
 
 ## Policy and recovery
 

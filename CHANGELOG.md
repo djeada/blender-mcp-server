@@ -8,6 +8,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 ## [Unreleased]
 
 ### Added
+- A recipe catalog (`blender_recipe_search`, `blender_recipe_get`, `blender_recipe_run`) that packages eight
+  reviewed library scripts in the wheel and runs them by ID with schema-validated arguments, under the same policy as
+  Python execution. `jsonschema` is now a declared dependency.
 - Fifteen packaged modeling, surfacing and rigging guides with tested `bpy` examples, plus staged workflows chosen
   from the task, style and target: `blender_workflow`, `blender_guide_search`, `blender_guide_get`, the
   `blender://guides` resources and the `blender_modeling_workflow` prompt.
@@ -15,7 +18,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   material or wireframe mode, framed from evaluated bounds in a temporary scene that leaves the project unchanged.
   Also works headless.
 - Tool profiles (`--profile compact|standard|full`, `--enable-groups`, `--allow-groups`, or the matching
-  environment variables). `compact` advertises 15 tools in 5.7 KB instead of every schema (43.4 KB). The default
+  environment variables). `compact` advertises 15 tools in 5.7 KB instead of every schema (45.4 KB). The default
   stays `full`.
 - Compact output (`--output compact`, on by default in the compact profile) pages listings, keeps log tails and
   turns oversized responses into previews that `blender_output_read` can finish without rerunning anything. Budgets

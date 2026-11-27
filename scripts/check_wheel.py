@@ -6,7 +6,7 @@ Usage (with the wheel installed in the interpreter that runs this): python scrip
 import sys
 from pathlib import Path
 
-from blender_mcp_server import knowledge
+from blender_mcp_server import knowledge, recipes
 from blender_mcp_server.server import mcp
 from blender_mcp_server.shared import ADDON_PATH
 
@@ -24,8 +24,15 @@ def main() -> int:
             for link in stage["guides"]:
                 guide, section = link.split("#")
                 assert guides[guide].sections[section].text
+    for recipe in recipes.catalog().values():
+        assert recipe.path.is_relative_to(installed.parent.parent), recipe.path
+        compile(recipe.source(), recipe.file, "exec")
+        recipe.arguments(recipe.examples[0])
     assert (ADDON_PATH / "mesh.py").is_file()
-    print(f"OK: {len(guides)} guides and {len(mcp._tool_manager._tools)} tools load from {installed.parent.parent}")
+    print(
+        f"OK: {len(guides)} guides, {len(recipes.catalog())} recipes and {len(mcp._tool_manager._tools)} tools "
+        f"load from {installed.parent.parent}"
+    )
     return 0
 
 
