@@ -4,11 +4,11 @@ Many clients put every tool's schema into the model's context. A profile chooses
 
 | Profile | Advertised groups | Tools | Serialized `tools/list` |
 |---|---|---:|---:|
-| `compact` | `core` | 15 | 5.7 KB |
-| `standard` | `core`, `scene`, `modeling`, `materials`, `lighting`, `rendering`, `knowledge` | 53 | 37.5 KB |
-| `full` (default) | all | 62 | 45.4 KB |
+| `compact` | `core` | 15 | 5.8 KB |
+| `standard` | `core`, `scene`, `modeling`, `materials`, `lighting`, `rendering`, `knowledge` | 53 | 38.0 KB |
+| `full` (default) | all | 62 | 46.1 KB |
 
-Sizes are the bytes of the JSON `tools/list` result. A client may reformat schemas, and token counts depend on its tokenizer, so treat bytes as a way to compare profiles, not as a promise about a particular context window. Reproduce them with `python scripts/measure_context.py`.
+Sizes are the bytes of the JSON `tools/list` result. A client may reformat schemas, and token counts depend on its tokenizer, so treat bytes as a way to compare profiles, not as a promise about a particular context window. A smaller list does not by itself make a model more capable; see the [benchmarks](benchmarks.md) before choosing. Reproduce them with `python scripts/context_benchmark.py sizes`.
 
 ## Groups
 
@@ -81,7 +81,7 @@ blender_capability_invoke(action="blender_object_add_modifier",
                           arguments={"name": "Hilt", "modifier_type": "BEVEL"})
 ```
 
-An unadvertised action must be described in the current session before it can be invoked, otherwise the call fails with `discovery_required`. Sessions do not share this state. Unlike a direct call, the dispatcher rejects parameter names the action does not have, so a typo cannot silently fall back to a default.
+An unadvertised action must be described in the current session before it can run. An earlier `invoke` runs nothing: it fails with `discovery_required`, returns the parameter list and counts as the description, so a second call succeeds. An unknown action ID gets suggestions for close ones. Sessions do not share this state. Unlike a direct call, the dispatcher rejects parameter names the action does not have, so a typo cannot silently fall back to a default.
 
 The tool list never changes while the server runs. Clients that cache it work unchanged, and no list-change notifications are sent. Discovery costs extra round trips. Choose `full`, or enable the groups you use often, when the model has room for them.
 
@@ -111,7 +111,7 @@ The compact profile also keeps responses small. `--output compact` turns this on
 | `--page-size` | `BLENDER_MCP_PAGE_SIZE` | 25 |
 | `--log-tail-chars` | `BLENDER_MCP_LOG_TAIL_CHARS` | 2000 |
 
-These are context budgets for text. They are separate from the 8 MB wire limit and from the [policy's](policy.md) execution limits. Bytes only approximate tokens: for English JSON, four bytes per token is a rough guide that varies with the tokenizer.
+These are context budgets for text. They are separate from the 8 MB wire limit and from the [policy's](policy.md) execution limits. Bytes only approximate tokens, and the ratio depends on the tokenizer and the text; four bytes per token overstated the tool schemas by about half for one [measured model](benchmarks.md#measurement-notes).
 
 ### Measured responses
 

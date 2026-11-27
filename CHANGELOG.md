@@ -8,6 +8,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 ## [Unreleased]
 
 ### Added
+- `scripts/context_benchmark.py` measures tool list sizes, replays task traces and can score a local model against
+  the Blender scene. CI enforces context limits from `tests/context_budgets.json`. Results and trade-offs are in
+  `docs/benchmarks.md`.
 - Workflow stages name relevant recipe IDs. Guide search reports matching section IDs and related recipes and
   filters by stage, style and target; recipe search filters by Blender version.
 - A recipe catalog (`blender_recipe_search`, `blender_recipe_get`, `blender_recipe_run`) that packages eight
@@ -20,7 +23,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   material or wireframe mode, framed from evaluated bounds in a temporary scene that leaves the project unchanged.
   Also works headless.
 - Tool profiles (`--profile compact|standard|full`, `--enable-groups`, `--allow-groups`, or the matching
-  environment variables). `compact` advertises 15 tools in 5.7 KB instead of every schema (45.4 KB). The default
+  environment variables). `compact` advertises 15 tools in 5.8 KB instead of every schema (46.1 KB). The default
   stays `full`.
 - Compact output (`--output compact`, on by default in the compact profile) pages listings, keeps log tails and
   turns oversized responses into previews that `blender_output_read` can finish without rerunning anything. Budgets

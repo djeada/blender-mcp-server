@@ -23,9 +23,8 @@ from blender_mcp_server.capabilities import (
 from blender_mcp_server.connection import BlenderConnection
 from blender_mcp_server.server import main  # noqa: F401  (importing registers every tool)
 
-# The compact startup surface. Growing it, or these limits, is a deliberate change: update the docs with it.
+# The compact startup surface. Its size limits are enforced from tests/context_budgets.json.
 COMPACT_TOOLS = sorted([*GROUPS["core"].tools, *SUPPORT_TOOLS])
-COMPACT_SCHEMA_BYTE_BUDGET = 6_200
 
 # Names that existing full-profile clients depend on.
 LEGACY_TOOLS = [
@@ -159,7 +158,6 @@ async def test_compact_advertises_a_small_surface_without_advanced_schemas(serve
         listed = await client.list_tools()
     assert sorted(tool.name for tool in listed.tools) == COMPACT_TOOLS
     wire = listed.model_dump_json(exclude_none=True, by_alias=True)
-    assert len(wire) <= COMPACT_SCHEMA_BYTE_BUDGET, len(wire)
     for advanced in ("blender_python_exec", "blender_light_create", "check_duplicates", "spot_angle", "outputSchema"):
         assert advanced not in wire
     assert '"title"' not in wire
@@ -326,7 +324,11 @@ async def test_advertised_actions_can_be_invoked_without_describing(serve, sent)
 async def test_discovery_is_required_per_session_and_can_be_reset(serve, sent):
     call = {"action": "blender_material_create", "arguments": {"name": "Steel"}}
     async with serve("compact") as first, create_connected_server_and_client_session(mcp) as second:
-        assert (await _error(first, "blender_capability_invoke", **call))["code"] == "discovery_required"
+        refused = await _error(first, "blender_capability_invoke", **call)
+        assert refused["code"] == "discovery_required"
+        # The refusal teaches the parameters, so a second, deliberate call is enough. Nothing ran the first time.
+        assert [item["name"] for item in refused["details"]["parameters"]] == ["name", "color"]
+        assert "name: string" in refused["message"] and sent.await_count == 0
         await _json(first, "blender_capability_describe", actions=["blender_material_create", "blender_light_create"])
         await _json(first, "blender_capability_invoke", **call)
         # Another session has discovered nothing.
@@ -361,6 +363,20 @@ async def test_dispatcher_cannot_call_itself(serve):
     async with serve("compact") as client:
         error = await _error(client, "blender_capability_invoke", action="blender_capability_invoke")
     assert error["code"] == "not_found"
+
+
+@pytest.mark.asyncio
+async def test_invented_action_ids_get_allowed_suggestions(serve, sent):
+    async with serve("compact", allow=["scene", "rendering"]) as client:
+        guessed = await _error(client, "blender_capability_invoke", action="export_as_glb", arguments={})
+        assert guessed["code"] == "not_found" and guessed["details"]["suggestions"][0] == "blender_export_gltf"
+        assert "Did you mean: blender_export_gltf" in guessed["message"]
+        # Suggestions never reveal actions from groups the server does not allow.
+        blocked = await _error(client, "blender_capability_describe", actions=["python_run_script"])
+        assert not {"blender_python_exec", "blender_python_exec_async"} & set(blocked["details"]["suggestions"])
+        nothing = await _error(client, "blender_capability_describe", actions=["zzz"])
+        assert nothing["details"]["suggestions"] == [] and "Did you mean" not in nothing["message"]
+    sent.assert_not_awaited()
 
 
 @pytest.mark.asyncio

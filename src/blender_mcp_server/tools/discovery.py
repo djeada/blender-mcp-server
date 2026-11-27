@@ -20,9 +20,38 @@ MAX_DESCRIBED = 3
 _discovered: "weakref.WeakKeyDictionary[Any, set[str]]" = weakref.WeakKeyDictionary()
 
 
+def _documents(actions) -> dict:
+    return {
+        action: [
+            (5, action.removeprefix("blender_").replace("_", " ")),
+            (5, KEYWORDS.get(action, "")),
+            (2, mcp._tool_manager.get_tool(action).description),  # type: ignore[union-attr]
+            (1, f"{TOOL_GROUPS[action]} {GROUPS[TOOL_GROUPS[action]].summary}"),
+        ]
+        for action in actions
+    }
+
+
+def _allowed_actions(group: str | None = None) -> list[str]:
+    return [
+        action
+        for action, name in TOOL_GROUPS.items()
+        if name in mcp.exposure.allowed and (group is None or name == group)
+    ]
+
+
 def _tool(action: str):
     if action not in TOOL_GROUPS:
-        raise protocol.BridgeError("not_found", "Unknown action; use blender_capability_search to find action IDs")
+        # Models invent plausible IDs. Naming the closest real ones saves them from repeating the guess.
+        close = [
+            name for name, _ in rank(action.removeprefix("blender_").replace("_", " "), _documents(_allowed_actions()))
+        ]
+        suggestion = f" Did you mean: {', '.join(close[:3])}?" if close else ""
+        raise protocol.BridgeError(
+            "not_found",
+            f"Unknown action; use blender_capability_search to find action IDs.{suggestion}",
+            details={"suggestions": close[:3]},
+        )
     group = TOOL_GROUPS[action]
     mcp.exposure.require_allowed_group(group, action)
     tool = mcp._tool_manager.get_tool(action)
@@ -38,8 +67,9 @@ def _summary(description: str) -> str:
 @mcp.tool(
     name="blender_capability_search",
     description=(
-        "Find actions beyond the advertised tools. With no arguments, lists capability groups. Pass task words in "
-        "'query' (e.g. 'bevel edges', 'export for game engine') and/or a 'group' to list matching action IDs."
+        "Search here whenever your tools cannot do the task: lights, cameras, materials, bevels and other modifiers, "
+        "mesh checks, pictures, renders, export, animation, guides and scripts may all be available. Pass task words "
+        "in 'query' (e.g. 'add area light') and/or a 'group'. With no arguments, lists groups."
     ),
 )
 async def capability_search(
@@ -67,24 +97,8 @@ async def capability_search(
                 if name in exposure.allowed
             ]
         }
-    candidates = {
-        action: _tool(action)[0]
-        for action, name in TOOL_GROUPS.items()
-        if name in exposure.allowed and (group is None or name == group)
-    }
-    if query is None:
-        matches = list(candidates)
-    else:
-        documents = {
-            action: [
-                (5, action.removeprefix("blender_").replace("_", " ")),
-                (5, KEYWORDS.get(action, "")),
-                (2, tool.description),
-                (1, f"{TOOL_GROUPS[action]} {GROUPS[TOOL_GROUPS[action]].summary}"),
-            ]
-            for action, tool in candidates.items()
-        }
-        matches = [action for action, _ in rank(query, documents)]
+    candidates = {action: _tool(action)[0] for action in _allowed_actions(group)}
+    matches = list(candidates) if query is None else [action for action, _ in rank(query, _documents(candidates))]
     page = matches[offset : offset + limit]
     result: dict[str, Any] = {
         "actions": [
@@ -179,10 +193,16 @@ async def capability_describe(
 async def capability_invoke(ctx: Context, action: str, arguments: dict[str, Any] | None = None):
     tool, group = _tool(action)
     if group not in mcp.exposure.advertised and action not in _discovered.get(ctx.session, ()):
+        # Nothing runs. The caller gets the parameters it had not seen, and can then invoke deliberately.
+        _discovered.setdefault(ctx.session, set()).add(action)
+        parameters = _parameters(tool.parameters)
+        signature = ", ".join(
+            f"{item['name']}: {item['type']}{' (required)' if item.get('required') else ''}" for item in parameters
+        )
         raise protocol.BridgeError(
             "discovery_required",
-            f"Call blender_capability_describe with actions=['{action}'] before invoking it",
-            details={"action": action},
+            f"Not run. {action} is now described; check these parameters and invoke again. {signature}",
+            details={"action": action, "parameters": parameters},
         )
     arguments = arguments or {}
     if unknown := sorted(set(arguments) - set(tool.parameters.get("properties", {}))):

@@ -41,7 +41,10 @@ async def object_get_hierarchy(
 
 @mcp.tool(
     name="blender_object_create",
-    description="Create a new mesh object in Blender. Supported types: cube, sphere, cylinder, plane, cone, torus.",
+    description=(
+        "Create a new mesh object in Blender. Supported types: cube, sphere, cylinder, plane, cone, torus. "
+        "Meshes only: lights and cameras are created by other actions."
+    ),
 )
 async def object_create(
     ctx: Context,
