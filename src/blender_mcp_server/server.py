@@ -16,6 +16,7 @@ from blender_mcp_server.tools.camera import (
     camera_create,
     camera_update,
 )
+from blender_mcp_server.tools.capture import view_capture
 from blender_mcp_server.tools.discovery import (
     capability_describe,
     capability_invoke,
@@ -135,6 +136,7 @@ __all__ = [
     "keyframe_add",
     "keyframe_list",
     "keyframe_remove",
+    "view_capture",
     "render_still",
     "render_animation",
     "export_gltf",

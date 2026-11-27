@@ -13,6 +13,7 @@ from . import (
     animation,
     batch,
     camera,
+    capture,
     collections,
     lighting,
     materials,
@@ -101,6 +102,7 @@ class CommandHandler:
             "render.animation": Command(
                 partial(rendering.render_animation, policy=self.policy), models.RenderAnimationParams
             ),
+            "view.capture": Command(partial(capture.capture, policy=self.policy), models.ViewCaptureParams),
             "export.gltf": Command(partial(rendering.export_gltf, policy=self.policy), models.ExportFileParams),
             "export.obj": Command(partial(rendering.export_obj, policy=self.policy), models.ExportFileParams),
             "export.fbx": Command(partial(rendering.export_fbx, policy=self.policy), models.ExportFileParams),

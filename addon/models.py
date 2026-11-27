@@ -455,3 +455,18 @@ class MeshInspectParams(BridgeParams):
         "max_ids": field("int", 10, ge=0, le=100),
         "element_budget": field("int", 500_000, ge=1, le=2_000_000),
     }
+
+
+class ViewCaptureParams(BridgeParams):
+    fields = {
+        "object": field("str", allow_none=True),
+        "collection": field("str", allow_none=True),
+        "include_children": field("bool", True),
+        "views": field("list", default_factory=lambda: ["three_quarter"]),
+        "projection": field("str", "orthographic"),
+        "mode": field("str", "solid"),
+        "resolution": field("int", 512, ge=64, le=1024),
+        "include_images": field("bool", True),
+        "save_directory": field("str", allow_none=True),
+        "max_bytes": field("int", 4_000_000, ge=10_000, le=5_000_000),
+    }

@@ -127,6 +127,34 @@ Render and export tools return the absolute path they wrote. A path starting wit
 `.blend` file; while the file is unsaved it goes to `blender-mcp/` in the system temp directory. Missing
 folders are created.
 
+### Visual Inspection
+
+`blender_view_capture` lets the model see its work. It returns one metadata text block, then a `view: <name>` text block and a PNG image for each requested view. The client and model must accept MCP image content.
+
+| Parameter | Default | Meaning |
+|---|---|---|
+| `object` or `collection` | | The subject. Give exactly one. An object includes its children unless `include_children=false` |
+| `views` | `["three_quarter"]` | Up to six of `front`, `back`, `right`, `left`, `top`, `bottom`, `three_quarter`. `front` looks along +Y, as in Blender |
+| `mode` | `solid` | `solid` (neutral shading for shape), `material`, or `wireframe` (edges of the evaluated mesh over a shaded surface; meshes only) |
+| `projection` | `orthographic` | Or `perspective` (70 mm lens) |
+| `resolution` | 512, or 384 in compact output | Square image size, 64–1024 pixels |
+| `include_images` | `true` | `false` returns framing metadata only |
+| `save_directory` | | Also write `capture_<view>.png` files there and report their paths. Existing files are replaced. With `include_images=false`, this is the fallback for text-only clients |
+| `max_bytes` | 4,000,000 | Limit on the PNG bytes returned (10,000–5,000,000). Over it, the call fails with `budget_exceeded` and returns no images |
+
+The metadata lists the engine, world bounds, each camera's direction and position, `ortho_scale` or `lens`, and any objects left out with the reason: hidden from render, disabled in viewports, without a renderable surface, or not a mesh in wireframe mode. Framing uses the bounding boxes of evaluated geometry and instances, so every subject is in the picture; a rotated view of a round shape can have extra space around it.
+
+**Your project is not changed.** The subject is linked into a temporary scene with its own camera, lights, background and render settings, and that scene and everything made for it are removed afterwards, also when rendering fails. Wireframe draws on private copies. The active camera, your lights, selection, visibility and render settings are not touched. Like any render, a capture updates Blender's *Render Result* image and runs registered render handlers. It adds no undo step. Objects are shown at the current frame. Images are renders, so in every mode modifiers use their **render** settings (Subdivision uses its render level). Framing and `blender_mesh_inspect` use viewport settings. When the two differ, `notes` says so, because geometry added only at render time can fall outside the frame.
+
+| Where Blender runs | `solid` and `wireframe` | `material` |
+|---|---|---|
+| With its window open | Workbench | EEVEE |
+| In the background, including `transport="headless"` | Cycles, CPU | Cycles, CPU |
+
+Background captures use Cycles so that they do not need a GPU. If a build lacks Cycles, they fail with `unsupported`. Lighting is a fixed rig that follows the camera, so material views are for comparing shape and color, not for judging your scene's lighting; use `blender_render_still` for that.
+
+Captures follow the [policy](policy.md): the `view.capture` command, the render pixel and frame limits (one frame per view), output roots for `save_directory`, and the long command deadline. They run on Blender's main thread, so the interface is busy while rendering.
+
 ### History
 
 | Tool | Description |

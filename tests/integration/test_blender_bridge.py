@@ -6,6 +6,7 @@ Opt in with BLENDER_MCP_INTEGRATION=1 (and BLENDER_BIN if blender is not on PATH
 """
 
 import asyncio
+import base64
 import json
 import os
 import shutil
@@ -510,6 +511,146 @@ def test_mesh_inspection_diagnoses_fixtures_without_changing_state(call):
         call("mesh_inspect", name="MeshParts")
     assert run_python("__result__ = bpy.context.mode") == "EDIT_MESH"
     run_python("bpy.ops.object.mode_set(mode='OBJECT')")
+
+
+_BUILD_CAPTURE_FIXTURE = """
+root = bpy.data.objects.new('CaptureRoot', None)
+bpy.context.scene.collection.objects.link(root)
+group = bpy.data.collections.new('CaptureParts')
+bpy.context.scene.collection.children.link(group)
+for name, location, hidden in (('CaptureBox', (20, 0, 0), False), ('CaptureTall.001', (23, 0, 2), False),
+                               ('CaptureSecret', (60, 0, 0), True)):
+    mesh = bpy.data.meshes.new(name)
+    cube = [(x, y, z) for x in (-1, 1) for y in (-1, 1) for z in (-1, 1)]
+    mesh.from_pydata(cube, [], [(0, 1, 3, 2), (4, 6, 7, 5), (0, 4, 5, 1), (2, 3, 7, 6), (0, 2, 6, 4), (1, 5, 7, 3)])
+    obj = bpy.data.objects.new(name, mesh)
+    group.objects.link(obj)
+    obj.location = location
+    obj.parent = root
+    obj.hide_render = hidden
+instancer = bpy.data.objects.new('CaptureInstancer', None)
+bpy.context.scene.collection.objects.link(instancer)
+instancer.instance_type = 'COLLECTION'
+instancer.instance_collection = group
+instancer.location = (0, 40, 0)
+moving = bpy.data.objects['CaptureBox']
+moving.keyframe_insert('location', frame=1)
+bpy.context.view_layer.update()
+__result__ = True
+"""
+
+_SNAPSHOT_CAPTURE = """
+scene = bpy.context.scene
+render = scene.render
+__result__ = {
+    'scene': scene.name,
+    'camera': scene.camera.name if scene.camera else None,
+    'frame': scene.frame_current,
+    'render': [render.engine, render.resolution_x, render.resolution_y, render.resolution_percentage,
+               render.filepath, render.use_compositing, render.film_transparent, render.image_settings.file_format],
+    'view_transform': scene.view_settings.view_transform,
+    'datablocks': {kind: sorted(block.name for block in getattr(bpy.data, kind))
+                   for kind in ('scenes', 'objects', 'meshes', 'materials', 'cameras', 'lights', 'worlds',
+                                'collections')},
+    'objects': {o.name: [o.select_get(), o.hide_render, o.hide_viewport, list(o.color),
+                         [list(row) for row in o.matrix_world], [m.name for m in o.modifiers],
+                         len(o.users_collection)]
+                for o in scene.objects},
+}
+"""
+
+
+def _png_size(data: bytes) -> tuple[int, int]:
+    assert data.startswith(b"\x89PNG\r\n\x1a\n")
+    return struct.unpack(">II", data[16:24])
+
+
+def test_view_capture_returns_images_and_leaves_the_project_unchanged(bridge, call):
+    """Background Blender captures with Cycles on the CPU, so no GPU or display is needed."""
+
+    def run_python(code):
+        result = call("python_exec", code=code)
+        assert result["error"] is None, result["error"]
+        return result["result"]
+
+    if not run_python(_USE_FAST_CYCLES):
+        pytest.skip("Cycles is not available in this Blender build")
+    run_python(_BUILD_CAPTURE_FIXTURE)
+    before = run_python(_SNAPSHOT_CAPTURE)
+
+    loop = asyncio.new_event_loop()
+    connection = BlenderConnection(port=bridge["port"])
+    context = MagicMock()
+    context.request_context.lifespan_context = connection
+
+    def capture(**arguments):
+        blocks = loop.run_until_complete(server.view_capture(context, resolution=96, **arguments))
+        return json.loads(blocks[0].text), [base64.b64decode(b.data) for b in blocks if b.type == "image"]
+
+    try:
+        saved = bridge["tmp"] / "captures"
+        report, images = capture(object="CaptureRoot", views=["front", "top"], save_directory=str(saved))
+        assert report["engine"] == "CYCLES"
+        assert [_png_size(image) for image in images] == [(96, 96), (96, 96)]
+        assert images[0] != images[1]
+        assert (saved / "capture_front.png").read_bytes() == images[0]
+        assert report["bounds_world"] == {"min": [19, -1, -1], "max": [24, 1, 3], "size": [5, 2, 4]}
+        assert {item["object"] for item in report["excluded"]["items"]} == {"CaptureRoot", "CaptureSecret"}
+
+        # Instanced collections are framed from their instances.
+        instanced, images = capture(object="CaptureInstancer", projection="perspective", mode="material")
+        assert instanced["bounds_world"]["min"][1] == 39 and len(images) == 1
+        wire, images = capture(collection="CaptureParts", mode="wireframe")
+        assert wire["objects_shown"] == 2 and wire["notes"] == [] and len(images) == 1
+        run_python("bpy.data.objects['CaptureBox'].modifiers.new('s', 'SUBSURF').render_levels = 3")
+        assert "render modifier settings" in capture(object="CaptureBox", include_images=False)[0]["notes"][0]
+        run_python("box = bpy.data.objects['CaptureBox']; box.modifiers.remove(box.modifiers['s'])")
+        metadata, images = capture(object="CaptureBox", include_images=False)
+        assert images == [] and metadata["engine"] is None and metadata["views"][0]["ortho_scale"] > 2
+
+        for arguments, code in (
+            ({"object": "CaptureSecret"}, "unsupported"),
+            ({"object": "Missing"}, "not_found"),
+            ({"object": "CaptureBox", "collection": "CaptureParts"}, "invalid_arguments"),
+        ):
+            with pytest.raises(protocol.BridgeError) as failure:
+                capture(**arguments)
+            assert failure.value.code == code
+        # Fails after rendering has started, with temporary scene, mesh copies and materials in place.
+        with pytest.raises(protocol.BridgeError) as failure:
+            loop.run_until_complete(
+                server.view_capture(
+                    context,
+                    object="CaptureBox",
+                    views=["front", "back"],
+                    mode="wireframe",
+                    resolution=512,
+                    max_bytes=10_000,
+                )
+            )
+        assert failure.value.code == "budget_exceeded"
+    finally:
+        loop.run_until_complete(connection.disconnect())
+        loop.close()
+
+    assert run_python(_SNAPSHOT_CAPTURE) == before
+
+
+def test_headless_view_capture_of_a_saved_project(call, bridge, headless_policy):
+    path = bridge["tmp"] / "capture-source.blend"
+    call("object_create", name="HeadlessShot")
+    saved = call("python_exec", code=f"bpy.ops.wm.save_as_mainfile(filepath={str(path)!r}, copy=True)")
+    assert saved["error"] is None
+    report = asyncio.run(
+        HeadlessBlenderExecutor(BLENDER, headless_policy).execute_command(
+            "view.capture",
+            {"object": "HeadlessShot", "resolution": 64, "views": ["front"]},
+            blend_file=str(path),
+            factory_startup=True,
+            timeout_seconds=120,
+        )
+    )
+    assert _png_size(base64.b64decode(report["views"][0]["png_base64"])) == (64, 64)
 
 
 @pytest.mark.asyncio

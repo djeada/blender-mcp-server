@@ -101,18 +101,19 @@ GROUPS: dict[str, Group] = {
         },
     ),
     "rendering": Group(
-        "Cameras, still and animation renders, and glTF, OBJ and FBX export.",
+        "Inspection views returned as images, cameras, still and animation renders, and glTF, OBJ and FBX export.",
         {
             "blender_camera_create": ("camera.create",),
             "blender_camera_update": ("camera.update",),
+            "blender_view_capture": ("view.capture",),
             "blender_render_still": ("render.still",),
             "blender_render_animation": ("render.animation",),
             "blender_export_gltf": ("export.gltf",),
             "blender_export_obj": ("export.obj",),
             "blender_export_fbx": ("export.fbx",),
         },
-        "A running Blender with the MCP Bridge add-on, or transport='headless' with a .blend file for renders "
-        "and exports. Rendering needs a scene camera.",
+        "A running Blender with the MCP Bridge add-on, or transport='headless' with a .blend file for captures, "
+        "renders and exports. Still and animation renders need a scene camera; captures bring their own.",
     ),
     "scripting": Group(
         "Run Python in Blender, immediately or as cancellable background jobs.",
@@ -159,6 +160,8 @@ KEYWORDS: dict[str, str] = {
     "blender_timeline_set": "animate animation frame duration",
     "blender_camera_create": "view viewpoint shot framing composition lens",
     "blender_camera_update": "view viewpoint framing composition lens zoom",
+    "blender_view_capture": "see look visual picture image screenshot preview silhouette front side multiview "
+    "wireframe check inspect verify",
     "blender_render_still": "image picture preview screenshot output png",
     "blender_render_animation": "video frames movie",
     "blender_export_gltf": "glb game engine web asset download",

@@ -8,8 +8,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 ## [Unreleased]
 
 ### Added
+- `blender_view_capture` returns labelled PNG views of an object or collection as MCP image content, in solid,
+  material or wireframe mode, framed from evaluated bounds in a temporary scene that leaves the project unchanged.
+  Also works headless.
 - Tool profiles (`--profile compact|standard|full`, `--enable-groups`, `--allow-groups`, or the matching
-  environment variables). `compact` advertises 15 tools in 5.7 KB instead of every schema (39.4 KB). The default
+  environment variables). `compact` advertises 15 tools in 5.7 KB instead of every schema (41.2 KB). The default
   stays `full`.
 - Compact output (`--output compact`, on by default in the compact profile) pages listings, keeps log tails and
   turns oversized responses into previews that `blender_output_read` can finish without rerunning anything. Budgets

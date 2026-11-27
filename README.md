@@ -43,7 +43,7 @@ Start with `blender_scene_get_info` to inspect the scene and `blender_status` to
 
 ## Small-context clients
 
-By default the server advertises every tool. For local or small-context models, start it with `--profile compact`: it advertises 15 tools (5.7 KB of schemas instead of 39.4 KB), pages listings and bounds long responses, and the model finds and runs other actions on demand. See [Tool profiles](docs/profiles.md) for client configurations, capability groups and the trade-offs.
+By default the server advertises every tool. For local or small-context models, start it with `--profile compact`: it advertises 15 tools (5.7 KB of schemas instead of 41.2 KB), pages listings and bounds long responses, and the model finds and runs other actions on demand. See [Tool profiles](docs/profiles.md) for client configurations, capability groups and the trade-offs.
 
 ## Policy and recovery
 

@@ -78,6 +78,7 @@ LEGACY_TOOLS = [
     "python_exec_async",
     "render_animation",
     "render_still",
+    "view_capture",
     "scene_execute_batch",
     "scene_get_info",
     "scene_list_objects",
